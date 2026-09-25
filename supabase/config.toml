@@ -1,0 +1,18 @@
+# Supabase CLI settings used by `supabase functions deploy` / `supabase db push`.
+# Only what this project needs is listed; everything else uses CLI defaults.
+project_id = "dept12-dashboard"
+
+[auth]
+# The dashboard must NEVER allow self-service sign-up: with the current
+# shared-login stub, any account that exists can see and change everything.
+# (The hosted project's own setting lives in the dashboard — SETUP.md step 3.)
+enable_signup = false
+
+# Both functions check the caller's login themselves (see
+# supabase/functions/_shared/common.ts), which works with both the new
+# sb_publishable_ keys and legacy anon keys.
+[functions.motive-sync]
+verify_jwt = false
+
+[functions.sheets-push]
+verify_jwt = false
