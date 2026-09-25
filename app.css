@@ -750,12 +750,7 @@ select.cell-i{cursor:pointer}
 /* Time card calculator (D258) — hh/mm text inputs + an AM/PM toggle button,
    not a direct .mf>input child, so they get their own rule instead of the
    generic one above. */
-.tc-time{display:flex;align-items:center;gap:4px}
-.tc-time input{background:var(--paper);border:1px solid var(--rule-2);border-radius:var(--r-md);padding:6px 4px;
   font-size:var(--fs-body-sm);font-variant-numeric:tabular-nums;color:var(--ink);width:2.1em;text-align:center}
-.tc-time input:focus{outline:none;border-color:var(--focus)}
-.tc-colon{color:var(--ink-2);font-weight:700}
-.tc-ampm{min-width:40px}
 .modal-ft{padding:12px 18px;border-top:1px solid var(--rule);display:flex;justify-content:flex-end;gap:8px}
 .sort-dialog{gap:14px}
 .sort-dialog section{border:1px solid var(--rule);border-radius:var(--r-lg);padding:11px 12px;background:var(--paper)}
@@ -1059,36 +1054,6 @@ summary.sec-h{cursor:pointer;list-style:none;display:flex;align-items:center;gap
 summary.sec-h::-webkit-details-marker{display:none}
 summary.sec-h::before{content:"\25B8";font-size:var(--fs-caption)}
 details[open]>summary.sec-h::before{content:"\25BE"}
-
-/* Admin accounts use the same card language as personal settings. */
-.admin-intro h3{font-size:var(--fs-h3);margin-bottom:3px}
-.admin-count{padding:5px 9px;border-radius:999px;background:var(--brand-soft);color:var(--brand);
-  font:700 var(--fs-label)/1 var(--mono);white-space:nowrap}
-.admin-row{border:1px solid var(--rule);border-radius:var(--r-lg);background:var(--panel);margin-bottom:10px;box-shadow:var(--e1);overflow:hidden}
-.admin-row>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;
-     padding:11px 13px;user-select:none}
-.admin-row>summary::-webkit-details-marker{display:none}
-.admin-row>summary::after{content:"\25B8";font-size:var(--fs-caption);color:var(--ink-3);order:3}
-.admin-row[open]>summary::after{content:"\25BE"}
-.admin-avatar{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:var(--brand-soft);
-  color:var(--brand);font-size:var(--fs-label);font-weight:800}
-.admin-row-name{font-weight:650;min-width:80px}
-.admin-row-sum{flex:1;color:var(--ink-2);font-size:var(--fs-body-sm)}
-.admin-row>div,.admin-row>table{margin:0 13px 13px}
-.admin-row>summary .btn{order:2}
-.admin-row[open]>summary{border-bottom:1px solid var(--rule)}
-.admin-grid th{text-align:center;font-size:var(--fs-caption);color:var(--ink-3);font-weight:600;padding:4px 8px}
-.admin-grid td.sc-act{text-align:center}
-.admin-grid input[type="checkbox"]{width:17px;height:17px;accent-color:var(--brand)}
-.admin-window{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;border-top:1px solid var(--rule)}
-.admin-window-fields{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap;color:var(--ink-3)}
-.admin-window input{width:116px;border:1px solid var(--rule-2);border-radius:var(--r-md);background:var(--paper);padding:6px 8px}
-
-/* Add-style controls disabled for a view-only grant (D126) — grayed, not
-   hidden, per Nate's preference. Drop zones (no native disabled state) get
-   pointer-events:none too so they're functionally inert, not just dim. */
-.locked-view{opacity:.4;pointer-events:none;cursor:not-allowed}
-button.locked-view{opacity:.4}
 
 /* Billing */
 .pool{display:flex;flex-wrap:wrap;gap:6px}

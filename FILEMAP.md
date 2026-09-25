@@ -83,7 +83,7 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | `═══ 02-chips-extract` | Lookups (`order()`, `party()`), what a **chip** says and what color it is, date helpers, **PDF text + OCR + rate-con parsing**, broker matching. | `buildChip`, `chipHtml`, `pushColorFor`, `cellHasLoad`, `parseRateCon`, `extractInvoiceInfo`, `ocrPdf`, `mergePdfs` |
 | `═══ 03-drawer-billing` | The **order drawer** (the panel that slides in when you click a chip or row), pickup/delivery pickers, billing packages. | `openOrder` (external), `openInternalOrder` (bag), `openTransferOrder` (internal freight), `locCombo`, `partyCombo`, `doPackage`, `billDone` |
 | `═══ 04-views` | **Every screen's layout**: Scheduler, Current Week, Driver Tabs, the three order trackers, Billing, Database grids, custom sheets, Reports. | `vScheduler`, `vCurrentWeek`, `vDriverView`, `vInternal`, `vInternalFreight`, `vOrders`, `vBilling`, `vDatabase`, `vSheet`, `vReports`, `toolbarHtml` |
-| `═══ 05-settings-nav-search` | Settings pages, the Staging rail, the **`render()` dispatcher** (decides which screen to draw), `reload()`, global search box. | `render`, `reload`, `vSettings`, `settingsAdmin` (Access), `renderRail`, `renderSearch`, `NAV` |
+| `═══ 05-settings-nav-search` | Settings pages, the Staging rail, the **`render()` dispatcher** (decides which screen to draw), `reload()`, global search box. | `render`, `reload`, `vSettings`, `renderRail`, `renderSearch`, `NAV` |
 | `═══ 06-modals-grids` | Popups (add customer/location/truck, bulk add orders, route editor, day note, confirm), document viewer, spreadsheet-style cell editing, **document ingestion** (rate con / loose POD / invoice batch). | `openModal`, `routeEditorModal`, `openViewer`, `startEdit`/`commitEdit`, `ingestRateCon`, `ingestLoose`, `ingestBatch` |
 | `═══ 07-events` | The big **click / change / keyboard handlers** — where each button's action is wired. | Search the button's id or `data-…` attribute here, e.g. `"motive-sync"`, `data-report`, `new-order` |
 | `═══ 08-undo` | ⌘Z / ⌘⇧Z undo-redo, and the save helpers that record undo steps. | `histPush`, `moveLoad`, `scheduleNote`, `orderFieldSet`, `freightValueSet` |
@@ -108,7 +108,7 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | **Billing → Invoices & Packages** | `vBilling` | `api_document_save` / `_attach` / `_delete` + Storage; `orders.billed_at` |
 | **Reports → Export & Reports** | `vReports` | `api_report` |
 | **Database** (tabs across the top) | `vDatabase` → `vBuiltin` (Bagger Customers, External Customers, Pick/Drop, Fleet, Internal Freight departments), `vSheet` (custom sheets) | `api_row_update`, `api_row_custom`, `api_grid_row_*`, `api_database_archive`, `api_grid_column_*`, `api_entity_*`, `api_field_*`, `api_record_*`, `api_sheet*` |
-| **Settings** (gear, bottom left) | `vSettings` (General, Shortcuts, Time Calc, Access) | `api_order_number_settings_save`; Access edits `app_users` / `app_user_grants` (**not enforced yet**) |
+| **Settings** (gear, bottom left) | `vSettings` (General, Shortcuts) | `api_order_number_settings_save` |
 | **History** (clock icon, toolbar) | `13-history` | `api_history_list`, `api_history_preview`, `api_history_revert` |
 | **Order drawer** (click any chip/row) | `03-drawer-billing` → `openOrder` / `openInternalOrder` / `openTransferOrder` | `api_order_update`, `api_freight`, documents |
 
@@ -118,14 +118,13 @@ jump there, e.g. ⌘F `═══ 04-views`.
 
 | Search for | What it does |
 |---|---|
-| `TODO(AUTH)` | The login placeholder — one shared login, full access. Start here for real per-person logins. |
+| `renderLoginGate` / top-of-file comment | How sign-in works. Everyone signed in has full access; accounts are managed in Supabase. |
 | `function sbFetch` | Every request to Supabase goes through here (adds the key + login token, refreshes the login when it expires). |
 | `function rpc` / `function rest` | Call a Database function / read or write a table directly. |
 | `var ROUTES` | **The route table.** `api("order/update")` → `ROUTES["order/update"]` → `api_order_update`. Look here to find what any button actually does on Supabase. |
 | `HISTORY_LABELS` | The names shown in the History panel for each kind of change. |
 | `REPORT_LABELS` | The column headers used in exported CSVs. |
 | `storageUpload`, `storedFileUrl`, `fetchStoredFile` | PDFs in the private Storage bucket (short-lived links only). |
-| `renderLoginGate` | The sign-in screen. |
 
 ---
 
@@ -133,11 +132,11 @@ jump there, e.g. ⌘F `═══ 04-views`.
 
 | Where in the Supabase dashboard | What's there |
 |---|---|
-| **Table Editor** | The data. Main tables: `orders`, `loads`, `load_orders` (which order is on which load), `schedule_notes` (text in Scheduler cells), `truck_off_days`, `day_notes`, `parties` (customers + brokers + carriers), `locations` (Pick/Drop list + bagger stores), `trucks`, `drivers`, `driver_truck_assignments`, `departments`, `order_stops` / `load_stops` (multi-stop routes), `documents`, `categories` (cell colors), `entities` / `fields` / `records` (custom databases), `sheets` / `sheet_cells` (custom sheets), `app_users` / `app_user_grants` (Access), `audit_events` / `audit_changes` (History). |
+| **Table Editor** | The data. Main tables: `orders`, `loads`, `load_orders` (which order is on which load), `schedule_notes` (text in Scheduler cells), `truck_off_days`, `day_notes`, `parties` (customers + brokers + carriers), `locations` (Pick/Drop list + bagger stores), `trucks`, `drivers`, `driver_truck_assignments`, `departments`, `order_stops` / `load_stops` (multi-stop routes), `documents`, `categories` (cell colors), `entities` / `fields` / `records` (custom databases), `sheets` / `sheet_cells` (custom sheets), `audit_events` / `audit_changes` (History). |
 | **Database → Functions** | Every `api_…` function (the business rules), plus `dept12_…` helpers. Source copy: backup folder → `supabase/migrations/20260924000002_api_functions.sql`. |
 | **Edge Functions** | `motive-sync`, `sheets-push`. Source copy: backup folder → `supabase/functions/`. |
 | **Edge Functions → Secrets** | `MOTIVE_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON` (need an admin to add). |
-| **Authentication → Users** | The login(s). |
+| **Authentication → Users** | The logins. Add people here (sign-ups off), then add their email to `dept12_private.allowed_logins`. |
 | **Storage → documents** | Uploaded PDFs, in folders named by order ID. |
 | **SQL Editor** | Where we paste database changes. |
 
@@ -158,4 +157,4 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | Sidebar menu items | `app.js` → `═══ 05-settings-nav-search` → `var NAV` |
 | Google driver-tab layout | Edge Function `sheets-push` (backup: `supabase/functions/sheets-push/`) — and keep `vDriverView` matching it |
 | Report columns | Supabase → `api_report`; headers in `supabase-api.js` → `REPORT_LABELS` |
-| Login / who can do what | `supabase-api.js` → `TODO(AUTH)`; Supabase → `dept12_is_admin` |
+| Who can sign in | Supabase → Authentication → Users, plus `dept12_private.allowed_logins` (approved emails) |

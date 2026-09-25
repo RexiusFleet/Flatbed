@@ -82,23 +82,6 @@ function toast(m, bad) {
    (REST, RPC, Storage, or an Edge Function). Expose DB to it so it can
    label History events with the right section. */
 window.DEPT12_DB = function () { return DB; };
-/* Local-auth permission gates (D125). DB.me is absent whenever local auth is
-   off or the request wasn't authenticated locally — everything is
-   unrestricted in that case, matching the app's behavior before this feature
-   existed. An admin (or no DB.me) always passes. These are UX fast-fails
-   only — the server enforces the real boundary (app/server.py's
-   API_PERMISSIONS / _check_route_permission), so a stale/bypassed client
-   check can never actually grant access it shouldn't. */
-function canView(sec, sub) {
-  if (!DB || !DB.me || DB.me.is_admin) return true;
-  if (sec === "dispatch" && sub === "sched") return true;   // baseline every restricted user gets for free
-  return DB.me.grants.some(function (g) { return g.section === sec && g.sub === sub; });
-}
-function canEdit(sec, sub) {
-  if (!DB || !DB.me || DB.me.is_admin) return true;
-  var g = DB.me.grants.filter(function (g) { return g.section === sec && g.sub === sub; })[0];
-  return !!(g && g.can_edit);
-}
 function b64FromBytes(bytes) {
   var s = "", C = 0x8000;
   for (var i = 0; i < bytes.length; i += C) s += String.fromCharCode.apply(null, bytes.subarray(i, i + C));
@@ -1733,15 +1716,6 @@ var DRAWER_SAVE = Promise.resolve();
 /* Serialize drawer blur saves so a fast edit/refocus cannot let an older HTTP
    response land after the newer value. */
 function queueDrawerSave(work) {
-  // Gated by the OPEN ORDER's own kind (D125), not the ambient SEC/SUB — a
-  // drawer opened from the Scheduler still edits order data, so it's the
-  // Orders grant that governs it, independent of how it was reached.
-  var o = DRAWER_OID && order(DRAWER_OID);
-  var sub = o && o.is_transfer ? "xfer" : o && o.kind === "internal" ? "int" : "ext";
-  if (o && !canEdit("orders", sub)) {
-    toast("View-only — you can't edit this order.", true);
-    return Promise.reject(new Error("View-only"));
-  }
   DRAWER_SAVE = DRAWER_SAVE.catch(function () {}).then(work);
   return DRAWER_SAVE;
 }
@@ -4026,8 +4000,6 @@ var CUSTOM_ACCENT_OPEN = false;
 function vSettings(sub) {
   var h = '<div class="settings-head"><div><h2>Settings</h2><p>Personalize this workspace and manage your account.</p></div></div>';
   if (sub === "shortcuts") return '<div class="settings-shell">' + h + settingsShortcuts() + "</div>";
-  if (sub === "timecalc") return '<div class="settings-shell">' + h + settingsTimeCalc() + "</div>";
-  if (sub === "admin") return '<div class="settings-shell">' + h + settingsAdmin() + "</div>";
   return '<div class="settings-shell">' + h + settingsAppearance() + "</div>";
 }
 function prefBtn(key, val, label) {
@@ -4114,7 +4086,7 @@ function settingsAppearance() {
       '<p>Sample Driver · Sample Truck · 24 PAL · Sample Order · EARLY</p></div></section>';
   h += settingsConnectionsHtml();
   h += "</div>";
-  if (!LOCAL_AUTH.enabled || (DB && DB.me && DB.me.is_admin)) h += orderNumberingHtml();
+  h += orderNumberingHtml();
   h += schedulerSizingHtml();
   h += '<div class="settings-save-note">Profile, appearance, and sizing are saved on this device. Workspace numbering applies to everyone.</div>';
   return h;
@@ -4196,177 +4168,6 @@ function settingsConnectionsHtml() {
   h += "</section>";
   return h;
 }
-/* ── Access (D125) — manage restricted users' per-section access + the
-   Scheduler date-range hard boundary. Only reachable by an admin (gated by
-   settingsSubsFor()/canView above); the roster/grants aren't part of the
-   normal bootstrap payload, so this section lazy-fetches once and re-renders
-   when it lands, same idea as any other async panel. */
-var ADMIN_ROSTER = null;
-/* Which restricted-user rows are expanded (D259) — every grant checkbox
-   toggle clears ADMIN_ROSTER and calls render(), which rebuilds the
-   <details class="admin-row"> markup from scratch; without tracking this
-   separately every row snapped shut after a single click, found live
-   granting Test3 two permissions in a row. Same in-memory-object pattern
-   as HISTORY_OPEN_DAYS/TRACKER_COLLAPSED_OPEN — session-only, not
-   persisted. Kept in sync by the native `toggle` event (07-events.js),
-   not just this file's own open-attribute write, so manually collapsing a
-   row also survives the next unrelated re-render. */
-var ADMIN_OPEN = {};
-function grantableSubs() {
-  var list = [];
-  NAV.forEach(function (s) {
-    subsOf(s.k).forEach(function (sub) { list.push({ section: s.k, sub: sub.k, label: s.t + " — " + sub.t }); });
-  });
-  SETTINGS_SUBS.forEach(function (sub) { list.push({ section: "settings", sub: sub.k, label: "Settings — " + sub.t }); });
-  return list;
-}
-function settingsAdmin() {
-  if (!ADMIN_ROSTER) {
-    api("admin/users").then(function (j) {
-      ADMIN_ROSTER = j.users || [];
-      if (SEC === "settings" && SUB === "admin") render();
-    }).catch(function (e) { toast(e.message, true); });
-    return '<div class="empty">Loading roster…</div>';
-  }
-  var subs = grantableSubs();
-  var h = '<section class="set-card admin-intro"><div class="set-title"><div><div class="set-h">Dashboard access</div>' +
-    '<h3>People and permissions</h3><p>This is where administrators let other accounts see and interact with the dashboard. New accounts begin with a read-only Scheduler; grant only the pages and edit rights they need.</p>' +
-    '</div><span class="admin-count">' + ADMIN_ROSTER.filter(function (u) { return !u.is_admin; }).length +
-    ' restricted</span></div><div class="setting-help">Scheduler access defaults to 3 weeks back and 1 week forward until you set a custom range.</div>' +
-    // TODO(AUTH): the hosted app signs everyone in with one shared login, so
-    // nothing below is enforced yet. Remove this notice when per-person
-    // Supabase accounts are mapped to these rows.
-    '<div class="setting-help"><b>Not enforced yet.</b> Everyone currently signs in with the shared team login and has full access. These settings take effect once individual accounts are set up.</div></section>';
-  var restricted = ADMIN_ROSTER.filter(function (u) { return !u.is_admin; });
-  restricted.forEach(function (u) {
-    var byKey = {};
-    u.grants.forEach(function (g) { byKey[g.section + "|" + g.sub] = g.can_edit; });
-    var viewCt = 0, editCt = 0;
-    subs.forEach(function (s) {
-      var k = s.section + "|" + s.sub;
-      if (k in byKey) { viewCt++; if (byKey[k]) editCt++; }
-    });
-    var hasCustomWindow = !!(u.view_start || u.view_end);
-    h += '<details class="admin-row" data-admin-row="' + u.id + '"' + (ADMIN_OPEN[u.id] ? " open" : "") +
-      '><summary><span class="admin-avatar">' + esc(initials(u.username)) + '</span>' +
-      '<span class="admin-row-name">' + esc(u.username) + "</span>" +
-      '<span class="admin-row-sum">' + viewCt + " view · " + editCt + " edit · " +
-      (hasCustomWindow ? "custom range" : "default range") + "</span>" +
-      '<button class="btn sm bad" data-admin-user-del="' + u.id + '" title="Delete user">Delete</button>' +
-      "</summary>";
-    h += '<table class="sc-table admin-grid"><thead><tr><th></th><th>View</th><th>Edit</th></tr></thead><tbody>';
-    subs.forEach(function (s) {
-      var key = s.section + "|" + s.sub, viewOn = key in byKey, editOn = viewOn && byKey[key];
-      h += "<tr><td class=\"sc-lb\">" + esc(s.label) + '</td>' +
-        '<td class="sc-act"><input type="checkbox" data-admin-view="' + u.id + "|" + s.section + "|" + s.sub +
-        '"' + (viewOn ? " checked" : "") + "></td>" +
-        '<td class="sc-act"><input type="checkbox" data-admin-edit="' + u.id + "|" + s.section + "|" + s.sub +
-        '"' + (editOn ? " checked" : "") + "></td></tr>";
-    });
-    h += "</tbody></table>";
-    var wStart = u.view_start || u.default_view_start || "", wEnd = u.view_end || u.default_view_end || "";
-    h += '<div class="admin-window"><span class="lbl">Scheduler date range</span><div class="admin-window-fields">' +
-      '<input type="text" inputmode="numeric" aria-label="Scheduler start date" placeholder="MM/DD/YYYY" data-smartdate data-admin-window="' + u.id +
-      '|start" data-last-iso="' + wStart + '" value="' + esc(isoToMdy(wStart)) + '"> to ' +
-      '<input type="text" inputmode="numeric" aria-label="Scheduler end date" placeholder="MM/DD/YYYY" data-smartdate data-admin-window="' + u.id +
-      '|end" data-last-iso="' + wEnd + '" value="' + esc(isoToMdy(wEnd)) + '"> ' +
-      '<button class="btn sm" data-admin-window-save="' + u.id + '">Save Range</button> ' +
-      (hasCustomWindow
-        ? '<button class="btn sm" data-admin-window-clear="' + u.id + '">Reset To Default</button>'
-        : "") + "</div></div>";
-    h += "</details>";
-  });
-  if (!restricted.length)
-    h += '<div class="empty">No restricted accounts yet — one is created the first time someone signs in.</div>';
-  return h;
-}
-/* Time card calculator — replaced the Help & FAQ settings tab (moved to the
-   profile menu as a popup instead, Nate: settings bar should hold this).
-
-   D258 rebuild (Nate: modeled on redcort.com's free timecard calculator —
-   "blank the first one is am second one is pm but u can switch it... easy
-   to type into... single digits in minutes it goes to 08... in hours it
-   just accepts it as the hour time"). Redcort's own hour/minute fields are
-   two plain text inputs per time (not a native <input type="time">, which
-   forces a browser-chrome picker and hides the "type single digits" flow
-   entirely) plus a separate AM/PM toggle — matched here with `.tc-hh`/
-   `.tc-mm` text inputs and a `.tc-ampm` button. Minutes zero-pad to 2
-   digits on blur (`tcPadMinute`); hours do NOT — a typed "8" stays "8", it
-   IS the 12-hour hour, only the AM/PM toggle decides which half of the
-   military day it lands in (`tcMinutesOf`). Start defaults AM, End
-   defaults PM, both independently click-to-toggle — same default redcort
-   uses, confirmed live against the real page before building this.
-
-   D258 also built a "look up from Motive" section here (date/truck/driver
-   picker calling a new /api/motive/day-detail for odometer + on-duty-window
-   lookup) — verified working live, then deliberately pulled at Nate's
-   explicit ask: "i should manually find it if i need to find their time
-   cards, and also if im training someone on this job i do not want them
-   to rely on that for driver pay just a bad deal." Don't reintroduce an
-   automated Motive-driven fill for this calculator — pay figures stay a
-   manual lookup by design, not an oversight. */
-function timeFieldHtml(id, label, defaultAmPm) {
-  return '<label class="mf tc-field"><span>' + esc(label) + '</span><div class="tc-time">' +
-    '<input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" class="tc-hh" id="tc-' + id +
-    '-hh" placeholder="--" autocomplete="off" aria-label="' + esc(label) + ' hour">' +
-    '<span class="tc-colon">:</span>' +
-    '<input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" class="tc-mm" id="tc-' + id +
-    '-mm" placeholder="--" autocomplete="off" aria-label="' + esc(label) + ' minute">' +
-    '<button type="button" class="btn sm tc-ampm" id="tc-' + id + '-ampm" data-tc-ampm="' + id + '">' +
-    defaultAmPm + "</button></div></label>";
-}
-function settingsTimeCalc() {
-  return '<div class="set-card"><div class="set-h">Time card calculator</div>' +
-    '<p style="font-size:var(--fs-body-sm);color:var(--ink-2);margin-bottom:10px">Enter a start and end time — get their ' +
-    "military (24-hour) equivalents and the total hours between them. Start defaults to AM and End to PM; click either " +
-    "to switch it.</p>" +
-    '<div class="set-row">' + timeFieldHtml("start", "Start time", "AM") + timeFieldHtml("end", "End time", "PM") + "</div>" +
-    '<div id="tc-out">' + timeCalcOutHtml() + "</div></div>";
-}
-/* hh/mm text inputs, not a real <input type="time"> (see block comment
-   above) — typed content needs its own digit filtering, since a text input
-   accepts anything. */
-function tcSanitizeDigits(el) { el.value = el.value.replace(/[^0-9]/g, "").slice(0, 2); }
-function tcPadMinute(el) { if (el.value.length === 1) el.value = "0" + el.value; }
-function tcClampHour(el) {
-  if (!el.value) return;
-  var n = Math.max(1, Math.min(12, parseInt(el.value, 10) || 1));
-  el.value = String(n);
-}
-function tcClampMinute(el) {
-  if (!el.value) return;
-  var n = Math.max(0, Math.min(59, parseInt(el.value, 10) || 0));
-  el.value = String(n);
-  tcPadMinute(el);
-}
-/* Returns minutes-since-midnight (military) for one of the two time
-   fields, or null while it's incomplete — h stays 1-12 as typed (not
-   zero-padded, D258), the AM/PM button's own text is the only thing that
-   decides which 12-hour half it lands in. */
-function tcMinutesOf(id) {
-  var hh = document.getElementById("tc-" + id + "-hh"), mm = document.getElementById("tc-" + id + "-mm"),
-    ap = document.getElementById("tc-" + id + "-ampm");
-  if (!hh || !mm || !ap || !hh.value || !mm.value) return null;
-  var h = parseInt(hh.value, 10), m = parseInt(mm.value, 10);
-  if (isNaN(h) || isNaN(m) || h < 1 || h > 12 || m < 0 || m > 59) return null;
-  return (h % 12) * 60 + m + (ap.textContent === "PM" ? 12 * 60 : 0);
-}
-function militaryFromMinutes(mins) {
-  var h = Math.floor(mins / 60) % 24, m = mins % 60;
-  return String(h).padStart(2, "0") + String(m).padStart(2, "0");
-}
-function timeCalcOutHtml() {
-  var sm = tcMinutesOf("start"), em = tcMinutesOf("end");
-  if (sm == null || em == null) return "";
-  var total = em - sm; var overnight = total < 0; if (overnight) total += 24 * 60;
-  var hrs = Math.floor(total / 60), mins = total % 60;
-  var dec = (total / 60).toFixed(2).replace(/\.?0+$/, "");
-  return '<div class="set-row"><span class="lbl">Start · military</span><b>' + militaryFromMinutes(sm) + "</b></div>" +
-    '<div class="set-row"><span class="lbl">End · military</span><b>' + militaryFromMinutes(em) + "</b></div>" +
-    '<div class="set-row"><span class="lbl">Total hours</span><b>' + hrs + "h " + mins + "m (" + dec + " hrs)</b></div>" +
-    (overnight ? '<div class="note-bar">End is before start — counted as crossing midnight.</div>' : "");
-}
-function renderTimeCalc() { var out = document.getElementById("tc-out"); if (out) out.innerHTML = timeCalcOutHtml(); }
 function settingsHelp() {
   var faqs = [
     ["Scheduler",
@@ -4394,12 +4195,11 @@ function settingsHelp() {
     ["Mileage, delivery dates, and rates",
       "<b>Sync Mileage</b> fills available truck mileage from Motive. If an internal rate is set, blank internal freight charges " +
       "are calculated in that same run; existing charges are not overwritten. <b>Sync Delivery Dates</b> copies completed schedule dates back to orders."],
-    ["Settings, shortcuts, and access",
+    ["Settings and shortcuts",
       "General contains profile, theme, accent, font, account, order numbering, and Scheduler sizing. Shortcuts can be " +
-      "re-recorded, and <b>Add shortcut</b> gives an action an additional key combination. Administrators use Access to control " +
-      "which pages another account can view or edit and the Scheduler date range it may load."],
-    ["Undo and administrative history",
-      "Undo and Redo cover changes made in the current session. Administrators can open History for the shared audit trail and " +
+      "re-recorded, and <b>Add shortcut</b> gives an action an additional key combination."],
+    ["Undo and history",
+      "Undo and Redo cover changes made in the current session. Open History for the shared audit trail and " +
       "review a reversible change before restoring it. External actions such as sending data to another service remain recorded but are not reversed remotely."],
     ["Reports",
       "Choose a date range in Reports, then export the order report for analysis in Excel. Internal Freight has its own transfer report. " +
@@ -4423,20 +4223,12 @@ var NAV = [
       { k: "pickdrop", t: "Pick/Drop List" }, { k: "fleet", t: "Fleet" }] }
 ];
 /* Settings (D54) is reached from the header gear, not the main nav, so it lives
-   outside NAV — subsOf resolves its tabs specially. Gated like every other
-   section under local auth (D125) — a restricted user with no "settings"
-   grants sees no Settings tabs at all, only the always-available Sign Out. */
-var SETTINGS_SUBS = [{ k: "appearance", t: "General" }, { k: "shortcuts", t: "Shortcuts" },
-  { k: "timecalc", t: "Time Calc" }];
-function settingsSubsFor() {
-  var subs = SETTINGS_SUBS;
-  if (DB && DB.me && DB.me.is_admin) subs = subs.concat([{ k: "admin", t: "Access" }]);
-  return subs;
-}
+   outside NAV — subsOf resolves its tabs specially. */
+var SETTINGS_SUBS = [{ k: "appearance", t: "General" }, { k: "shortcuts", t: "Shortcuts" }];
 function subsOf(s) {
   var subs;
   if (s === "settings") {
-    subs = settingsSubsFor();
+    subs = SETTINGS_SUBS;
   } else {
     subs = [];
     for (var i = 0; i < NAV.length; i++) if (NAV[i].k === s) subs = NAV[i].subs;
@@ -4450,7 +4242,7 @@ function subsOf(s) {
       subs = subs.concat((DB.sheets || []).map(function (sh) { return { k: "sheet:" + sh.id, t: sh.name }; }));
     }
   }
-  return subs.filter(function (sub) { return canView(s, sub.k); });
+  return subs;
 }
 var RAIL_ON = { sched: 1, int: 1, xfer: 1, ext: 1, cw: 1, driver: 1 };
 
@@ -4531,9 +4323,6 @@ function render() {
   // real left to pick.
   var openSuggest = document.getElementById("loc-suggest-portal");
   if (openSuggest) openSuggest.style.display = "none";
-  // A live permission change (an admin revoking a grant the user is actively
-  // viewing) shouldn't leave the page stuck on a now-hidden section (D125).
-  if (!canView(SEC, SUB)) { SEC = "dispatch"; SUB = "sched"; SEL = null; }
   $("#conn").textContent = "";
   // The persistent top-level .sections/.subs bars are retired (D200). The
   // sidebar owns section navigation. Database and Settings use in-page tabs.
@@ -4603,28 +4392,6 @@ function render() {
     });
   }
   if (railOn) renderRail();
-  applyEditLockUI();
-}
-/* Gray out (not hide, D126) "add"-style controls for a view-only grant —
-   a single generic pass over the current section's DOM instead of threading
-   a canEdit check into every individual button template. Structural buttons
-   (+ new database/sheet) stay admin-only regardless of any edit grant,
-   matching the server's API_PERMISSIONS defaults (D125). */
-function applyEditLockUI() {
-  var locked = !canEdit(SEC, SUB);
-  $$("#new-order,#xfer-add,#xfer-bulk,#new-ratecon,#rc-drop,#int-bulk,#int-add,#add-pickdrop,#add-truck,#add-department," +
-     "[data-addcust],[data-addcol],[data-addrow]").forEach(function (el) {
-    el.classList.toggle("locked-view", locked);
-    if ("disabled" in el) el.disabled = locked;
-  });
-  $$("[data-archiverows]").forEach(function (el) {
-    el.classList.toggle("locked-view", locked);
-    el.disabled = locked || !(ROWSEL[el.dataset.archiverows] || []).length;
-  });
-  var structLocked = !(DB && DB.me && DB.me.is_admin) && !!(DB && DB.me);
-  $$("[data-adddb],[data-addsheet]").forEach(function (el) {
-    el.classList.toggle("locked-view", structLocked);
-  });
 }
 function reload() { return api("bootstrap").then(function (d) {
   DB = d; schedNode = null; render();
@@ -5026,8 +4793,7 @@ document.addEventListener("keydown", function (e) {
   var viewer = document.querySelector("#viewer.on");
   if (viewer) { e.preventDefault(); e.stopPropagation(); closeViewer(); }
 }, true);
-/* Help & FAQ — a profile-menu popup, not a settings tab (its old slot there
-   now holds the time card calculator). Reuses settingsHelp()'s same card
+/* Help & FAQ — a profile-menu popup, not a settings tab. Reuses settingsHelp()'s same card
    content, just inside a wide modal instead of a nav sub. */
 function helpFaqModal() {
   openModal('<div class="modal-hd"><h2>Help &amp; FAQ</h2></div>' +
@@ -5286,7 +5052,7 @@ function paintRowSel(grid, scope) {
   var archive = document.querySelector('[data-archiverows="' + grid + '"]');
   if (archive) {
     var restore = archive.dataset.archiveMode === "restore";
-    archive.disabled = !count || !canEdit(SEC, SUB);
+    archive.disabled = !count;
     archive.textContent = (restore ? "Restore Selected" : "Archive Selected") +
       (count ? " (" + count + ")" : "");
   }
@@ -5565,7 +5331,6 @@ function selectCell(td) {
   if (typeof positionFillHandle === "function") positionFillHandle();
 }
 function startEdit(td, seed) {
-  if (!canEdit(SEC, SUB)) { toast("View-only — you can't edit here.", true); return; }
   if (EDITING) commitEdit();
   EDITING = { td: td };
   td.classList.add("editing");
@@ -5745,7 +5510,6 @@ function fillCellOp(td, val) {
    reported but not retried. */
 function commitCellOps(ops, verb, pastVerb) {
   if (!ops.length) return;
-  if (!canEdit(SEC, SUB)) { toast("View-only — you can't edit here.", true); return; }
   Promise.allSettled(ops.map(function (o) { return o.do().then(function () { return o; }); }))
     .then(function (results) {
       var okOps = [], failed = 0;
@@ -5767,7 +5531,6 @@ function commitCellOps(ops, verb, pastVerb) {
 /* Delete the current selection — the whole marquee if there is one, else the
    single selected cell. One undoable step; empties are skipped (D83). */
 function deleteSelection() {
-  if (!canEdit(SEC, SUB)) { toast("View-only — you can't edit here.", true); return; }
   var els = (typeof SELSET !== "undefined" && SELSET.length) ? SELSET.slice() : (SEL ? [SEL] : []);
   var ops = els.map(clearCellOp).filter(Boolean);
   if (!ops.length) return;
@@ -6254,8 +6017,7 @@ document.addEventListener("click", function (e) {
     "#profile-btn,[data-profile],[data-setpref],[data-showsched],[data-screc],[data-screset],[data-scresetall]," +
     "[data-cw-step],[data-schedsize-step],[data-schedsize-reset],[data-accent-pick],[data-accent-save],[data-accent-forget],[data-custom-accent-toggle],[data-numbering-save]," +
     "#navtoggle,[data-navto],[data-navsec],[data-navcycle],[data-bill-done],[data-bill-dl],[data-reopen-bill]," +
-    "#bill-dl-sel,#bill-done-sel,[data-admin-window-save],[data-admin-window-clear],[data-admin-user-del]," +
-    "[data-tc-ampm]");
+    "#bill-dl-sel,#bill-done-sel");
   if (!t) return;
   if (t.id === "scrim") { closeDrawer(); closeModal(); return; }
   if (t.id === "nav-scrim") { closeMobileNav(); return; }
@@ -6598,10 +6360,6 @@ document.addEventListener("click", function (e) {
      on the current sheet tab (D77). */
   if (t.dataset.sub) {
     if (SUB === t.dataset.sub) return;
-    // Re-fetch the roster every time the Admin tab is (re)entered (D126) —
-    // otherwise a user who signed in for the first time after the cache was
-    // populated wouldn't show up until an unrelated cache-busting event.
-    if (t.dataset.sub === "admin") ADMIN_ROSTER = null;
     SUB = t.dataset.sub; SEL = null; render(); return;
   }
   if (t.dataset.open) { openOrder(t.dataset.open); return; }
@@ -6755,30 +6513,6 @@ document.addEventListener("click", function (e) {
     }).catch(function (err) { toast(err.message, true); });
     return;
   }
-  if (t.dataset.adminWindowSave || t.dataset.adminWindowClear) {
-    var wUid = t.dataset.adminWindowSave || t.dataset.adminWindowClear;
-    var wBody = { user_id: wUid };
-    if (t.dataset.adminWindowSave) {
-      wBody.view_start = ($('[data-admin-window="' + wUid + '|start"]').dataset.lastIso) || null;
-      wBody.view_end = ($('[data-admin-window="' + wUid + '|end"]').dataset.lastIso) || null;
-    } else {
-      wBody.view_start = null; wBody.view_end = null;
-    }
-    api("admin/view-window", wBody).then(function () { ADMIN_ROSTER = null; render(); toast("Range saved"); })
-      .catch(function (err) { toast(err.message, true); });
-    return;
-  }
-  if (t.dataset.adminUserDel) {
-    e.preventDefault(); // the button sits inside <summary> — don't also toggle the details open/closed
-    var delUid = t.dataset.adminUserDel;
-    var delUser = ADMIN_ROSTER && ADMIN_ROSTER.filter(function (u) { return u.id === delUid; })[0];
-    confirmModal("Delete " + (delUser ? esc(delUser.username) : "this user") +
-      "? They lose all access immediately and would need to sign in again to get a fresh account.", function () {
-      api("admin/user/delete", { user_id: delUid }).then(function () { ADMIN_ROSTER = null; render(); toast("User deleted"); })
-        .catch(function (err) { toast(err.message, true); });
-    }, "Delete");
-    return;
-  }
   if (t.dataset.screc) { RECORDING = RECORDING === t.dataset.screc ? null : t.dataset.screc; render(); return; }
   if (t.dataset.screset) {
     var sc = SHORTCUTS.filter(function (x) { return x.id === t.dataset.screset; })[0];
@@ -6809,9 +6543,6 @@ document.addEventListener("click", function (e) {
       });
     }).catch(function (err) { toast(err.message, true); });
     return;
-  }
-  if (t.dataset.tcAmpm) {
-    t.textContent = t.textContent === "AM" ? "PM" : "AM"; renderTimeCalc(); return;
   }
   if (t.id === "ifr-toggle") {
     IFR_OPEN = !IFR_OPEN; localStorage.setItem("ifrOpen", IFR_OPEN ? "1" : "0"); render();
@@ -6974,24 +6705,6 @@ document.addEventListener("change", function (e) {
     var dlSelBtn = $("#bill-dl-sel"); if (dlSelBtn) dlSelBtn.textContent = "Download Selected (" + GROUP.length + ")";
   }
   if (e.target.id === "dv-pick") { DRIVER_VIEW = e.target.value; render(); }
-  if (e.target.dataset && e.target.dataset.adminView) {
-    // Unchecking View revokes the grant entirely (Edit can't survive without
-    // it); checking View with no prior grant creates a view-only one.
-    var avp = e.target.dataset.adminView.split("|");
-    var avBody = { user_id: avp[0], section: avp[1], sub: avp[2] };
-    if (e.target.checked) avBody.can_edit = false; else avBody.revoke = true;
-    api("admin/grants", avBody).then(function () { ADMIN_ROSTER = null; render(); })
-      .catch(function (err) { toast(err.message, true); });
-  }
-  if (e.target.dataset && e.target.dataset.adminEdit) {
-    // Checking Edit upserts the grant (implicitly turns View on too, since
-    // there's now a row); unchecking Edit downgrades to view-only, it
-    // doesn't revoke — View stays on.
-    var aep = e.target.dataset.adminEdit.split("|");
-    api("admin/grants", { user_id: aep[0], section: aep[1], sub: aep[2], can_edit: e.target.checked })
-      .then(function () { ADMIN_ROSTER = null; render(); })
-      .catch(function (err) { toast(err.message, true); });
-  }
   if (e.target.id === "year-pick") {
     if (e.target.value === "__add__") { addNextYear(); return; }
     YEAR = +e.target.value; schedNode = null; render(); return;
@@ -7133,9 +6846,6 @@ document.addEventListener("input", function (e) {
     var out = document.getElementById(internal ? "numbering-internal-example" : "numbering-external-example");
     if (out) out.textContent = orderPatternExample(e.target.value || "");
     return;
-  }
-  if (e.target.classList.contains("tc-hh") || e.target.classList.contains("tc-mm")) {
-    tcSanitizeDigits(e.target); renderTimeCalc();
   }
   if (e.target.id === "pref-accent-wheel" || e.target.id === "pref-accent-hex") {
     var accentValue = normalizeHex(e.target.value), safe = accentIsReadable(accentValue);
@@ -7369,23 +7079,6 @@ document.addEventListener("blur", function (e) {
       function () { return orderPoDeliverySet(oid, field, next); });
   }).catch(function (err) { toast(err.message, true); inp.value = prev; });
 }, true);
-/* Time card calculator (D258) — hour clamps 1-12 (no zero-pad, per Nate's
-   ask), minute clamps 0-59 and zero-pads to 2 digits, both on blur so
-   mid-typing values aren't fought. */
-document.addEventListener("blur", function (e) {
-  if (e.target.classList && e.target.classList.contains("tc-hh")) { tcClampHour(e.target); renderTimeCalc(); }
-  else if (e.target.classList && e.target.classList.contains("tc-mm")) { tcClampMinute(e.target); renderTimeCalc(); }
-}, true);
-/* Admin Access row disclosure (D259) — keeps ADMIN_OPEN in sync with the
-   native <details> element's own open/close state (a plain click on
-   <summary> toggles it without any JS of ours running), so a grant
-   checkbox's own render() a moment later renders it back open instead of
-   snapping shut. "toggle" doesn't bubble, so this has to be capture-phase
-   on document, same reason "blur" listeners in this file are. */
-document.addEventListener("toggle", function (e) {
-  var row = e.target.closest && e.target.closest("[data-admin-row]");
-  if (row) ADMIN_OPEN[row.dataset.adminRow] = row.open;
-}, true);
 /* Pickup/Delivery type-ahead (D42): filter as you type / on focus. */
 document.addEventListener("input", function (e) {
   /* Drawer edits repaint the real chip preview while Nate types; persistence
@@ -7525,11 +7218,7 @@ function confirmHistoricalMove(from, to, action) {
 /* Server-backed mutation primitives. Both the user action and its undo/redo
    call these, so a reversal is literally the forward op with old/new swapped. */
 function moveLoad(oid, from, to) {
-  // `from`/`to` are a cell key ("truck|date|slot") or "STAGE". Always
-  // Scheduler mechanics regardless of the caller (drag, paste, undo replay),
-  // so this checks the dispatch/sched grant directly rather than trusting
-  // whatever section happens to be ambient (D125).
-  if (!canEdit("dispatch", "sched")) return Promise.reject(new Error("View-only — you can't move loads here."));
+  // `from`/`to` are a cell key ("truck|date|slot") or "STAGE".
   // Refuses to land on a cell that already holds a different real load —
   // protects undo from clobbering a slot the user filled after the original
   // move. A text-only cell (no .oid, D250) isn't "occupied" this way — the
@@ -9200,9 +8889,7 @@ function renderFmtBar() {
   var fs = firstFmt();
   var zooms = [50, 75, 90, 100, 125, 150, 200], zp = Math.round(ZOOM * 100);
   bar.innerHTML =
-    (DB && DB.me && DB.me.is_admin
-      ? '<button class="fb" data-fb="history" title="History (admin only)">' + svgIcon("history") + "</button>"
-      : "") +
+    '<button class="fb" data-fb="history" title="History">' + svgIcon("history") + "</button>" +
     '<button class="fb" data-fb="print" title="Print">' + svgIcon("print") + "</button>" +
     '<button class="fb" data-fb="undo" title="Undo (Cmd/Ctrl-Z)">' + svgIcon("undo") + "</button>" +
     '<button class="fb" data-fb="redo" title="Redo (Cmd/Ctrl-Shift-Z)">' + svgIcon("redo") + "</button>" +
@@ -9678,9 +9365,8 @@ localAuthCheck().then(function (la) {
   return bootDashboard();
 });
 /* ═══ 13-history ═══ */
-/* ── Durable admin history (D131/D133/D134/D135) ────────────────────────────
-   The server enforces admin access too; this client gate keeps the control
-   completely absent for restricted users. The whole point (Nate, D135):
+/* ── Durable history (D131/D133/D134/D135) ──────────────────────────────────
+   The whole point (Nate, D135):
    a way to undo a mistake that persists after the session/tab that made it
    is long gone — not the fast in-memory 50-action stack (D96), which dies
    on reload. No bulk "restore to a point": that mode was cut (D132) as the
@@ -9709,7 +9395,6 @@ localAuthCheck().then(function (la) {
 var HISTORY_EVENTS = [];
 var HISTORY_HAS_MORE = false;
 
-function historyAdmin() { return !!(DB && DB.me && DB.me.is_admin); }
 function historyDate(value) {
   if (!value) return "";
   var d = new Date(value);
@@ -9909,7 +9594,6 @@ function historyPanelOpen() {
   return !!(panel && panel.classList.contains("on"));
 }
 function openHistoryPanel() {
-  if (!historyAdmin()) return;
   var panel = $("#history-panel"); if (!panel) return;
   panel.classList.add("on"); panel.setAttribute("aria-hidden", "false");
   document.body.classList.add("shell-animating");

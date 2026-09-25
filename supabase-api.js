@@ -13,14 +13,10 @@
  *   • Edge Functions (/functions/v1/*) ONLY for Motive and the Google Sheets
  *     driver mirror, because those need secrets the browser must never see.
  *
- * ╔══════════════════════════════════════════════════════════════════════════╗
- * ║ TODO(AUTH) — STUB LOGIN. NOT SAFE FOR REAL USERS OR THE PUBLIC INTERNET. ║
- * ║ Everyone signs in with ONE shared Supabase account (email + password),   ║
- * ║ and every signed-in session can read/change everything (permissive RLS). ║
- * ║ There are no per-person accounts, no admin/restricted distinction, no    ║
- * ║ per-section grants and no Scheduler date windows enforced. Real auth is  ║
- * ║ a separate follow-up phase — see SETUP.md "Before real users".           ║
- * ╚══════════════════════════════════════════════════════════════════════════╝
+ * Access: every signed-in account has full access — there are no in-app
+ * roles or per-page permissions. Who can sign in is managed in Supabase:
+ * create the account under Authentication → Users (with public sign-ups
+ * turned off), and add its email to dept12_private.allowed_logins.
  */
 (function () {
 "use strict";
@@ -31,7 +27,7 @@ var SB_KEY = String(CFG.supabaseKey || "");
 var BUCKET = "documents";
 var SESSION_KEY = "dept12-supabase-session";
 
-// ── Session (shared stub login) ───────────────────────────────────────────
+// ── Session ───────────────────────────────────────────────────────────────
 var SESSION = null;
 try { SESSION = JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); } catch (e) { SESSION = null; }
 function saveSession(s) {
@@ -246,8 +242,7 @@ var HISTORY_LABELS = {
   "grid/row": "Add database row", "grid/row/delete": "Delete database row",
   "database/archive": "Archive or restore database row",
   "grid/row/reorder": "Reorder database rows",
-  "admin/grants": "Change user permissions", "admin/view-window": "Change user date range",
-  "admin/user/delete": "Delete user", "admin/order-number-settings": "Change order numbering",
+  "admin/order-number-settings": "Change order numbering",
   "sheets/push-driver-tabs": "Push driver tabs"
 };
 function dbNow() { return (window.DEPT12_DB && window.DEPT12_DB()) || {}; }
@@ -294,7 +289,7 @@ function scopeFor(route, d) {
   if (/^(grid\/row|grid\/row\/delete|database\/archive|grid\/row\/reorder)$/.test(route)) return ["database", gridSub(d.grid || "")];
   if (route === "record") return ["database", "custom:" + d.entity_id];
   if (route === "sheet/cell") return ["database", "sheet:" + d.sheet_id];
-  if (/^admin\//.test(route)) return ["settings", "admin"];
+  if (/^admin\//.test(route)) return ["settings", "appearance"];
   return [null, null];
 }
 function histHeaders(route, d, extra) {
@@ -410,14 +405,7 @@ function pick(d, keys) {
 }
 var ROUTES = {
   "bootstrap": function () {
-    return rpc("api_bootstrap", {}).then(function (db) {
-      // TODO(AUTH): the shared login is treated as an administrator. Real
-      // auth will load the signed-in person's app_users row + grants here.
-      var u = SESSION && SESSION.user;
-      db.me = { id: null, username: (u && u.email) || "Shared login", is_admin: true,
-                view_start: null, view_end: null, grants: [] };
-      return db;
-    });
+    return rpc("api_bootstrap", {});
   },
   "order": viaRpc("api_order_create"),
   "order/ingest": viaRpc("api_order_ingest"),
@@ -542,44 +530,10 @@ var ROUTES = {
   "sheet": viaRpc("api_sheet"),
   "sheet/cell": viaRpc("api_sheet_cell"),
 
-  // Admin (TODO(AUTH): not enforced per person yet — shared login is admin)
+  // Settings
   "admin/order-number-settings": viaRpc("api_order_number_settings_save"),
-  "admin/user/delete": viaRpc("api_admin_user_delete"),
-  "admin/grants": function (d, route) {
-    if ((d.can_edit === undefined || d.can_edit === null) && !d.revoke)
-      return Promise.reject(new Error("can_edit or revoke is required."));
-    if (d.revoke) {
-      return rest("DELETE", "app_user_grants?user_id=eq." + encodeURIComponent(d.user_id) +
-                  "&section=eq." + encodeURIComponent(d.section) + "&sub=eq." + encodeURIComponent(d.sub),
-                  undefined, histHeaders(route, d), "return=minimal").then(function () { return { ok: true }; });
-    }
-    return rest("POST", "app_user_grants?on_conflict=user_id,section,sub",
-                { user_id: d.user_id, section: d.section, sub: d.sub, can_edit: !!d.can_edit },
-                histHeaders(route, d), "return=representation,resolution=merge-duplicates").then(one);
-  },
-  "admin/view-window": function (d, route) {
-    return rest("PATCH", "app_users?id=eq." + encodeURIComponent(d.user_id) + "&select=id,view_start,view_end",
-                { view_start: d.view_start || null, view_end: d.view_end || null }, histHeaders(route, d)).then(one);
-  },
-  "admin/users": function () {
-    return Promise.all([
-      rest("GET", "app_users?select=id,username,is_admin,view_start,view_end&order=is_admin.desc,username.asc"),
-      rest("GET", "app_user_grants?select=user_id,section,sub,can_edit")
-    ]).then(function (res) {
-      var t = new Date(), iso = function (dt) {
-        return dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0") + "-" + String(dt.getDate()).padStart(2, "0");
-      };
-      var ds = iso(new Date(t.getFullYear(), t.getMonth(), t.getDate() - 21));
-      var de = iso(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 7));
-      return { users: res[0].map(function (u) {
-        u.grants = res[1].filter(function (g) { return g.user_id === u.id; });
-        u.default_view_start = ds; u.default_view_end = de;
-        return u;
-      }) };
-    });
-  },
 
-  // History (admin) and reports
+  // History and reports
   "history": function (d, route, q) {
     return rpc("api_history_list", { p_limit: parseInt(q.limit || "60", 10),
                                      p_before: q.before ? parseInt(q.before, 10) : null });
@@ -600,7 +554,7 @@ function api(path, body) {
   return Promise.resolve().then(function () { return fn(body || {}, route, q); });
 }
 
-// ── Stub login gate (TODO(AUTH): shared account, see banner at top) ───────
+// ── Login gate ────────────────────────────────────────────────────────────
 var LOCAL_AUTH = { enabled: true, user: null };
 function localAuthCheck() {
   if (!SB_URL || !SB_KEY) {
@@ -608,7 +562,7 @@ function localAuthCheck() {
       'Fill in <span class="kbd">config.js</span> with your project URL and publishable key — see SETUP.md.</div>';
     return new Promise(function () {});
   }
-  LOCAL_AUTH.user = SESSION ? { username: (SESSION.user && SESSION.user.email) || "Shared login", is_admin: true } : null;
+  LOCAL_AUTH.user = SESSION ? { username: (SESSION.user && SESSION.user.email) || "Signed in" } : null;
   return Promise.resolve(LOCAL_AUTH);
 }
 function localLogout() {
@@ -626,7 +580,7 @@ function renderLoginGate() {
     '<span class="brand-mark"><img src="rexius-logo.png" alt="Rexius"></span>' +
     '<span class="brand-copy"><b>Dept 12</b><span>Flatbed Trucking</span></span></div>' +
     '<h2>Sign in</h2>' +
-    '<p>Use the shared team login.</p>' +
+    '<p>Sign in with your Dept 12 account.</p>' +
     '<input id="login-email" type="email" autocomplete="username" placeholder="Email">' +
     '<input id="login-password" type="password" autocomplete="current-password" placeholder="Password">' +
     '<button class="btn pri" id="login-go">Continue</button>' +
