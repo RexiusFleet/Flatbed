@@ -394,6 +394,106 @@ function buildReport(name, from, to) {
     .then(function (rows) { return csvOf(rows, REPORT_LABELS[name]); });
 }
 
+// ── Dashboard data: first load, then only what changed ────────────────────
+// The first load (api_bootstrap_v2) leaves out 2025 spreadsheet history
+// older than HISTORY_DAYS; loadHistory() fetches it when someone scrolls or
+// jumps back that far. After that, every "bootstrap" asks the server only for
+// rows changed since the last fetch (api_bootstrap_since) and merges them into
+// the copy kept here. The big tables arrive packed as {c: [columns],
+// r: [[values]]} and are unpacked back into normal row objects.
+var HISTORY_DAYS = 90;
+var FULL_REFRESH_MS = 10 * 60 * 1000;   // safety net: a complete reload at least this often
+var BIG_TABLES = ["orders", "loads", "notes", "locations", "documents"];
+var BOOT = null;          // { data, cursor, cutoff, history, at }
+var BOOT_DIRTY = false;   // set after a failed save: the next load is a complete one
+var HISTORY_PENDING = null;
+var LEGACY_BOOT = false;  // the new functions aren't in the database yet: use api_bootstrap
+
+function unpack(p) {
+  if (!p || !p.r) return [];
+  var cols = p.c || [];
+  return p.r.map(function (vals) {
+    var row = {};
+    for (var i = 0; i < cols.length; i++) row[cols[i]] = vals[i];
+    return row;
+  });
+}
+function historyCutoff() {
+  var d = new Date(); d.setDate(d.getDate() - HISTORY_DAYS);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+// Newly added rows go where the full load would have put them.
+var BIG_SORT = {
+  orders: function (a, b) { return Date.parse(b.created_at) - Date.parse(a.created_at); },
+  locations: function (a, b) { return String(a.name || "").localeCompare(String(b.name || "")); },
+  documents: function (a, b) { return Date.parse(b.uploaded_at) - Date.parse(a.uploaded_at); }
+};
+function mergeRows(table, rows, deletedIds) {
+  var list = BOOT.data[table], at = {}, added = false;
+  list.forEach(function (r, i) { at[r.id] = i; });
+  rows.forEach(function (r) {
+    if (r.id in at) list[at[r.id]] = r;
+    else { at[r.id] = list.length; list.push(r); added = true; }
+  });
+  if (deletedIds && deletedIds.length) {
+    var gone = {};
+    deletedIds.forEach(function (id) { gone[id] = true; });
+    list = BOOT.data[table] = list.filter(function (r) { return !gone[r.id]; });
+  }
+  if (added && BIG_SORT[table]) list.sort(BIG_SORT[table]);
+}
+// What the app gets: fresh arrays each time, so nothing it does to them can
+// touch the copy kept here.
+function bootView() {
+  var out = Object.assign({}, BOOT.data);
+  BIG_TABLES.forEach(function (k) { out[k] = BOOT.data[k].slice(); });
+  out.history_cutoff = BOOT.history ? null : BOOT.cutoff;
+  return out;
+}
+function bootFull() {
+  var cutoff = BOOT && BOOT.history ? null : historyCutoff();
+  return rpc("api_bootstrap_v2", { d: { cutoff: cutoff } }).then(function (res) {
+    var data = res.small || {};
+    BIG_TABLES.forEach(function (k) { data[k] = unpack(res[k]); });
+    BOOT = { data: data, cursor: res.cursor, cutoff: cutoff, history: !cutoff, at: Date.now() };
+    BOOT_DIRTY = false;
+    return bootView();
+  });
+}
+function bootChanges() {
+  return rpc("api_bootstrap_since", { d: { since: BOOT.cursor } }).then(function (res) {
+    if (res.full) return bootFull();
+    Object.assign(BOOT.data, res.small || {});
+    BIG_TABLES.forEach(function (k) { mergeRows(k, unpack(res[k]), res.deleted && res.deleted[k]); });
+    BOOT.cursor = res.cursor;
+    return bootView();
+  });
+}
+function loadBootstrap() {
+  if (LEGACY_BOOT) return rpc("api_bootstrap", {});
+  var load = (!BOOT || BOOT_DIRTY || Date.now() - BOOT.at > FULL_REFRESH_MS) ? bootFull() : bootChanges();
+  return load.catch(function (err) {
+    // If this page is published before the fast-loading SQL has been run in
+    // Supabase, keep working the old way instead of breaking.
+    if (!/api_bootstrap_(v2|since)|PGRST202|Could not find the function/i.test(String(err && err.message))) throw err;
+    LEGACY_BOOT = true; BOOT = null;
+    return rpc("api_bootstrap", {});
+  });
+}
+// Adds the older history to the kept copy; resolves true if anything was
+// fetched. The app follows it with api("bootstrap") to pick it up.
+function loadHistory() {
+  if (!BOOT || BOOT.history) return Promise.resolve(false);
+  if (!HISTORY_PENDING) {
+    HISTORY_PENDING = rpc("api_bootstrap_history", { d: { cutoff: BOOT.cutoff } }).then(function (res) {
+      ["orders", "loads", "notes"].forEach(function (k) { mergeRows(k, unpack(res[k]), null); });
+      BOOT.history = true;
+      return true;
+    }).finally(function () { HISTORY_PENDING = null; });
+  }
+  return HISTORY_PENDING;
+}
+
 // ── Route table ───────────────────────────────────────────────────────────
 function viaRpc(fn) {
   return function (d, route) { return rpc(fn, { d: d || {} }, histHeaders(route, d)); };
@@ -404,9 +504,7 @@ function pick(d, keys) {
   return out;
 }
 var ROUTES = {
-  "bootstrap": function () {
-    return rpc("api_bootstrap", {});
-  },
+  "bootstrap": loadBootstrap,
   "order": viaRpc("api_order_create"),
   "order/ingest": viaRpc("api_order_ingest"),
   "internal-order": viaRpc("api_internal_order_add"),
@@ -551,7 +649,13 @@ function api(path, body) {
   }
   var fn = ROUTES[route];
   if (!fn) return Promise.reject(new Error("no route /api/" + route));
-  return Promise.resolve().then(function () { return fn(body || {}, route, q); });
+  return Promise.resolve().then(function () { return fn(body || {}, route, q); })
+    .catch(function (err) {
+      // A failed save may leave something on screen that didn't stick; make
+      // the next load a complete one so the screen matches the database.
+      if (route !== "bootstrap") BOOT_DIRTY = true;
+      throw err;
+    });
 }
 
 // ── Login gate ────────────────────────────────────────────────────────────
@@ -568,6 +672,7 @@ function localAuthCheck() {
 function localLogout() {
   var tok = SESSION && SESSION.access_token;
   saveSession(null);
+  BOOT = null;
   if (!tok) return Promise.resolve();
   return fetch(SB_URL + "/auth/v1/logout", { method: "POST", headers: { "apikey": SB_KEY, "Authorization": "Bearer " + tok } })
     .catch(function () {});
@@ -611,6 +716,7 @@ var dashboardAuth = {
 
 // Globals app.js relies on.
 window.api = api;
+window.dept12LoadHistory = loadHistory;
 window.dashboardAuth = dashboardAuth;
 window.LOCAL_AUTH = LOCAL_AUTH;
 window.localAuthCheck = localAuthCheck;

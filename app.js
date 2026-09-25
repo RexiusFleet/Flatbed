@@ -2601,6 +2601,7 @@ function onSchedScroll(e) {
   } else if (el.scrollTop < 500) {
     schedBusy = true;
     var prev = addMonths(SCHED_WIN.start, -1), before = el.scrollHeight;
+    if (needsHistory(iso(prev)) && !HISTORY_FETCH) ensureHistory().then(function (got) { if (got) applyHistory(); });
     body.insertAdjacentHTML("afterbegin", schedMonthHtml(prev));
     SCHED_WIN.start = prev;
     el.scrollTop += el.scrollHeight - before;  // hold the viewport steady
@@ -2658,8 +2659,53 @@ function repaintCell(key) {
     td.style.backgroundColor = fill || "";       // background-color keeps CSS background-clip (D73)
   });
 }
+/* Older history — 2025 spreadsheet loads/orders and Scheduler notes from
+   before DB.history_cutoff (~90 days back) — isn't part of the first load, to
+   keep it fast. supabase-api.js fetches it the first time someone scrolls,
+   jumps or searches back that far; after that it's loaded like everything
+   else for the rest of the session. */
+var HISTORY_FETCH = null;
+function needsHistory(ds) { return !!(DB && DB.history_cutoff && ds && ds < DB.history_cutoff); }
+function ensureHistory() {
+  if (!DB || !DB.history_cutoff || !window.dept12LoadHistory) return Promise.resolve(false);
+  if (!HISTORY_FETCH) {
+    toast("Loading earlier dates…");
+    HISTORY_FETCH = window.dept12LoadHistory()
+      .then(function (got) { return got ? api("bootstrap").then(function (d) { DB = d; return true; }) : false; })
+      .catch(function (err) { toast(err.message, true); return false; })
+      .then(function (got) { HISTORY_FETCH = null; return got; });
+  }
+  return HISTORY_FETCH;
+}
+/* The date of the first day row visible at the top of the Scheduler. */
+function schedTopDate() {
+  if (!schedNode) return null;
+  var top = schedNode.getBoundingClientRect().top, rows = schedNode.querySelectorAll(".rowhd");
+  for (var i = 0; i < rows.length; i++) if (rows[i].getBoundingClientRect().bottom > top + 40) return rows[i].id.slice(4);
+  return null;
+}
+/* Pick up history that just arrived: rebuild the Scheduler in place (same
+   months, same day at the top) if it's showing, else just refresh lookups. */
+function applyHistory() {
+  if (SUB === "sched" && schedNode && schedNode.parentNode) {
+    var anchor = schedTopDate();
+    schedNode = null; render();
+    requestAnimationFrame(function () {
+      var el = anchor && document.getElementById("row-" + anchor);
+      if (el) el.scrollIntoView({ block: "start" });
+    });
+  } else {
+    reindexLookups(); CELLS = cellContents(); buildOffDays(); buildDayNotes(); buildCatColor();
+    schedNode = null;
+  }
+}
 function jumpTo(ds) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(ds)) return;
+  if (needsHistory(ds)) {
+    // Fetch the older history first, then rebuild the board around that day.
+    ensureHistory().then(function (got) { if (got) { schedNode = null; SCHED_WIN = null; jumpTo(ds); } });
+    return;
+  }
   /* Re-center the rolling window on the target month if it isn't loaded (D53),
      then scroll to the day. */
   var ms = monthStart(new Date(ds + "T00:00:00Z"));
@@ -4316,6 +4362,8 @@ function ordersToolbarExtras() {
     '<button class="btn sm" id="sync-btn">' + icon("calendar") + 'Sync Delivery Dates</button>';
 }
 function render() {
+  if ((SUB === "cw" || SUB === "driver") && needsHistory(CW_START) && !HISTORY_FETCH)
+    ensureHistory().then(function (got) { if (got) render(); });
   reindexLookups(); CELLS = cellContents(); buildOffDays(); buildDayNotes(); buildCatColor(); buildSheetCells(); buildGridFmt(); renderFmtBar();
   // #main's innerHTML is about to be replaced — the shared loc-suggest
   // portal (D228 follow-up) lives outside it and would otherwise survive
@@ -4525,7 +4573,17 @@ function paintSearch() {
   }).join("");
   panel.style.display = "block";
 }
-function renderSearch() { GS_RESULTS = searchResults($("#gsearch").value); GS_SEL = GS_RESULTS.length ? 0 : -1; paintSearch(); }
+function renderSearch() {
+  GS_RESULTS = searchResults($("#gsearch").value); GS_SEL = GS_RESULTS.length ? 0 : -1; paintSearch();
+  // Search covers older history too — fetch it once, then refresh the results.
+  if ($("#gsearch").value.trim() && DB && DB.history_cutoff && !HISTORY_FETCH) {
+    ensureHistory().then(function (got) {
+      if (!got) return;
+      applyHistory();
+      if ($("#gsearch").value.trim()) renderSearch();
+    });
+  }
+}
 function gsActivate(i) {
   var r = GS_RESULTS[i]; if (!r) return;
   $("#gsearch-results").style.display = "none"; $("#gsearch").value = ""; GS_RESULTS = []; GS_SEL = -1;

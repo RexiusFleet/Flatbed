@@ -40,7 +40,9 @@ needs is public by design (`config.js`). Anything needing a private key
 | When you… | The browser (file → function) | Which calls, on Supabase |
 |---|---|---|
 | open the site / sign in | `supabase-api.js` → `renderLoginGate`, `localAuthCheck` | Authentication (password sign-in) |
-| load the dashboard | `app.js` → `reload()` → `api("bootstrap")` | Database function `api_bootstrap` (everything in one go) |
+| open the dashboard | `app.js` → `reload()` → `api("bootstrap")` → `supabase-api.js` → `loadBootstrap` | `api_bootstrap_v2` (everything except 2025 history older than ~90 days) |
+| save anything (then refresh) | same `api("bootstrap")` | `api_bootstrap_since` — only rows changed since the last fetch, found through the History log |
+| scroll / jump / search back past ~90 days | `app.js` → `ensureHistory()` | `api_bootstrap_history` — the older history, once per session |
 | change anything | `app.js` → `api("<route>", {...})` | `supabase-api.js` → `ROUTES["<route>"]` → a Database function or table |
 | click **Sync Mileage** | `api("motive/sync-miles")` | Edge Function `motive-sync` → Motive → `motive_apply_miles` |
 | click **Update Google Schedule** | `api("sheets/push-driver-tabs")` | Edge Function `sheets-push` → Google Sheets (mirror only) |
@@ -121,6 +123,7 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | `renderLoginGate` / top-of-file comment | How sign-in works. Everyone signed in has full access; accounts are managed in Supabase. |
 | `function sbFetch` | Every request to Supabase goes through here (adds the key + login token, refreshes the login when it expires). |
 | `function rpc` / `function rest` | Call a Database function / read or write a table directly. |
+| `loadBootstrap` | Dashboard data: first load, "only what changed" refreshes, packed-row unpacking, the older-history loader. Falls back to the old `api_bootstrap` if the new functions aren't in the database. |
 | `var ROUTES` | **The route table.** `api("order/update")` → `ROUTES["order/update"]` → `api_order_update`. Look here to find what any button actually does on Supabase. |
 | `HISTORY_LABELS` | The names shown in the History panel for each kind of change. |
 | `REPORT_LABELS` | The column headers used in exported CSVs. |
