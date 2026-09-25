@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+
+# Secrets — never commit. Supabase function secrets are set in the Supabase
+# dashboard (or `supabase secrets set`), never in a file in this repo.
+.env
+.env.*
+secrets/
+supabase/.env
+supabase/functions/.env
+*.pem
+*service-account*.json
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+
+# Real business data — never commit (dumps, documents, exports)
+*.dump
+*.sql.gz
+output/
+storage/
+app/storage/
+Sent - 2026/
+*.xlsx
+upload-manifest.txt
+
+# Local test harness scratch (dev/)
+dev/.storage/
+node_modules/
