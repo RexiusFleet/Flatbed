@@ -11,6 +11,6 @@
  * the Motive key, or the Google service-account JSON in this file.
  */
 window.DEPT12_CONFIG = {
-  supabaseUrl: "",   // e.g. "https://abcdefghijklmnop.supabase.co"
-  supabaseKey: ""    // e.g. "sb_publishable_..."
+  supabaseUrl: "https://hejfskuvehauviocqhxu.supabase.co",
+  supabaseKey: "sb_publishable_Qvyugu-byMr-vq3FMb6cZA_tNevprb-"
 };
