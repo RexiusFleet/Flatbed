@@ -84,7 +84,7 @@ This creates every table, rule, and function. The files are in
    supabase db push
    ```
 
-   It lists 56 migrations and asks to confirm. Say yes. It should finish
+   It lists 57 migrations and asks to confirm. Say yes. It should finish
    without errors.
 
 **Check it worked:** Dashboard → **Table Editor** shows tables like
@@ -105,6 +105,14 @@ This creates every table, rule, and function. The files are in
    - Tick **Auto Confirm User**.
 
 That email + password is the shared team login for now.
+
+3. **Approve that login** (the database refuses any account not on this
+   list, which also protects you if sign-ups can't be turned off). In
+   **SQL Editor**, run, with your shared email in lower case:
+
+   ```sql
+   insert into dept12_private.allowed_logins (email) values ('dispatch@rexius.com');
+   ```
 
 ## Step 4 — Deploy the two server functions
 
