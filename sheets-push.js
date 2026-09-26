@@ -45,7 +45,7 @@ const LEGEND_COLORS = {
   // brown  — Anytime EAST
 };
 const DARK_FILLS = /* @__PURE__ */ new Set(["#783F04", "#FF0000"]);
-const TRUCK_OFF_COLOR = "#FF0000";
+const TRUCK_OFF_COLOR = "#000000";
 const s = (v) => (v === null || v === void 0 ? "" : String(v)).trim();
 function pyRound(x) {
   const f = Math.floor(x), diff = x - f;
@@ -214,6 +214,7 @@ function buildPayload(dates, data) {
           if (offByKey.has(`${t.truck_id}|${dt}`)) {
             row.chip = "OFF";
             row.color = TRUCK_OFF_COLOR;
+            row.off = true;
             out.push(row);
             continue;
           }
@@ -280,6 +281,23 @@ function fmtRequests(sheetId, row, col, text, fillHex, fontSize = 10) {
   return [{ updateCells: {
     rows: [{ values: [cell] }],
     fields: "userEnteredValue,userEnteredFormat(backgroundColor,wrapStrategy,verticalAlignment,textFormat),textFormatRuns",
+    start: { sheetId, rowIndex: row, columnIndex: col }
+  } }];
+}
+// A truck-off slot: black cell, "OFF" in bold white 16pt, centered both ways.
+function offCellRequests(sheetId, row, col) {
+  return [{ updateCells: {
+    rows: [{ values: [{
+      userEnteredValue: { stringValue: "OFF" },
+      userEnteredFormat: {
+        backgroundColor: { red: 0, green: 0, blue: 0 },
+        horizontalAlignment: "CENTER",
+        verticalAlignment: "MIDDLE",
+        wrapStrategy: "WRAP",
+        textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, fontFamily: "Arial", fontSize: 16, bold: true }
+      }
+    }] }],
+    fields: "userEnteredValue,userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat),textFormatRuns",
     start: { sheetId, rowIndex: row, columnIndex: col }
   } }];
 }
@@ -551,7 +569,7 @@ async function push(d, rpc) {
       properties: { pixelSize: 42 }, fields: "pixelSize" } });
     drv.rows.forEach(function (r, i) {
       if (!r.chip) return;
-      reqs.push.apply(reqs, fmtRequests(sid, 1 + i, 2, r.chip, r.color, 11));
+      reqs.push.apply(reqs, r.off ? offCellRequests(sid, 1 + i, 2) : fmtRequests(sid, 1 + i, 2, r.chip, r.color, 11));
       var sections = r.chip.split("\n\n").length - 1;
       if (sections > 2) {
         reqs.push({ updateDimensionProperties: {
@@ -593,7 +611,7 @@ async function push(d, rpc) {
       var col = idx + 2;
       creqs.push(headerCellRequest(csid, 0, col, truck.header.toUpperCase(), truck.driver_color, 14));
       truck.rows.forEach(function (row, ri) {
-        if (row.chip) creqs.push.apply(creqs, fmtRequests(csid, 1 + ri, col, row.chip, row.color, 10));
+        if (row.chip) creqs.push.apply(creqs, row.off ? offCellRequests(csid, 1 + ri, col) : fmtRequests(csid, 1 + ri, col, row.chip, row.color, 10));
       });
     });
     await sheets.batchUpdate(creqs);
@@ -610,4 +628,8 @@ async function push(d, rpc) {
 }
 
 window.Dept12SheetsPush = push;
+// Loads Google's sign-in script ahead of time, so the popup can open the
+// instant "Update Google Schedule" is clicked (browsers block popups that
+// open after a network wait).
+window.Dept12SheetsPreload = function () { loadGis().catch(function () {}); };
 })();

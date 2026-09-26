@@ -4362,6 +4362,7 @@ function ordersToolbarExtras() {
     '<button class="btn sm" id="sync-btn">' + icon("calendar") + 'Sync Delivery Dates</button>';
 }
 function render() {
+  if (window.Dept12SheetsPreload && (SUB === "sched" || SUB === "cw" || SUB === "driver")) window.Dept12SheetsPreload();
   if ((SUB === "cw" || SUB === "driver") && needsHistory(CW_START) && !HISTORY_FETCH)
     ensureHistory().then(function (got) { if (got) render(); });
   reindexLookups(); CELLS = cellContents(); buildOffDays(); buildDayNotes(); buildCatColor(); buildSheetCells(); buildGridFmt(); renderFmtBar();
@@ -6615,28 +6616,25 @@ document.addEventListener("click", function (e) {
     return;
   }
   if (t.id === "push-driver-tabs") {
-    var pushBody = { start_date: CW_START, days: CW_DAYS };
-    api("sheets/push-driver-tabs", pushBody).then(function (preview) {
-      var msg = "Replace Current Week and each driver tab with " + preview.days + " visible days, " +
-        prettyDate(preview.week_start) + " through " + prettyDate(preview.week_end) +
-        "? Each day will use three rows and older visible days will be cleared.";
-      confirmModal(msg, function () {
-        api("sheets/push-driver-tabs", { start_date: CW_START, days: CW_DAYS, confirm: true })
-          .then(function (r) {
-            // The push sets loads.pushed_at server-side, which flips external
-            // chips over to the truck's driver-color fill (pushColorFor,
-            // D85 Phase 2) — without a reload() here the Scheduler/Current
-            // Week/Driver Tabs views keep showing the pre-push color until
-            // some unrelated action happens to trigger one (caught live,
-            // Nate: pushed a chip, ran it, no visual change).
-            return reload().then(function () {
-              toast("Google schedule updated · Current Week + " + r.pushed.length + " driver tab(s)");
-            });
-          })
-          .catch(function (err) { toast(err.message, true); });
-      }, "Update Google schedule");
-    })
-      .catch(function (err) { toast(err.message, true); });
+    // Pushes straight away (no confirm step); the Google sign-in popup, when
+    // one is needed, has to open from this click.
+    if (t.disabled) return;
+    t.disabled = true;
+    toast("Updating Google schedule…");
+    api("sheets/push-driver-tabs", { start_date: CW_START, days: CW_DAYS, confirm: true })
+      .then(function (r) {
+        // The push sets loads.pushed_at server-side, which flips external
+        // chips over to the truck's driver-color fill (pushColorFor,
+        // D85 Phase 2) — without a reload() here the Scheduler/Current
+        // Week/Driver Tabs views keep showing the pre-push color until
+        // some unrelated action happens to trigger one (caught live,
+        // Nate: pushed a chip, ran it, no visual change).
+        return reload().then(function () {
+          toast("Google schedule updated · Current Week + " + r.pushed.length + " driver tab(s)");
+        });
+      })
+      .catch(function (err) { toast(err.message, true); })
+      .then(function () { t.disabled = false; var b = $("#push-driver-tabs"); if (b) b.disabled = false; });
     return;
   }
   if (t.id === "jump-btn") { jumpTo($("#jump").dataset.lastIso || ""); return; }
