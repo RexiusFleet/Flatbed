@@ -14,6 +14,7 @@ button, or a word, and it points you to the file and the part of the file.
    │   index.html loads, in order:
    │     vendor/*.js ─── PDF reading, PDF merging, OCR (all run inside the browser)
    │     config.js ───── which Supabase project to talk to (public URL + public key)
+   │     sheets-push.js ── "Update Google Schedule": writes the drivers' mirror sheet
    │     supabase-api.js ─ the "phone line" to Supabase: sign-in + every data request
    │     app.js ──────── the whole dashboard (every screen, button, drag & drop)
    │     app.css ─────── how it looks
@@ -26,14 +27,15 @@ button, or a word, and it points you to the file and the part of the file.
    │    └─ api_* functions     → the business rules (numbering, scheduling, locks…)
    ├─ Edge Functions ─── code that holds private keys, runs on Supabase's servers
    │    ├─ motive-sync         → talks to Motive (truck mileage)
-   │    └─ sheets-push         → writes the drivers' Google Sheet (the mirror)
-   ├─ Edge Function Secrets ─ MOTIVE_API_KEY, GOOGLE_SERVICE_ACCOUNT_JSON
+   │    └─ sheets-push         → (no longer used — see sheets-push.js)
+   ├─ Edge Function Secrets ─ MOTIVE_API_KEY
    └─ Storage ────────── "documents" bucket (private) for PDFs dropped in the app
 ```
 
 **The one rule:** the browser never holds a secret. Everything the browser
 needs is public by design (`config.js`). Anything needing a private key
-(Motive, Google) goes through an Edge Function on Supabase.
+(Motive) goes through an Edge Function on Supabase. Google Sheets needs no
+key at all: whoever pushes signs in with their own Google account.
 
 ### What calls what
 
@@ -45,7 +47,7 @@ needs is public by design (`config.js`). Anything needing a private key
 | scroll / jump / search back past ~90 days | `app.js` → `ensureHistory()` | `api_bootstrap_history` — the older history, once per session |
 | change anything | `app.js` → `api("<route>", {...})` | `supabase-api.js` → `ROUTES["<route>"]` → a Database function or table |
 | click **Sync Mileage** | `api("motive/sync-miles")` | Edge Function `motive-sync` → Motive → `motive_apply_miles` |
-| click **Update Google Schedule** | `api("sheets/push-driver-tabs")` | Edge Function `sheets-push` → Google Sheets (mirror only) |
+| click **Update Google Schedule** | `api("sheets/push-driver-tabs")` → `sheets-push.js` | `driver_week_dates` / `driver_week_data`, then Google sign-in popup → Google Sheets (mirror only), then `driver_week_mark_pushed` |
 | drop / view a PDF | `api("document")`, `openViewer`, `fetchStoredFile` | Storage bucket `documents` + `api_document_save` |
 | export a report | `api("report/<name>")` | Database function `api_report` → CSV built in the browser |
 | open History | `13-history` section → `api("history…")` | `api_history_list` / `_preview` / `_revert` |
@@ -57,9 +59,10 @@ needs is public by design (`config.js`). Anything needing a private key
 | File | What it is | Edit it when… |
 |---|---|---|
 | `index.html` | The page skeleton: header, sidebar, main area, Staging rail, drawer. Loads the scripts in order. | Adding a new script or a new always-there element. |
-| `config.js` | Supabase project URL + publishable key. Both public. | Moving to a different Supabase project. **Never put a secret key here.** |
+| `config.js` | Supabase project URL + publishable key, and the Google sign-in Client ID. All public. | Moving to a different Supabase project. **Never put a secret key here.** |
 | `supabase-api.js` | Sign-in (shared login), the Supabase request helpers, the route table that turns `api("…")` calls into Supabase calls, document storage helpers, report CSV builder, History labels. | Adding a new kind of save/load, or changing how login works. |
 | `app.js` | The whole dashboard UI — about 10,000 lines, split into 13 labeled sections (see §3). | Almost any change to screens, buttons, behavior. |
+| `sheets-push.js` | "Update Google Schedule": builds each driver tab + Current Week and writes the mirror sheet using the pusher's own Google sign-in. The mirror's sheet ID is a constant here. | Changing the driver-tab layout (keep `vDriverView` matching). |
 | `app.css` | All styling (colors, spacing, fonts). Design tokens at the top (`--brand`, `--fs-…`). | Anything visual. |
 | `rexius-logo.png` | Header/login logo. | — |
 | `vendor/pdf.min.js`, `pdf.worker.min.js` | pdf.js — reads text out of PDFs (rate cons, invoices). | Never (third-party). |
@@ -102,8 +105,8 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | Sidebar → screen | Draws it (in `04-views`) | What it reads/writes on Supabase |
 |---|---|---|
 | **Dispatch → Scheduler** | `vScheduler`, `schedCellHtml`, `buildChip` | `api_schedule` (place/move/note/clear), `api_load_carrier`, `api_unschedule`, `api_cell_color`, `api_cell_format`, `api_truck_off`, `api_day_note` |
-| **Dispatch → Current Week** | `vCurrentWeek` | same as Scheduler; **Update Google Schedule** → Edge Function `sheets-push` |
-| **Dispatch → Driver Tabs** | `vDriverView`, `dvSlotCellsHtml` (mirrors the drivers' Google tab columns) | same as Scheduler + `sheets-push` |
+| **Dispatch → Current Week** | `vCurrentWeek` | same as Scheduler; **Update Google Schedule** → `sheets-push.js` |
+| **Dispatch → Driver Tabs** | `vDriverView`, `dvSlotCellsHtml` (mirrors the drivers' Google tab columns) | same as Scheduler + `sheets-push.js` |
 | **Orders → Bag Orders** | `vInternal`, `bagOrderRowHtml` | `api_internal_order_add` (numbering), `api_order_update`, `api_freight`, `motive-sync`, `api_sync_delivery_dates` |
 | **Orders → Internal Freight** | `vInternalFreight`, `xferOrderRowHtml` | `api_transfer_order_add`, `api_order_update`, `api_freight` |
 | **Orders → External Orders** | `vOrders`, `extOrderRowHtml` | `api_order_create`, `api_order_update`, `api_order_route_save`, `api_order_copy`, `api_order_cancel`, `api_order_delete` |
@@ -138,7 +141,7 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | **Table Editor** | The data. Main tables: `orders`, `loads`, `load_orders` (which order is on which load), `schedule_notes` (text in Scheduler cells), `truck_off_days`, `day_notes`, `parties` (customers + brokers + carriers), `locations` (Pick/Drop list + bagger stores), `trucks`, `drivers`, `driver_truck_assignments`, `departments`, `order_stops` / `load_stops` (multi-stop routes), `documents`, `categories` (cell colors), `entities` / `fields` / `records` (custom databases), `sheets` / `sheet_cells` (custom sheets), `audit_events` / `audit_changes` (History). |
 | **Database → Functions** | Every `api_…` function (the business rules), plus `dept12_…` helpers. Source copy: backup folder → `supabase/migrations/20260924000002_api_functions.sql`. |
 | **Edge Functions** | `motive-sync`, `sheets-push`. Source copy: backup folder → `supabase/functions/`. |
-| **Edge Functions → Secrets** | `MOTIVE_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON` (need an admin to add). |
+| **Edge Functions → Secrets** | `MOTIVE_API_KEY` (needs an admin to add). |
 | **Authentication → Users** | The logins. Add people here (sign-ups off), then add their email to `dept12_private.allowed_logins`. |
 | **Storage → documents** | Uploaded PDFs, in folders named by order ID. |
 | **SQL Editor** | Where we paste database changes. |
@@ -158,6 +161,6 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | Rate-con / invoice reading | `app.js` → `═══ 02-chips-extract` → `parseRateCon`, `extractInvoiceInfo` |
 | Keyboard shortcuts | `app.js` → `═══ 01-core` → `BASE_SHORTCUTS`, `runShortcut` |
 | Sidebar menu items | `app.js` → `═══ 05-settings-nav-search` → `var NAV` |
-| Google driver-tab layout | Edge Function `sheets-push` (backup: `supabase/functions/sheets-push/`) — and keep `vDriverView` matching it |
+| Google driver-tab layout | `sheets-push.js` — and keep `vDriverView` matching it |
 | Report columns | Supabase → `api_report`; headers in `supabase-api.js` → `REPORT_LABELS` |
 | Who can sign in | Supabase → Authentication → Users, plus `dept12_private.allowed_logins` (approved emails) |

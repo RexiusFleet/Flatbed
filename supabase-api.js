@@ -10,8 +10,10 @@
  *     supabase/migrations/20260924000002_api_functions.sql.
  *   • Plain REST (/rest/v1/<table>) for simple single-row CRUD.
  *   • Storage (/storage/v1, private "documents" bucket) for PDFs.
- *   • Edge Functions (/functions/v1/*) ONLY for Motive and the Google Sheets
- *     driver mirror, because those need secrets the browser must never see.
+ *   • Edge Functions (/functions/v1/*) ONLY for Motive, because it needs a
+ *     secret the browser must never see. The Google Sheets driver mirror is
+ *     written from the browser with the pusher's own Google sign-in
+ *     (sheets-push.js).
  *
  * Access: every signed-in account has full access — there are no in-app
  * roles or per-page permissions. Who can sign in is managed in Supabase:
@@ -579,8 +581,9 @@ var ROUTES = {
   "internal-freight-rate/calculate": viaRpc("api_internal_freight_rate_calculate"),
   "sync-delivery-dates": viaRpc("api_sync_delivery_dates"),
   "motive/sync-miles": function (d, route) { return edgeFunction("motive-sync", d, histHeaders(route, d)); },
-  "sheets/push-driver-tabs": function (d, route) {
-    return edgeFunction("sheets-push", d, histHeaders(route, d, d && d.confirm ? { "x-dept12-external": "1" } : {}));
+  // Runs in the browser with the pusher's own Google sign-in (sheets-push.js).
+  "sheets/push-driver-tabs": function (d) {
+    return window.Dept12SheetsPush(d || {}, function (fn, args) { return rpc(fn, args); });
   },
 
   // Fleet / directory
