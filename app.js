@@ -8314,229 +8314,85 @@ function pasteSelection() {
   commitCellOps(ops, "paste", "Pasted");
 }
 
-/* ── Smart date-range inputs (D151) ───────────────────────────────────────
-   Nate: "all the date ranges that you can type into should be seamless i
-   can type 08/22/2026 or... 8 tab 22 tab 2026... make it easier to work
-   with tabs and slashes being the same thing inside the dates." A native
-   <input type=date> has no JS-visible way to move its own internal
-   segment cursor, so "/" (or a mid-date Tab) can never act as a segment
-   advance inside one — there is no browser API for it. These specific
-   range fields (Reports From/To, Current Week/Driver Tabs' "First day
-   drivers see") are plain `type=text` with a `data-smartdate` marker
-   instead; this module owns all typing/backspace/paste inside them and
-   is the only thing that writes their `.value`. `.value` is ALWAYS the
-   committed ISO date ("" while genuinely empty) — never the mid-typing
-   MM/DD/YYYY buffer — so every existing reader elsewhere in the app
-   keeps working unmodified; the visible text during editing is cosmetic
-   only, restored to the real value on blur if nothing usable was typed.
+/* ── Date boxes (data-smartdate) ──────────────────────────────────────────
+   A plain text box: typing, clicking into one part, selecting, backspace and
+   paste all behave like any normal field (double-click a part, e.g. the year,
+   to select just that part and retype it). Nothing is rewritten while you
+   type, so the cursor stays where you put it. When you finish — Tab, Enter
+   or clicking away — whatever was typed is read as a date and tidied into
+   MM/DD/YYYY:
+     "9/29" or "929"  → 09/29 of the current year
+     "9/29/26"        → 09/29/2026
+     "09292026"       → 09/29/2026   (digits only works too)
+   Something that isn't a real date puts the box back to what it was and
+   says so. Clearing the box clears the date.
 
-   Segments: month, day, year — index 0/1/2. "/" always advances one
-   segment (never leaves the field). Digits fill the active segment and
-   auto-advance once it's full (2 digits for month/day, 4 for year) —
-   typing "08222026" straight through works with no separators at all.
-   Tab is context-sensitive: on the month segment it just advances to day
-   (typing a bare month isn't a usable date yet); from day or year
-   onward it COMMITS immediately — inferring the year from the field's
-   last real value, or today's year if it never had one — and does NOT
-   preventDefault, so focus actually leaves exactly like a normal Tab.
-   That's the whole "8 tab 22 [tab away] and it just goes" flow. */
-var SMARTDATE = new WeakMap();  // el -> { seg: ["","",""], cur: 0, fresh, touched, justAdvanced, opened }
-var SMARTDATE_MAX = [2, 2, 4];
-function smartDateState(el) {
-  var s = SMARTDATE.get(el);
-  if (!s) {
-    s = { seg: ["", "", ""], cur: 0, fresh: true, touched: false, justAdvanced: false, opened: [true, true, true] };
-    SMARTDATE.set(el, s);
+   The real date (ISO) lives in data-last-iso, which is what everything that
+   reads these boxes uses; .value is only the MM/DD/YYYY people see. The
+   tidy-up runs on 'change' at the window, so by the time any other listener
+   hears 'change' or 'blur', data-last-iso is already the new date. */
+function parseDateText(text) {
+  var t = String(text || "").trim();
+  if (!t) return { empty: true };
+  var parts = t.split(/[^0-9]+/).filter(Boolean), m, d, y = null;
+  if (parts.length === 1) {                      // digits only
+    var x = parts[0];
+    if (x.length === 3) { m = x.slice(0, 1); d = x.slice(1); }
+    else if (x.length === 4) { m = x.slice(0, 2); d = x.slice(2); }
+    else if (x.length === 6) { m = x.slice(0, 2); d = x.slice(2, 4); y = x.slice(4); }
+    else if (x.length === 7) { m = x.slice(0, 1); d = x.slice(1, 3); y = x.slice(3); }
+    else if (x.length === 8) { m = x.slice(0, 2); d = x.slice(2, 4); y = x.slice(4); }
+    else return null;
+  } else if (parts.length === 2) { m = parts[0]; d = parts[1]; }
+  else if (parts.length === 3) { m = parts[0]; d = parts[1]; y = parts[2]; }
+  else return null;
+  var mi = parseInt(m, 10), di = parseInt(d, 10), yi;
+  if (y == null || y === "") yi = new Date().getFullYear();
+  else if (y.length === 2) yi = 2000 + parseInt(y, 10);
+  else if (y.length === 4) yi = parseInt(y, 10);
+  else return null;
+  var dt = new Date(yi, mi - 1, di);             // rejects 2/30, 13/1, 9/31…
+  if (!mi || !di || dt.getFullYear() !== yi || dt.getMonth() !== mi - 1 || dt.getDate() !== di) return null;
+  return { iso: yi + "-" + String(mi).padStart(2, "0") + "-" + String(di).padStart(2, "0") };
+}
+function commitDateBox(el) {
+  var r = parseDateText(el.value);
+  if (r && r.empty) { el.value = ""; el.removeAttribute("data-last-iso"); return; }
+  if (!r) {
+    el.value = isoToMdy(el.dataset.lastIso || "");
+    toast("That isn't a date. Type it as MM/DD/YYYY, or just 9/29 for this year.", true);
+    return;
   }
-  return s;
+  el.value = isoToMdy(r.iso); el.dataset.lastIso = r.iso;
 }
-function smartDateDisplay(s) {
-  var parts = [s.seg[0], s.seg[1], s.seg[2]];
-  while (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
-  return parts.join("/");
-}
-function smartDateRender(el, s) { el.value = smartDateDisplay(s); }
-function smartDateReset(el) {
-  var s = smartDateState(el);
-  s.seg = ["", "", ""]; s.cur = 0; s.fresh = false; s.justAdvanced = false; s.opened = [true, true, true];
-  return s;
-}
-/* Feed one run of digits through the same fill/auto-advance logic a real
-   keystroke uses — shared by typing and paste so both behave identically.
-   Tracks whether the LAST digit auto-advanced the segment, so an explicit
-   "/" immediately after (e.g. the middle slash in "08/20/2026", typed
-   right after "08" already auto-advanced past month) can tell "the user
-   is confirming a boundary that already happened" from "the user wants
-   to skip the rest of this segment" and not double-advance past day.
-
-   `opened` (D226 follow-up) tracks which segments still hold a REAL
-   pre-edit value the click handler preserved, vs. one that's already been
-   started fresh this session. A segment reached by auto-advance (filling
-   month rolls into day), "/", or a Tab-driven cur move is only cleared the
-   first time a digit actually lands in it — not eagerly on arrival — so a
-   user who clicks the day, types it, and stops never touches the untouched
-   year at all. Without this, that first digit APPENDED onto the old value
-   (e.g. day "14"→"20" rolls into a year that's still "2026", and one more
-   keystroke made it "20265"), which either overflowed into nonsense or, on
-   commit, failed length validation and silently fell back to the stale
-   year — Nate's "if I go to type the day... takes the year away." */
-function smartDateFeed(el, digits) {
-  var s = smartDateState(el);
-  s.touched = true;
-  for (var i = 0; i < digits.length; i++) {
-    if (s.cur > 2) break;
-    if (!s.opened[s.cur]) { s.seg[s.cur] = ""; s.opened[s.cur] = true; }
-    s.seg[s.cur] += digits[i];
-    s.justAdvanced = false;
-    if (s.seg[s.cur].length >= SMARTDATE_MAX[s.cur] && s.cur < 2) { s.cur++; s.justAdvanced = true; }
-  }
-  smartDateRender(el, s);
-}
-/* Commit reads the tracked segments directly (mm/dd/yyyy), never the
-   joined display text — a flat "how many digits total" guess can't tell
-   a single-digit month from a two-digit one once a year is also typed
-   (07202026, is that 07/20/26 or a garbled 7/2/2026?), but the segments
-   already know which digits went where as they were typed, so there's
-   nothing to guess. Clears to blank (not left stale) if what's typed
-   doesn't add up to a real date, fires 'change' so existing listeners
-   elsewhere fire exactly as they would for a real type=date input. */
-function smartDateCommit(el) {
-  var s = smartDateState(el);
-  var m = parseInt(s.seg[0], 10), d = parseInt(s.seg[1], 10), iso = "";
-  if (m && d && m <= 12 && d <= 31) {
-    var y;
-    if (s.seg[2].length === 4) y = parseInt(s.seg[2], 10);
-    else if (s.seg[2].length === 2) y = 2000 + parseInt(s.seg[2], 10);
-    else {
-      var fb = el.dataset.lastIso, fbY = fb && /^\d{4}-\d{2}-\d{2}$/.test(fb) ? fb.slice(0, 4) : null;
-      y = fbY ? parseInt(fbY, 10) : new Date().getFullYear();
-    }
-    iso = y + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
-  }
-  // The resting display is always MM/DD/YYYY, matching how the field looks
-  // right after a fresh render — .value is cosmetic here, never read
-  // directly by anything downstream. The real ISO lives in data-last-iso;
-  // every reader (the #cw-start change handler, the Reports export click
-  // handler) reads that instead of .value.
-  el.value = isoToMdy(iso) || "";
-  if (iso) el.dataset.lastIso = iso; else el.removeAttribute("data-last-iso");
-  SMARTDATE.delete(el);
-  // Both events, not just one — different consumers listen for different
-  // ones (order-tracker/#cw-start fields save on 'change'; drawer [data-of]
-  // fields save on 'blur', comparing against data-undo-prev-iso). A Tab-
-  // triggered commit runs from inside a keydown handler, before the
-  // browser's own focus change would fire a REAL blur — a dispatched
-  // keydown never triggers native focus traversal on its own, so without
-  // this the drawer's blur-driven save would just never run (caught live:
-  // typing a drawer delivery date and tabbing off left Postgres untouched,
-  // no /api/order/update at all). dispatchEvent is synchronous, so the
-  // save handler below runs to completion (reading the still-stale
-  // data-undo-prev-iso) before the sync lines after this run.
-  el.dispatchEvent(new Event("change", { bubbles: true }));
-  el.dispatchEvent(new Event("blur"));
-  // NOW sync the pre-edit markers — after the listeners above already used
-  // them. Left until after, the REAL blur the browser fires moments later
-  // (when focus actually leaves for real) sees prev already equal to next
-  // and correctly no-ops instead of firing a second, duplicate save.
-  el.dataset.undoPrev = el.value; el.dataset.undoPrevIso = el.dataset.lastIso || "";
-}
-document.addEventListener("focus", function (e) {
+window.addEventListener("focus", function (e) {
   var el = e.target.closest && e.target.closest("[data-smartdate]");
   if (!el) return;
-  // The rendered `data-last-iso` attribute is authoritative for the real
-  // ISO value (the visible .value is always MM/DD/YYYY once rendered) —
-  // only fall back to parsing .value for an element that never got one.
-  if (!el.dataset.lastIso) el.dataset.lastIso = mdyToIso(el.value) || "";
-  el.value = isoToMdy(el.dataset.lastIso) || el.value;
-  smartDateReset(el).fresh = true;
+  // A box rendered with only a date value (no data-last-iso yet) learns it here.
+  if (!el.dataset.lastIso) { var r = parseDateText(el.value); if (r && r.iso) el.dataset.lastIso = r.iso; }
+  el.dataset.dateTyped = "";
 }, true);
-/* A mouse click (unlike Tab-in) is the user aiming at ONE part of an
-   existing date — Nate: "let me select one part of the date without
-   deleting the entire date... if i click and type it wipes it." The focus
-   handler above always wipes to a blank fresh-typing state (by design,
-   D151's "tab in and just type a whole new date" flow); this runs right
-   after it for a real click and re-seeds the segments from the current
-   value, positions `cur` at whichever segment the caret landed in, and
-   blanks only THAT segment so the next digit replaces it while month/day/
-   year elsewhere stay put. Skipped once the user has already typed
-   something this focus session (`touched`) — clicking around mid-edit
-   doesn't reposition, same as before. */
-document.addEventListener("click", function (e) {
+window.addEventListener("input", function (e) {
   var el = e.target.closest && e.target.closest("[data-smartdate]");
-  if (!el || document.activeElement !== el) return;
-  var s = smartDateState(el);
-  if (s.touched) return;
-  var iso = el.dataset.lastIso || "";
-  s.seg = [iso.slice(5, 7), iso.slice(8, 10), iso.slice(0, 4)];
-  var pos = el.selectionStart == null ? 0 : el.selectionStart;
-  s.cur = pos < 3 ? 0 : pos < 6 ? 1 : 2;
-  s.seg[s.cur] = "";
-  // Only the clicked segment is pre-cleared — the other two hold real
-  // values that must survive untouched unless the user actually types into
-  // them too (smartDateFeed's `opened` check clears on that first digit).
-  s.opened = [false, false, false];
-  s.opened[s.cur] = true;
-  s.fresh = false;
-  s.justAdvanced = false;
-});
-document.addEventListener("blur", function (e) {
+  if (el) el.dataset.dateTyped = "1";
+}, true);
+// Tidy up before anyone else hears 'change' (fires when you leave the box).
+window.addEventListener("change", function (e) {
   var el = e.target.closest && e.target.closest("[data-smartdate]");
-  // Only commit if the user actually edited something — a plain focus-then-
-  // blur (tabbing through without typing) must never blank out a real value.
-  if (el && SMARTDATE.has(el)) {
-    if (SMARTDATE.get(el).touched) smartDateCommit(el);
-    else { el.value = el.dataset.lastIso || ""; SMARTDATE.delete(el); }
-  }
+  if (el) commitDateBox(el);
 }, true);
 document.addEventListener("keydown", function (e) {
   var el = e.target.closest && e.target.closest("[data-smartdate]");
   if (!el) return;
-  var s = smartDateState(el);
-  if (/^[0-9]$/.test(e.key)) {
+  if (e.key === "Enter") {
     e.preventDefault();
-    if (s.fresh) s = smartDateReset(el);
-    smartDateFeed(el, e.key);
-    return;
+    // Enter = done: leaving the box commits it (the browser fires 'change'
+    // once, then 'blur'). On the Scheduler's jump box it also jumps there.
+    el.blur();
+    if (el.id === "jump" && el.dataset.lastIso) jumpTo(el.dataset.lastIso);
+  } else if (e.key === "Escape") {
+    el.value = isoToMdy(el.dataset.lastIso || ""); el.dataset.dateTyped = ""; el.blur();
   }
-  if (e.key === "/") {
-    e.preventDefault();
-    s.fresh = false; s.touched = true;
-    // A full segment already auto-advanced on its last digit — this "/"
-    // is just confirming that boundary, not asking for a second advance
-    // past the segment that's now current (the actual bug this guards:
-    // "08" auto-advances to day, then the "/" typed right after would
-    // otherwise skip day entirely and land on year).
-    if (s.justAdvanced) { s.justAdvanced = false; }
-    else if (s.cur < 2) s.cur++;
-    smartDateRender(el, s);
-    return;
-  }
-  if (e.key === "Backspace") {
-    e.preventDefault();
-    s.fresh = false; s.touched = true; s.justAdvanced = false;
-    if (s.seg[s.cur]) s.seg[s.cur] = s.seg[s.cur].slice(0, -1);
-    else if (s.cur > 0) { s.cur--; s.seg[s.cur] = s.seg[s.cur].slice(0, -1); }
-    smartDateRender(el, s);
-    return;
-  }
-  if (e.key === "Tab") {
-    if (s.cur === 0 && (s.seg[0] || s.seg[1] || s.seg[2])) {
-      e.preventDefault(); s.fresh = false; s.cur = 1; smartDateRender(el, s); return;
-    }
-    if (s.seg[0] || s.seg[1] || s.seg[2]) smartDateCommit(el);  // else: nothing typed, let Tab just leave
-    return;
-  }
-  if (e.key === "Escape") { el.value = isoToMdy(el.dataset.lastIso || ""); SMARTDATE.delete(el); el.blur(); }
-});
-document.addEventListener("paste", function (e) {
-  var el = e.target.closest && e.target.closest("[data-smartdate]");
-  if (!el) return;
-  e.preventDefault();
-  var text = (e.clipboardData || window.clipboardData).getData("text");
-  var digits = text.replace(/\D/g, "");
-  if (!digits) return;
-  if (smartDateState(el).fresh) smartDateReset(el);
-  smartDateFeed(el, digits);
 });
 /* ═══ 11-toolbar ═══ */
 /* ── Formatting toolbar (D67) — a Sheets-style bar under the header, global but
