@@ -327,7 +327,20 @@ aside{border-left:1px solid var(--rule-2);background:var(--panel);display:flex;f
 /* Category-filled chip (D66) — the whole chip takes the category color, text
    auto-contrasts, and sub-lines inherit that color instead of the muted tokens. */
 .chip.filled{border-color:transparent}
-.chip.filled:hover{filter:brightness(.96)}
+/* External loads only: plain = white with a thick colored edge; pushed = soft tint of the driver color (set inline). */
+.chip.xchip{border-left-width:6px}
+.chip.tinted:hover{box-shadow:inset 0 0 0 100px rgba(0,0,0,.03)}
+.chip .meta .numln{display:flex;flex-wrap:wrap;column-gap:4px;align-items:baseline;min-width:0;width:100%;line-height:1.2}
+.chip .meta .numln{flex-wrap:nowrap;column-gap:3px}
+.chip .meta .numln i{font-family:var(--font);font-style:normal;font-size:8.5px;font-weight:600;color:var(--ink-2);white-space:nowrap}
+.chip .meta .numln b{font-weight:500;font-size:9px;letter-spacing:-.03em}
+.chip.xchip{padding:3px 5px 3px 6px}
+.chip.xchip .who{font-size:11px;line-height:1.25}
+.chip.xchip .meta.meta-route .route-line{font-size:var(--fs-caption);line-height:1.2}
+.chip.xchip .note{font-size:9.5px;line-height:1.2;margin-top:1px}
+.chip.xchip .note{color:var(--ink)}
+.chip .note .notepad{vertical-align:-1px}
+.chip.filled:hover{box-shadow:inset 0 0 0 100px rgba(0,0,0,.05)}
 .chip.filled .who,.chip.filled .meta,.chip.filled .note,.chip.filled .dnote{color:inherit}
 .chip.filled .meta{opacity:.85}
 .chip.filled .note,.chip.filled .dnote{opacity:.9}

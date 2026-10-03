@@ -277,7 +277,7 @@ var PREFS = {
   theme: localStorage.getItem("pref_theme") || "light",
   accent: localStorage.getItem("pref_accent") || DEFAULT_ACCENT,
   font: localStorage.getItem("pref_font") || "",
-  rowHeight: clampInt(localStorage.getItem("pref_rowHeight"), 56, 160, 84),
+  rowHeight: clampInt(localStorage.getItem("pref_rowHeight"), 56, 160, 96),
   colWidth: clampInt(localStorage.getItem("pref_colWidth"), 100, 320, 150)
 };
 /* Density used to tighten fixed scheduler cells. Scheduler dimensions are now
@@ -1172,6 +1172,8 @@ var CELLS = {};
    drop target that gets replaced. */
 function cellHasLoad(key) { return !!(CELLS[key] && CELLS[key].oid); }
 
+/* Little notepad for the note line on external chips. */
+var NOTEPAD_ICON = '<svg class="notepad" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2h9v12h-9zM6 5.5h4M6 8h4M6 10.5h2.5"/></svg> ';
 /* ── Chip construction — built, never stored ─────────────────────────────── */
 function buildChip(o) {
   var flags = [], notes = [], win = "anytime", title, line, route, nums;
@@ -1230,7 +1232,7 @@ function buildChip(o) {
   return { title: title, line: line, route: route, nums: nums, win: win, flags: flags,
            note: notes.join(" · "), needsNumber: !o.solomon_order_no && !o.is_transfer };
 }
-function chipHtml(o, drag, extra, catColor, fmt, pushColor) {
+function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
   var ch = buildChip(o), w = WIN[ch.win] || WIN.anytime;
   fmt = fmt || {};
   // Driver tab note (D140) — the one note that's actually pushed to the
@@ -1253,7 +1255,14 @@ function chipHtml(o, drag, extra, catColor, fmt, pushColor) {
            : (pushColor && pushColor.charAt(0) === "#") ? pushColor
            : (fmt.fill && fmt.fill.charAt(0) === "#") ? fmt.fill
            : (catColor && catColor.charAt(0) === "#") ? catColor : "";
-  var filled = !!fill;
+  /* External loads only (Nate): before a load is pushed to the drivers the
+     chip is plain — white with a thick edge in its color. Once pushed, it
+     takes a soft tint of the truck's driver color, edge unchanged. Text stays
+     the normal ink either way. Bag (07-) orders and Internal Freight keep the
+     original solid fill. */
+  var plainExt = isExt(o) && !o.is_transfer;
+  var filled = !plainExt && !!fill;
+  var tinted = plainExt && !!fill && !!pushed;
   var edge = fill || w.c;
   var textc = (fmt.text && fmt.text.charAt(0) === "#") ? fmt.text : (filled ? textOn(fill) : "");
   var ws = "";
@@ -1261,7 +1270,8 @@ function chipHtml(o, drag, extra, catColor, fmt, pushColor) {
   if (fmt.bold) ws += "font-weight:800;";
   if (fmt.italic) ws += "font-style:italic;";
   if (fmt.size) { var _fs = parseInt(fmt.size, 10); if (_fs > 0) ws += "font-size:" + _fs + "px;"; }
-  var bg = filled ? ";background:" + fill + (textc ? ";color:" + textc : "") : "";
+  var bg = filled ? ";background:" + fill + (textc ? ";color:" + textc : "")
+         : tinted ? ";background:color-mix(in srgb," + fill + " 17%,var(--panel))" : "";
   var chipTitle = [ch.title, ch.line].concat(ch.flags || []).concat(ch.note ? [ch.note] : [])
     .concat(dispatchNote ? [dispatchNote] : []).filter(Boolean).join(" · ");
   /* Timing (EARLY/ANYTIME) uses the same high-contrast callout as EAST,
@@ -1291,15 +1301,16 @@ function chipHtml(o, drag, extra, catColor, fmt, pushColor) {
         (o.pallet_count ? "<span>" + esc(o.pallet_count) + " PAL</span>" : "") +
         '<span class="nowrap">' + esc(o.solomon_order_no || "no order #") + "</span></div>"
     : (isExt(o) && !o.is_transfer)
-    ? '<div class="meta meta-2line meta-route"><span class="route-line">' + esc(ch.route) +
-        '</span><span class="nowrap">' + esc(ch.nums) + "</span></div>"
+    ? '<div class="meta meta-2line meta-route"><span class="route-line">' + esc(ch.route) + "</span>" +
+        '<span class="numln"><i>Load #:</i> <b class="nowrap">' + esc(o.broker_load_no || "none") + "</b></span>" +
+        '<span class="numln"><i>Rexius Order:</i> <b class="nowrap">' + esc(o.solomon_order_no || "none") + "</b></span></div>"
     : '<div class="meta"><span>' + esc(ch.line) + "</span></div>";
-  return '<div class="chip' + (filled ? " filled" : "") + '" style="--edge:' + edge + bg + '" draggable="' + (drag ? "true" : "false") +
+  return '<div class="chip' + (filled ? " filled" : "") + (plainExt ? " xchip" : "") + (tinted ? " tinted" : "") + '" style="--edge:' + edge + bg + '" draggable="' + (drag ? "true" : "false") +
     '" data-oid="' + o.id + '" title="' + esc(chipTitle) + '" ' + (extra || "") + ">" +
     '<div class="who"' + (ws ? ' style="' + ws + '"' : "") + ">" + esc(ch.title) + "</div>" +
     metaHtml +
     (f ? '<div class="flags">' + f + "</div>" : "") +
-    (ch.note ? '<div class="note">&#9873; ' + esc(ch.note) + "</div>" : "") +
+    (ch.note ? '<div class="note">' + NOTEPAD_ICON + esc(ch.note) + "</div>" : "") +
     /* Driver tab note (D140) — the pushed note, distinct from ch.note above
        (dispatcher-private, customer/location-derived, never pushed). */
     (dispatchNote ? '<div class="dnote">&#9998; ' + esc(dispatchNote) + "</div>" : "") + "</div>";
@@ -1759,7 +1770,7 @@ function schedDateForOrder(oid) {
 function drawerChipMarkup(o) {
   var found = schedValueForOrder(o.id), v = found && found.value;
   return chipHtml(o, false, "", v && v.cat,
-    (v && v.fmt) || {}, pushColorFor(o, v));
+    (v && v.fmt) || {}, pushColorFor(o, v), !!(v && v.pushedAt));
 }
 /* Outside-carrier section (D115/D122) — only renders once an order is
    actually sitting on the carrier lane (is_carrier, before or after it has a
@@ -2469,7 +2480,7 @@ function reorderDatabaseColumns(grid, draggedRef, targetRef) {
 function cellInner(key) {
   var v = CELLS[key];
   if (!v) return "";
-  if (v.oid) { var o = order(v.oid); if (o) return chipHtml(o, true, 'data-from="' + key + '"', v.cat, v.fmt, pushColorFor(o, v)); }
+  if (v.oid) { var o = order(v.oid); if (o) return chipHtml(o, true, 'data-from="' + key + '"', v.cat, v.fmt, pushColorFor(o, v), !!v.pushedAt); }
   var fill = effFill(v), fm = v.fmt || {};
   var st = "";
   if (fm.text && fm.text.charAt(0) === "#") st += "color:" + fm.text + ";";
@@ -2868,7 +2879,7 @@ function dvSlotCellsHtml(key) {
   var deliveryInput = isExt(o) ? '<input class="dv-field-inp" type="text" data-dvfield="delivery_number" data-oid="' +
     o.id + '" value="' + esc(o.delivery_number || "") + '">' : "";
   return '<div class="dv-cell" data-key="' + key + '" draggable="true" data-oid="' + o.id + '" data-from="' + key +
-    '" style="cursor:grab">' + chipHtml(o, false, "", v.cat, v.fmt, pushColorFor(o, v)) + "</div>" +
+    '" style="cursor:grab">' + chipHtml(o, false, "", v.cat, v.fmt, pushColorFor(o, v), !!v.pushedAt) + "</div>" +
     '<div class="dv-cell">' + driverNoteInput + "</div>" +
     '<div class="dv-cell">' + poInput + "</div>" +
     '<div class="dv-cell">' + deliveryInput + "</div>" +
@@ -4072,7 +4083,7 @@ function schedulerSizingHtml() {
       '<div class="who">SAMPLE CUSTOMER CO</div>' +
       '<div class="meta"><span>24 PAL · Sample Order</span></div>' +
       '<div class="flags"><span class="flag">EARLY</span><span class="flag">FORKLIFT</span></div>' +
-      '<div class="note">&#9873; Call ahead before delivery</div>' +
+      '<div class="note">' + NOTEPAD_ICON + 'Call ahead before delivery</div>' +
     "</div>";
   var chip2 =
     '<div class="chip filled" style="--edge:#3F7D3A;background:#3F7D3A;color:#fff" draggable="false">' +
@@ -6558,7 +6569,7 @@ document.addEventListener("click", function (e) {
     forgetAccent(t.dataset.accentForget); render(); toast("Saved color removed"); return;
   }
   if (t.dataset.schedsizeReset) {
-    setPref("rowHeight", 84); setPref("colWidth", 150); render(); toast("Scheduler size reset"); return;
+    setPref("rowHeight", 96); setPref("colWidth", 150); render(); toast("Scheduler size reset"); return;
   }
   if (t.dataset.numberingSave) {
     var numberingBody = {
@@ -7767,6 +7778,15 @@ function openDayMenu(x, y, rowhd) {
 function openMenu(x, y, items) {
   closeCtxMenu(); closePalette();
   var m = document.createElement("div"); m.id = "ctxmenu"; m.className = "ctxmenu";
+  // A customer/broker rename: every load keeps its own copy of the display
+  // name (customer_name/broker_name come from a JOIN at bootstrap), so renaming
+  // the party row alone left old loads showing the old name until a reload.
+  if (table === "parties" && obj && row && row.name !== undefined) {
+    (DB.orders || []).forEach(function (o) {
+      if (o.broker_party_id === id) o.broker_name = obj.name;
+      if (o.customer_party_id === id) o.customer_name = obj.name;
+    });
+  }
   m.innerHTML = items.map(function (it, i) {
     return '<button data-mi="' + i + '"' + (it.danger ? ' class="bad"' : "") + ">" + esc(it.label) + "</button>";
   }).join("");
