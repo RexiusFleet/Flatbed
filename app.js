@@ -3476,6 +3476,55 @@ function externalOrderCompare(a, b) {
    ▸ arrow that rotates via CSS on `[aria-expanded="true"]`, not a swapped
    glyph, same class-naming formula under a tracker-scoped prefix. */
 var TRACKER_COLLAPSED_OPEN = {};
+/* Click a column name to sort the Delivered / Billed list under it. The live rows above keep their
+   own order. In-memory only, like GRIDSORT. One click sorts ascending, a second flips it, and
+   clicking a sorted column a third time puts the list back to its normal order. */
+var TSORT = {};   // { "ext-billed": {key, dir} }
+var TSORT_GROUP = { ext: "ext-billed", int: "int-delivered", xfer: "xfer-delivered" };
+function tsortTh(grid, key, label, width, cls) {
+  var s = TSORT[TSORT_GROUP[grid]], on = s && s.key === key;
+  return '<th class="tsortable' + (cls ? " " + cls : "") + '" style="width:' + width + 'px" data-tsort="' + grid + "|" + key +
+    '" title="Sort the ' + (grid === "ext" ? "Billed" : "Delivered") + ' list by this column"' +
+    (on ? ' aria-sort="' + (s.dir > 0 ? "ascending" : "descending") + '"' : "") + ">" + label +
+    (on ? '<span class="tsort-arrow">' + (s.dir > 0 ? "&#9650;" : "&#9660;") + "</span>" : "") + "</th>";
+}
+function tsortValue(o, key) {
+  var loc = function (id) { var l = id ? locById(id) : null; return l ? l.name || "" : ""; };
+  switch (key) {
+    case "order": return o.solomon_order_no || "";
+    case "load": return o.broker_load_no || "";
+    case "broker": return o.broker_name || (o.broker_party_id && party(o.broker_party_id) ? party(o.broker_party_id).name : "") || "";
+    case "po": return o.po_number || "";
+    case "delnum": return o.delivery_number || "";
+    case "notes": return o.notes || "";
+    case "tarp": return o.tarp ? 1 : 0;
+    case "pickup": return loc(o.pickup_location_id);
+    case "drop": return loc(o.delivery_location_id);
+    case "ordered": return String(o.ordered_at || "").slice(0, 10);
+    case "delivered": return String(o.delivered_at || "").slice(0, 10);
+    case "docs": return docsFor(o.id).length;
+    case "pal": return o.pallet_count == null ? null : +o.pallet_count;
+    case "customer": return o.customer_name || (o.customer_party_id && party(o.customer_party_id) ? party(o.customer_party_id).name : "") || "";
+    case "window": var l = o.customer_party_id ? locFor(o.customer_party_id) : null; return l ? (l.timing_window || "") + (l.is_umatilla ? "E" : "") : "";
+    case "truck": return o.truck_number || "";
+    case "miles": return o.miles == null ? null : +o.miles;
+    case "freight": return o.internal_freight_amount == null ? null : +o.internal_freight_amount;
+    case "dept": return o.transfer_department_name || "";
+  }
+  return "";
+}
+function tsortRows(group, rows) {
+  var s = TSORT[group]; if (!s) return rows;
+  return rows.slice().sort(function (a, b) {
+    var x = tsortValue(a, s.key), y = tsortValue(b, s.key);
+    if (x === null || x === "") { if (y === null || y === "") return 0; return 1; }   // blanks always last
+    if (y === null || y === "") return -1;
+    var c = typeof x === "number" && typeof y === "number" ? x - y
+      : String(x).localeCompare(String(y), undefined, { numeric: true, sensitivity: "base" });
+    return c * s.dir;
+  });
+}
+
 function trackerCollapseToggleRow(key, label, count, colspan) {
   var open = !!TRACKER_COLLAPSED_OPEN[key];
   return '<tr class="tracker-collapse-row"><td colspan="' + colspan + '">' +
@@ -3569,19 +3618,19 @@ function vOrders(kind) {
     trackerSelTh("ext") +
     trackerOpenTh() +
     '<th class="order-actions-col" style="width:220px">Status / Stage</th>' +
-    '<th style="width:120px">Order #</th><th style="width:96px">Load #</th>' +
-    '<th style="width:190px">Broker/Customer</th><th style="width:100px">PU/PO</th>' +
-    '<th style="width:100px">Delivery #</th><th style="width:200px">Notes / Appointment info</th>' +
-    '<th style="width:56px">Tarp</th>' +
-    '<th style="width:180px">Pickup Address</th><th style="width:180px">Drop Address</th>' +
-    '<th style="width:112px">Ordered</th><th style="width:112px">Delivered</th>' +
-    "<th style=\"width:64px\">Docs</th>" +
+    tsortTh("ext", "order", "Order #", 120) + tsortTh("ext", "load", "Load #", 96) +
+    tsortTh("ext", "broker", "Broker/Customer", 190) + tsortTh("ext", "po", "PU/PO", 100) +
+    tsortTh("ext", "delnum", "Delivery #", 100) + tsortTh("ext", "notes", "Notes / Appointment info", 200) +
+    tsortTh("ext", "tarp", "Tarp", 56) +
+    tsortTh("ext", "pickup", "Pickup Address", 180) + tsortTh("ext", "drop", "Drop Address", 180) +
+    tsortTh("ext", "ordered", "Ordered", 112) + tsortTh("ext", "delivered", "Delivered", 112) +
+    tsortTh("ext", "docs", "Docs", 64) +
     "</tr></thead><tbody>";
   liveRows.forEach(function (o, i) { h += extOrderRowHtml(o, i, pm); });
   if (billedRows.length) {
     h += trackerCollapseToggleRow("ext-billed", "Billed", billedRows.length, EXT_TRACKER_COLS);
     if (TRACKER_COLLAPSED_OPEN["ext-billed"])
-      h += trackerCollapsedRowsHtml("ext-billed", billedRows, liveRows.length,
+      h += trackerCollapsedRowsHtml("ext-billed", tsortRows("ext-billed", billedRows), liveRows.length,
         function (o, i) { return extOrderRowHtml(o, i, pm); }, EXT_TRACKER_COLS);
   }
   return h + "</tbody></table></div>";
@@ -3747,18 +3796,18 @@ function vInternal() {
     trackerSelTh("int") +
     trackerOpenTh() +
     '<th class="order-actions-col" style="width:220px">Status / Stage</th>' +
-    '<th style="width:130px">Order #</th><th style="width:64px">PAL</th>' +
-    '<th style="width:220px">' + esc(fieldLabel("bagger", "name", "Customer")) + '</th>' +
-    '<th style="width:100px">' + esc(fieldLabel("bagger", "category_id", "Time Window")) + '</th>' +
-    '<th style="width:112px">Ordered</th><th style="width:112px">Delivered</th>' +
-    '<th style="width:240px">Notes</th><th style="width:80px">Truck</th><th style="width:150px">Miles</th>' +
-    '<th style="width:100px">Transfer $</th></tr></thead><tbody>';
+    tsortTh("int", "order", "Order #", 130) + tsortTh("int", "pal", "PAL", 64) +
+    tsortTh("int", "customer", esc(fieldLabel("bagger", "name", "Customer")), 220) +
+    tsortTh("int", "window", esc(fieldLabel("bagger", "category_id", "Time Window")), 100) +
+    tsortTh("int", "ordered", "Ordered", 112) + tsortTh("int", "delivered", "Delivered", 112) +
+    tsortTh("int", "notes", "Notes", 240) + tsortTh("int", "truck", "Truck", 80) + tsortTh("int", "miles", "Miles", 150) +
+    tsortTh("int", "freight", "Transfer $", 100) + '</tr></thead><tbody>';
 
   liveRows.forEach(function (o, i) { h += bagOrderRowHtml(o, i, pm); });
   if (deliveredRows.length) {
     h += trackerCollapseToggleRow("int-delivered", "Delivered", deliveredRows.length, INT_TRACKER_COLS);
     if (TRACKER_COLLAPSED_OPEN["int-delivered"])
-      h += trackerCollapsedRowsHtml("int-delivered", deliveredRows, liveRows.length,
+      h += trackerCollapsedRowsHtml("int-delivered", tsortRows("int-delivered", deliveredRows), liveRows.length,
         function (o, i) { return bagOrderRowHtml(o, i, pm); }, INT_TRACKER_COLS);
   }
   h += "</tbody></table></div>";
@@ -3819,15 +3868,15 @@ function vInternalFreight() {
     trackerSelTh("xfer") +
     trackerOpenTh() +
     '<th class="order-actions-col" style="width:220px">Status / Stage</th>' +
-    '<th style="width:300px">Load Info</th>' +
-    '<th style="width:200px">Department</th>' +
-    '<th style="width:112px">Ordered</th><th style="width:112px">Delivered</th>' +
-    '<th style="width:80px">Truck</th><th style="width:150px">Miles</th><th style="width:100px">Transfer $</th></tr></thead><tbody>';
+    tsortTh("xfer", "notes", "Load Info", 300) + tsortTh("xfer", "dept", "Department", 200) +
+    tsortTh("xfer", "ordered", "Ordered", 112) + tsortTh("xfer", "delivered", "Delivered", 112) +
+    tsortTh("xfer", "truck", "Truck", 80) + tsortTh("xfer", "miles", "Miles", 150) +
+    tsortTh("xfer", "freight", "Transfer $", 100) + '</tr></thead><tbody>';
   liveRows.forEach(function (o, i) { h += xferOrderRowHtml(o, i); });
   if (deliveredRows.length) {
     h += trackerCollapseToggleRow("xfer-delivered", "Delivered", deliveredRows.length, XFER_TRACKER_COLS);
     if (TRACKER_COLLAPSED_OPEN["xfer-delivered"])
-      h += trackerCollapsedRowsHtml("xfer-delivered", deliveredRows, liveRows.length,
+      h += trackerCollapsedRowsHtml("xfer-delivered", tsortRows("xfer-delivered", deliveredRows), liveRows.length,
         function (o, i) { return xferOrderRowHtml(o, i); }, XFER_TRACKER_COLS);
   }
   h += "</tbody></table></div>";
@@ -4021,12 +4070,29 @@ function jsonCell(f, ctx) {
   return '<td><div class="cell"><input class="cell-i" type="' + ty + '" ' + a +
     ' value="' + esc(val == null ? "" : val) + '"></div></td>';
 }
+/* Database header click sorts (temporary, this browser only, same as the order trackers); right-click
+   has "Select column". The Sort button's dialog still has "Save as row order" for everyone. */
+function dbSortFieldId(colref) {
+  var p = String(colref).split(":");
+  return p[0] === "custom" ? "gridcol:" + p[1] : p[1];
+}
+function dbSortArrow(grid, colref) {
+  var s = GRIDSORT[grid];
+  return s && s.fieldId === dbSortFieldId(colref)
+    ? '<span class="tsort-arrow">' + (s.dir === "asc" ? "&#9650;" : "&#9660;") + "</span>" : "";
+}
+function dbSortAttr(grid, colref) {
+  var s = GRIDSORT[grid];
+  return s && s.fieldId === dbSortFieldId(colref) ? ' aria-sort="' + (s.dir === "asc" ? "ascending" : "descending") + '"' : "";
+}
 function fieldTh(f, grid) {
   // Right-click for conditional formatting / hide / delete (D85 Phase 2) —
   // no inline menu button, keeps headers clean.
   return '<th draggable="true" data-colgrid="' + grid + '" data-colref="field:' + f.id + '" data-fieldid="' + f.id + '"' +
     (f.width ? ' style="width:' + f.width + 'px;white-space:nowrap"' : ' style="white-space:nowrap"') +
-    ' title="Drag to reorder · Right-click for options">' + esc(f.label) + '<span class="col-resize"></span></th>';
+    dbSortAttr(grid, "field:" + f.id) +
+    ' title="Click to sort · Right-click to select the column or for options · Drag to reorder">' + esc(f.label) +
+    dbSortArrow(grid, "field:" + f.id) + '<span class="col-resize"></span></th>';
 }
 /* Per-column conditional formatting (D85 Phase 1 remaining item #2). `fields.
    conditional_format` is [{op,value,color}]; the first matching rule wins, top
@@ -4227,7 +4293,6 @@ function vBuiltin(ent) {
   // don't ride the legacy grid_columns system — their fields ARE `fields`.
   var tblW = 44 + cols.reduce(function (s, c) { return s + c.width; }, 0) + 38;
   var srt = GRIDSORT[gk], srtFld = srt && sortFlds.filter(function (f) { return f.id === srt.fieldId; })[0];
-  var sortLabel = srtFld ? "View: " + srtFld.label + (srt.dir === "desc" ? " ↓" : " ↑") : "Sort & Order";
   var selectedRows = (ROWSEL[gk] || []).length;
   var rowAction;
   var archiveViewButton = "";
@@ -4254,7 +4319,8 @@ function vBuiltin(ent) {
   // a call to action — .active (outline, not fill) so it never competes with
   // the one real primary button (D172's "exactly one .btn.pri" contract).
   var h = toolbarHtml(ent.name, {
-    secondary: '<button class="btn' + (srtFld ? " active" : "") + '" data-sortbtn="' + gk + '">' + esc(sortLabel) + "</button>" +
+    secondary: (srtFld ? '<button class="btn active" data-sortsave="' + gk + '" title="Make this the saved row order for everyone">Save Order</button>' +
+        '<button class="btn" data-sortclear="' + gk + '" title="Back to the normal order">Clear Sort</button>' : "") +
       archiveViewButton + rowAction,
     primary: addBtn
   });
@@ -5197,48 +5263,21 @@ function routeEditorModal(oid, suppliedStops) {
   var simpleBtn = $("#route-simple"); if (simpleBtn) simpleBtn.addEventListener("click", function () { saveRoute("simple"); });
 }
 function closeModal() { var m = $("#modal"); if (m) m.classList.remove("on"); $("#scrim").classList.remove("on"); }
-/* Database sorting deliberately has two modes: a browser-only view sort and a
-   saved default row order. The latter is explicit because it changes what
-   everyone sees when they open this database. */
-function databaseSortModal(grid) {
-  var ent = entityForGrid(grid); if (!ent) return;
-  var fields = sortableFields(ent, grid), cur = GRIDSORT[grid];
-  if (!fields.length) { toast("Add a column before sorting", true); return; }
-  var selected = (cur && fields.some(function (f) { return f.id === cur.fieldId; })) ? cur.fieldId : fields[0].id;
-  var opts = fields.map(function (f) {
-    return '<option value="' + esc(f.id) + '"' + (f.id === selected ? " selected" : "") + '>' + esc(f.label) + '</option>';
-  }).join("");
-  openModal('<div class="modal-hd"><h2>Sort rows</h2></div>' +
-    '<div class="modal-body sort-dialog">' +
-      '<label class="mf"><span>Column</span><select id="sort-field">' + opts + '</select></label>' +
-      '<section><b>Sort this view</b><p>Temporary. Only changes what you see in this browser.</p>' +
-        '<div class="sort-actions"><button class="btn" data-sort-view="asc">A → Z</button>' +
-        '<button class="btn" data-sort-view="desc">Z → A</button>' +
-        '<button class="btn" id="sort-clear"' + (cur ? "" : " disabled") + '>Clear</button></div></section>' +
-      '<section><b>Save as row order</b><p>Reorders this database for everyone. New rows will follow the saved rows.</p>' +
-        '<div class="sort-actions"><button class="btn pri" data-sort-save="asc">Save A → Z</button>' +
-        '<button class="btn pri" data-sort-save="desc">Save Z → A</button></div></section>' +
-    '</div><div class="modal-ft"><button class="btn" id="modal-cancel">Close</button></div>');
-  $$('[data-sort-view]').forEach(function (b) { b.addEventListener("click", function () {
-    GRIDSORT[grid] = { fieldId: $("#sort-field").value, dir: b.dataset.sortView };
-    closeModal(); render();
-  }); });
-  var clear = $("#sort-clear"); if (clear) clear.addEventListener("click", function () {
-    delete GRIDSORT[grid]; closeModal(); render();
-  });
-  $$('[data-sort-save]').forEach(function (b) { b.addEventListener("click", function () {
-    var fieldId = $("#sort-field").value, dir = b.dataset.sortSave;
-    var field = fields.filter(function (f) { return f.id === fieldId; })[0];
-    var rows = storedOrderRows(ent.kind === "custom" ? recordRows(ent.id) : builtinRows(ent.slug), grid, ent);
-    var ids = sortRowsBy(rows, field, dir).map(function (row) { return rowIdForEntity(row, ent); });
-    confirmModal('Save “' + field.label + '” ' + (dir === "asc" ? 'A → Z' : 'Z → A') +
-      ' as the default row order for this database?', function () {
-        api("grid/row/reorder", { grid: grid, row_ids: ids,
-          archived_view: archiveViewForGrid(grid) }).then(function () {
-          delete GRIDSORT[grid]; toast("Saved row order"); return reload();
-        }).catch(function (err) { toast(err.message, true); });
-      }, "Save row order");
-  }); });
+/* Database sorting has two modes: clicking a column name sorts this browser's view only; Save Order
+   (shown while a sort is active) makes that order the default for everyone who opens this database. */
+function saveDatabaseOrder(grid) {
+  var ent = entityForGrid(grid), cur = GRIDSORT[grid]; if (!ent || !cur) return;
+  var field = sortableFields(ent, grid).filter(function (f) { return f.id === cur.fieldId; })[0];
+  if (!field) return;
+  var rows = storedOrderRows(ent.kind === "custom" ? recordRows(ent.id) : builtinRows(ent.slug), grid, ent);
+  var ids = sortRowsBy(rows, field, cur.dir).map(function (row) { return rowIdForEntity(row, ent); });
+  confirmModal('Save “' + field.label + '” ' + (cur.dir === "asc" ? 'A → Z' : 'Z → A') +
+    ' as the default row order for this database, for everyone?', function () {
+      api("grid/row/reorder", { grid: grid, row_ids: ids,
+        archived_view: archiveViewForGrid(grid) }).then(function () {
+        delete GRIDSORT[grid]; toast("Saved row order"); return reload();
+      }).catch(function (err) { toast(err.message, true); });
+    }, "Save row order");
 }
 /* Day note popup (D230) — a dispatcher-only note pinned to a calendar date,
    opened from the scheduler's date-header right-click menu (openDayMenu,
@@ -5541,7 +5580,9 @@ function gridCols(grid) {
 function customThCol(c, grid) {
   return '<th draggable="true" data-colgrid="' + grid + '" data-colref="custom:' + c.id +
     '" data-customcol="' + c.id + '" style="width:' + (c.width || 140) +
-    'px;white-space:nowrap" title="Drag to reorder · Right-click for options">' + esc(c.label) + "</th>";
+    'px;white-space:nowrap"' + dbSortAttr(grid, "custom:" + c.id) +
+    ' title="Click to sort · Right-click to select the column or for options · Drag to reorder">' + esc(c.label) +
+    dbSortArrow(grid, "custom:" + c.id) + "</th>";
 }
 function customTdCol(c, table, id, custom) {
   custom = custom || {};
@@ -6623,7 +6664,13 @@ document.addEventListener("click", function (e) {
     return;
   }
   var dbcol = e.target.closest("th[data-colref]");
-  if (dbcol && !e.target.closest(".col-resize")) { toggleDatabaseColumn(dbcol); return; }
+  if (dbcol && !e.target.closest(".col-resize")) {
+    var sg = dbcol.dataset.colgrid, sf = dbSortFieldId(dbcol.dataset.colref), sc = GRIDSORT[sg];
+    if (!sc || sc.fieldId !== sf) GRIDSORT[sg] = { fieldId: sf, dir: "asc" };
+    else if (sc.dir === "asc") sc.dir = "desc";
+    else delete GRIDSORT[sg];
+    render(); return;
+  }
   var dvp = e.target.closest("[data-dvpick]");
   if (dvp) { DRIVER_VIEW = dvp.dataset.dvpick; render(); return; }
   var sp = e.target.closest("[data-setpref]");
@@ -6639,9 +6686,9 @@ document.addEventListener("click", function (e) {
     paintRowSel(g, table); return;
   }
   var t = e.target.closest("[data-sec],[data-sub],[data-stage],[data-report],[data-open],[data-pkgrow],[data-route-edit]," +
-    "[data-pkg],[data-nodelivery],[data-restore-order],[data-tracker-collapse],[data-tracker-collapse-more]," +
+    "[data-pkg],[data-nodelivery],[data-restore-order],[data-tracker-collapse],[data-tracker-collapse-more],[data-tsort]," +
     "[data-copy-order],[data-addcust],[data-addcol]," +
-    "[data-addrow],[data-delrows],[data-archiverows],[data-archiveview],[data-orderdelrows],[data-ordercancelrows],[data-delete-doc],[data-frreset],[data-catadd],[data-catdel],[data-sortbtn]," +
+    "[data-addrow],[data-delrows],[data-archiverows],[data-archiveview],[data-orderdelrows],[data-ordercancelrows],[data-delete-doc],[data-frreset],[data-catadd],[data-catdel],[data-sortsave],[data-sortclear]," +
     "[data-addsheet],[data-sheet-addrow],[data-sheet-addcol],[data-sheet-rename]," +
     "[data-managecols],[data-colup],[data-coldown],[data-adddb]," +
     "#theme,#sync-btn,#jump-btn,#today-jump,#logo-home,#add-truck," +
@@ -6689,8 +6736,9 @@ document.addEventListener("click", function (e) {
     return;
   }
   if (t.dataset.adddb) { newDatabaseModal(); return; }
-  if (t.dataset.sortbtn) {
-    databaseSortModal(t.dataset.sortbtn);
+  if (t.dataset.sortclear) { delete GRIDSORT[t.dataset.sortclear]; render(); return; }
+  if (t.dataset.sortsave) {
+    saveDatabaseOrder(t.dataset.sortsave);
     return;
   }
   /* Custom Database sheets (D74). The + just opens a fresh sheet — rename it by
@@ -7286,6 +7334,15 @@ document.addEventListener("click", function (e) {
       });
     }).catch(function (e) { toast(e.message, true); });
     return;
+  }
+  if (t.dataset.tsort) {
+    var tp = t.dataset.tsort.split("|"), tg = TSORT_GROUP[tp[0]], cur = TSORT[tg];
+    if (!cur || cur.key !== tp[1]) TSORT[tg] = { key: tp[1], dir: 1 };
+    else if (cur.dir === 1) cur.dir = -1;
+    else delete TSORT[tg];
+    TRACKER_COLLAPSED_OPEN[tg] = true;   // sorting a closed list opens it so the result is visible
+    delete TRACKER_COLLAPSED_SHOWN[tg];
+    render(); return;
   }
   if (t.dataset.trackerCollapse) {
     var tck = t.dataset.trackerCollapse;
@@ -8437,8 +8494,9 @@ document.addEventListener("contextmenu", function (e) {
   if (fth) {
     e.preventDefault();
     var fld = (DB.fields || []).filter(function (f) { return f.id === fth.dataset.fieldid; })[0];
-    if (!fld) return;
+    if (!fld) { openMenu(e.clientX, e.clientY, [{ label: "Select column", run: function () { selectDatabaseColumn(fth); } }]); return; }
     var fitems = [
+      { label: "Select column", run: function () { selectDatabaseColumn(fth); } },
       { label: "Conditional formatting…", run: function () { condFmtFieldModal(fld); } }
     ];
     // Only a plain generic column-backed field can become a managed dropdown
@@ -8461,8 +8519,9 @@ document.addEventListener("contextmenu", function (e) {
   if (cth) {
     e.preventDefault();
     var col = (DB.grid_columns || []).filter(function (c) { return c.id === cth.dataset.customcol; })[0];
-    if (!col) return;
+    if (!col) { openMenu(e.clientX, e.clientY, [{ label: "Select column", run: function () { selectDatabaseColumn(cth); } }]); return; }
     openMenu(e.clientX, e.clientY, [
+      { label: "Select column", run: function () { selectDatabaseColumn(cth); } },
       { label: "Edit column…", run: function () { columnModal(col.grid, col); } },
       { label: "Delete column", danger: true, run: function () {
         confirmModal('Delete column "' + col.label + '"? Its data is lost.', function () {
@@ -8470,6 +8529,13 @@ document.addEventListener("contextmenu", function (e) {
         }, "Delete column");
       } }
     ]);
+    return;
+  }
+  /* Any other database column header: at least Select column. */
+  var gth = e.target.closest && e.target.closest("th[data-colref]");
+  if (gth) {
+    e.preventDefault();
+    openMenu(e.clientX, e.clientY, [{ label: "Select column", run: function () { selectDatabaseColumn(gth); } }]);
     return;
   }
   /* Custom Database sheet tab (D74) — rename/delete. */
@@ -8551,7 +8617,7 @@ document.addEventListener("pointerdown", function (e) {
    nonexistent var(--accent), so selection worked but painted nothing.
    Confirm the paint, not just the logic. */
 var MARQ = null, SEL_ANCHOR = null, COLSEL = null;
-function toggleDatabaseColumn(th) {
+function selectDatabaseColumn(th) {
   var key = th.dataset.colgrid + "|" + th.dataset.colref;
   if (COLSEL === key) { clearMulti(); return; }
   var tr = th.parentNode, idx = [].indexOf.call(tr.children, th), table = th.closest("table");

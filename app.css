@@ -766,11 +766,6 @@ select.cell-i{cursor:pointer}
 .mf.chk{flex-direction:row;align-items:center;gap:7px}
 .mf.chk>input{width:auto}
 .modal-ft{padding:12px 18px;border-top:1px solid var(--rule);display:flex;justify-content:flex-end;gap:8px}
-.sort-dialog{gap:14px}
-.sort-dialog section{border:1px solid var(--rule);border-radius:var(--r-lg);padding:11px 12px;background:var(--paper)}
-.sort-dialog section>b{font-size:var(--fs-body-sm)}
-.sort-dialog section>p{font-size:var(--fs-label);color:var(--ink-3);line-height:1.45;margin:3px 0 9px}
-.sort-actions{display:flex;flex-wrap:wrap;gap:7px}
 /* Drawer Pickup / Drop: one search box per stop, + Add Pick / + Add Drop. */
 /* Same 120px label column as the drawer's .fields above, so every box
    lines up; the action column is fixed so all rows stay the same width. */
@@ -1452,3 +1447,8 @@ body.nav-collapsed .nav-footer-btn>span:last-child{display:none}
    hard square box with black text as the APPT box. NO ORDER # stays red. */
 .flag{border:1.5px solid var(--ink);color:var(--ink);background:var(--panel);border-radius:0;padding:0 4px}
 .flag.warn{border-color:var(--bad);color:var(--bad);background:var(--panel)}
+
+/* Sortable column names on the order trackers (sorts the Delivered / Billed list) */
+th.tsortable{cursor:pointer;user-select:none}
+th.tsortable:hover{color:var(--ink);background:var(--panel)}
+.tsort-arrow{margin-left:5px;font-size:var(--fs-caption);color:var(--ink-2)}
