@@ -166,8 +166,16 @@ function storageRemove(paths) {
 }
 // Short-lived (5 min) signed URL — the bucket is private, so this is the
 // only way a browser can read a document.
+/* Driver POD/BOL scans are in their own private bucket, "driver-scans". Their
+   storage_path is "driver-scan:<order id>/<file>.pdf" inside the dashboard; every
+   other document is in the "documents" bucket. */
+function bucketAndKey(path) {
+  return /^driver-scan:/.test(path) ? { bucket: "driver-scans", key: String(path).slice("driver-scan:".length) }
+                                    : { bucket: BUCKET, key: path };
+}
 function storedFileUrl(path) {
-  return sbFetch("/storage/v1/object/sign/" + BUCKET + "/" + objectPath(path), {
+  var b = bucketAndKey(path);
+  return sbFetch("/storage/v1/object/sign/" + b.bucket + "/" + objectPath(b.key), {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ expiresIn: 300 })
   }).then(jsonOf).then(function (j) {
@@ -177,7 +185,8 @@ function storedFileUrl(path) {
   });
 }
 function fetchStoredFile(path) {
-  return sbFetch("/storage/v1/object/authenticated/" + BUCKET + "/" + objectPath(path));
+  var b = bucketAndKey(path);
+  return sbFetch("/storage/v1/object/authenticated/" + b.bucket + "/" + objectPath(b.key));
 }
 function mimeFor(name) {
   var ext = String(name || "").split(".").pop().toLowerCase();
@@ -191,6 +200,12 @@ function blobFromB64(b64, type) {
   return new Blob([bytes], { type: type });
 }
 
+// Errors show in the app's own toast, never a browser popup.
+function showError(msg) {
+  var t = document.getElementById("toast"); if (!t) return;
+  t.textContent = msg; t.className = "show bad";
+  clearTimeout(t._h); t._h = setTimeout(function () { t.className = ""; }, 4000);
+}
 // Download/open links for stored documents: <a data-filepath data-filemode>.
 document.addEventListener("click", function (e) {
   var a = e.target.closest && e.target.closest("[data-filepath]");
@@ -202,12 +217,12 @@ document.addEventListener("click", function (e) {
       var u = URL.createObjectURL(b), l = document.createElement("a");
       l.href = u; l.download = name; document.body.appendChild(l); l.click(); l.remove();
       setTimeout(function () { URL.revokeObjectURL(u); }, 4000);
-    }).catch(function (err) { alert(err.message); });
+    }).catch(function (err) { showError(err.message); });
     return;
   }
   var w = window.open("", "_blank");   // opened synchronously so popup blockers allow it
   storedFileUrl(path).then(function (u) { if (w) w.location = u; else location.href = u; })
-    .catch(function (err) { if (w) w.close(); alert(err.message); });
+    .catch(function (err) { if (w) w.close(); showError(err.message); });
 }, true);
 
 // ── History labels (was HISTORY_LABELS / _history_scope in server.py) ─────
@@ -220,7 +235,7 @@ var HISTORY_LABELS = {
   "order/cancel": "Cancel order", "order/delete": "Delete order",
   "order/copy": "Copy order", "order/bill": "Change billing status",
   "document": "Save document", "document/attach": "Attach document",
-  "document/delete": "Delete document", "schedule": "Edit schedule",
+  "document/delete": "Delete document", "document/unassign": "Unassign document", "schedule": "Edit schedule",
   "load/carrier": "Schedule outside carrier", "unschedule": "Unschedule load",
   "cell/color": "Color scheduler cell", "cell/format": "Format scheduler cell",
   "truck/off": "Change truck availability", "day-note": "Edit day note",
@@ -245,7 +260,7 @@ var HISTORY_LABELS = {
   "database/archive": "Archive or restore database row",
   "grid/row/reorder": "Reorder database rows",
   "admin/order-number-settings": "Change order numbering",
-  "sheets/push-driver-tabs": "Push driver tabs"
+  "sheets/push-driver-tabs": "Publish schedule"
 };
 function dbNow() { return (window.DEPT12_DB && window.DEPT12_DB()) || {}; }
 function findById(list, id) {
@@ -274,7 +289,7 @@ function scopeFor(route, d) {
     "internal-order": ["orders", "int"], "order/transfer": ["orders", "xfer"],
     "order/route": ["orders", "ext"],
     "order/bill": ["billing", "bill"], "document": ["billing", "bill"],
-    "document/attach": ["billing", "bill"], "document/delete": ["billing", "bill"],
+    "document/attach": ["billing", "bill"], "document/delete": ["billing", "bill"], "document/unassign": ["billing", "bill"],
     "schedule": ["dispatch", "sched"], "load/carrier": ["dispatch", "sched"],
     "cell/color": ["dispatch", "sched"], "cell/format": ["dispatch", "sched"],
     "truck/off": ["dispatch", "sched"], "unschedule": ["dispatch", "sched"],
@@ -505,8 +520,22 @@ function pick(d, keys) {
   keys.forEach(function (k) { if (d[k] !== undefined) out[k] = d[k]; });
   return out;
 }
+// Safety net: if the app's main data load doesn't include the appointment columns
+// (it lists orders' columns on the server), fetch just the orders that have an
+// appointment and merge them in.
+var APPT_FIELDS = ["pick_appt_date", "pick_appt_from", "pick_appt_to", "drop_appt_date", "drop_appt_from", "drop_appt_to"];
+function addApptColumns(d) {
+  var orders = d && d.orders;
+  if (!orders || !orders.length || APPT_FIELDS[0] in orders[0]) return d;
+  var q = "orders?select=id," + APPT_FIELDS.join(",") + "&or=(" + APPT_FIELDS.map(function (f) { return f + ".not.is.null"; }).join(",") + ")";
+  return rest("GET", q).then(function (rows) {
+    var byId = {}; (rows || []).forEach(function (r) { byId[r.id] = r; });
+    orders.forEach(function (o) { var r = byId[o.id]; APPT_FIELDS.forEach(function (f) { o[f] = r ? r[f] : null; }); });
+    return d;
+  }).catch(function () { return d; });
+}
 var ROUTES = {
-  "bootstrap": loadBootstrap,
+  "bootstrap": function () { return loadBootstrap().then(addApptColumns); },
   "order": viaRpc("api_order_create"),
   "order/ingest": viaRpc("api_order_ingest"),
   "internal-order": viaRpc("api_internal_order_add"),
@@ -559,6 +588,23 @@ var ROUTES = {
       });
     });
   },
+  // Take a document off its load (a wrong auto-match): it moves back to
+  // Unmatched documents, file and all. Nothing is deleted.
+  "document/unassign": function (d, route) {
+    return rest("GET", "documents?id=eq." + encodeURIComponent(d.id) + "&select=storage_path").then(function (rows) {
+      if (!rows || !rows.length) throw new Error("document not found");
+      var oldPath = rows[0].storage_path, newPath = "unmatched/" + oldPath.split("/").pop();
+      var moved = newPath === oldPath ? Promise.resolve(false) : storageMove(oldPath, newPath).then(function () { return true; });
+      return moved.then(function (didMove) {
+        return rest("PATCH", "documents?id=eq." + encodeURIComponent(d.id),
+          { order_id: null, load_id: null, load_stop_id: null, matched_by: "unmatched", matched_at: null, storage_path: newPath },
+          histHeaders(route, d)).then(one).catch(function (err) {
+            if (!didMove) throw err;
+            return storageMove(newPath, oldPath).then(function () { throw err; }, function () { throw err; });
+          });
+      });
+    });
+  },
   "document/delete": function (d, route) {
     return rpc("api_document_delete", { d: d }, histHeaders(route, d)).then(function (r) {
       return storageRemove([r.storage_path]).then(function () { return { ok: true, id: r.id }; });
@@ -581,10 +627,36 @@ var ROUTES = {
   "internal-freight-rate/calculate": viaRpc("api_internal_freight_rate_calculate"),
   "sync-delivery-dates": viaRpc("api_sync_delivery_dates"),
   "motive/sync-miles": function (d, route) { return edgeFunction("motive-sync", d, histHeaders(route, d)); },
-  // Runs in the browser with the pusher's own Google sign-in (sheets-push.js).
+  // Publish Schedule: builds what drivers and the bag plant see (the same data the
+  // old Google push built, now read-only) and saves it as the latest published copy.
   "sheets/push-driver-tabs": function (d) {
-    return window.Dept12SheetsPush(d || {}, function (fn, args) { return rpc(fn, args); });
+    d = d || {};
+    var dates = null, raw = null;
+    var capture = function (fn, args) {
+      return rpc(fn, args).then(function (r) {
+        if (fn === "driver_week_dates") dates = r;
+        if (fn === "driver_week_data") raw = r;
+        return r;
+      });
+    };
+    return window.Dept12SheetsPush({ start_date: d.start_date, days: d.days }, capture).then(function (payload) {
+      return rpc("api_publish_schedule", { d: { payload: payload, raw: raw } }).then(function (res) {
+        return { pushed: payload.drivers.map(function (x) { return x.truck; }), week_start: payload.week_start,
+                 published_at: res && res.published_at };
+      });
+    });
   },
+  // What drivers did: notes, scans, and when each truck last looked (plus the last publish time).
+  "driver/activity": function (d) {
+    return Promise.all([
+      rpc("api_driver_activity", { d: d || {} }),
+      rest("GET", "published_schedules?select=published_at&order=published_at.desc&limit=1")
+        .catch(function () { return []; })
+    ]).then(function (r) {
+      var out = r[0] || {}; out.last_publish = r[1] && r[1][0] ? r[1][0].published_at : null; return out;
+    });
+  },
+  "driver/scan-bill": function (d) { return rpc("api_scan_bill_set", { d: d || {} }); },
 
   // Fleet / directory
   "driver": function (d, route) {
@@ -605,7 +677,12 @@ var ROUTES = {
   "customer": viaRpc("api_customer_add"),
 
   // Database grids, custom databases, in-app sheets (not Google Sheets)
-  "row": viaRpc("api_row_update"),
+  // The database function reads the edited fields straight off the request
+  // ({table, id, name: ...}); the app sends them under "values". Send both so
+  // a rename (or any grid edit) actually lands.
+  "row": function (d, route) {
+    return rpc("api_row_update", { d: Object.assign({}, d.values || {}, d) }, histHeaders(route, d));
+  },
   "row/custom": viaRpc("api_row_custom"),
   "grid/cell-fmt": viaRpc("api_grid_cell_fmt"),
   "grid/column": viaRpc("api_grid_column_add"),
@@ -720,6 +797,7 @@ var dashboardAuth = {
 // Globals app.js relies on.
 window.api = api;
 window.dept12LoadHistory = loadHistory;
+window.dept12HistoryLoaded = function () { return !!(BOOT && BOOT.history); };
 window.dashboardAuth = dashboardAuth;
 window.LOCAL_AUTH = LOCAL_AUTH;
 window.localAuthCheck = localAuthCheck;

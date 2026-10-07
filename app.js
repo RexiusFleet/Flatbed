@@ -176,7 +176,7 @@ var schedNode = null, DRAG = null, Q = "", DRIVER_VIEW = null;
    sent as a truck_id to the server). CARRIER_TID is just the cell-key
    identity that cellKey()/CELLS/schedCellHtml already work with generically. */
 var CARRIER_TID = "carrier";
-var STAGED = [], POOL = [], GROUP = [];
+var STAGED = [], GROUP = [];
 /* Excel-style row selection for the Database grids (D50): each grid tracks its
    selected row ids and a shift-range anchor. Selection is applied directly to
    the DOM (no re-render), so it survives cell edits within the same view. */
@@ -209,7 +209,15 @@ var SUGGEST_INPUT = null;
    old Monday-based cwDays preference: the new workflow starts on a chosen date,
    defaults to 3 visible delivery days, and skips empty weekends. */
 var CW_DAYS = Math.max(1, Math.min(14, parseInt(localStorage.getItem("cwDaysRolling"), 10) || 3));
-var CW_START = localStorage.getItem("cwStart") || TODAY;
+var CW_START = (function () {
+  // A saved start that isn't a real day (like 2026-02-29) would break every
+  // date calculation and the database request: fall back to today.
+  var v = localStorage.getItem("cwStart"), m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v || "");
+  var d = m && new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  var ok = d && d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
+  if (!ok && v) localStorage.removeItem("cwStart");
+  return ok ? v : TODAY;
+})();
 var WEEKEND_ON = (function () {
   try { return JSON.parse(localStorage.getItem("weekendActive") || "{}"); } catch (e) { return {}; }
 })();
@@ -1069,7 +1077,106 @@ function pushColorFor(o, v) {
   var t = truckById(v.truckId);
   return (t && t.driver_id && t.driver_color && String(t.driver_color).charAt(0) === "#") ? t.driver_color : "";
 }
-function docsFor(oid) { return DB.documents.filter(function (d) { return d.order_id === oid; }); }
+function docsFor(oid) {
+  // Driver scans are in DB.documents too; they're shown through DRIVER scans below
+  // so "Bill with" decides which load they count for.
+  return DB.documents.filter(function (d) { return d.order_id === oid && !DRIVER_SCAN_IDS[d.id]; })
+    .concat(PROTO_SCANS.filter(function (d) { return d.order_id === oid; }));
+}
+/* Driver activity from Supabase (api_driver_activity): notes, POD/BOL scans and
+   when each truck last opened Current Week / its own tab. Refreshed every minute
+   while the dashboard is open. A scan always stays on file on the load it was
+   scanned on; "Bill with" says which load it bills with (or none). */
+var PROTO_SCANS = [], PROTO_SCAN_RECS = [];
+var DRIVER_NOTES = {}, DRIVER_VIEWS = {}, DRIVER_SCAN_IDS = {}, LAST_PUBLISH_MS = 0, DRIVER_SIG = "";
+// Which load a driver scan bills with: the load it was scanned on unless
+// dispatch moved it (bill_order_id) or took it out of billing (null).
+function scanBillOrder(r) { return r.bill_order_id === undefined ? r.order_id : r.bill_order_id; }
+function loadDriverActivity() {
+  if (typeof api !== "function" || !DB || !DB.orders) return Promise.resolve();
+  return api("driver/activity").then(function (res) {
+    var notes = res.notes || [], scans = res.scans || [], views = res.views || [];
+    var sig = [notes.length, notes[0] && notes[0].created_at, scans.length,
+      scans.map(function (x) { return x.id + ":" + x.bill_decided + ":" + x.bill_order_id; }).join(",")].join("|");
+    DRIVER_NOTES = {};
+    notes.forEach(function (n) {
+      (DRIVER_NOTES[n.order_id] = DRIVER_NOTES[n.order_id] || []).push(
+        { id: n.id, at: n.created_at, driver: n.driver_name, truck: n.truck_number, text: n.body });
+    });
+    DRIVER_VIEWS = {};
+    views.forEach(function (v) {
+      var r = DRIVER_VIEWS[String(v.truck_number)] = DRIVER_VIEWS[String(v.truck_number)] || {};
+      if (v.driver_name) r.name = v.driver_name;
+      r[v.kind] = v.viewed_at;
+    });
+    LAST_PUBLISH_MS = res.last_publish ? Date.parse(res.last_publish) || 0 : 0;
+    DRIVER_SCAN_IDS = {};
+    scans.forEach(function (x) { DRIVER_SCAN_IDS[x.id] = true; });
+    PROTO_SCAN_RECS = scans.filter(function (x) { return x.order_id; }).map(function (x) {
+      return { id: x.id, order_id: x.order_id, at: x.created_at, pages: x.pages || 1, driver: x.driver, truck: x.truck,
+               storage_path: "driver-scan:" + x.storage_path,
+               bill_order_id: x.bill_decided ? x.bill_order_id : undefined };
+    });
+    PROTO_SCANS = PROTO_SCAN_RECS.filter(function (r) { return scanBillOrder(r); }).map(function (r) {
+      var d = new Date(r.at);
+      return { id: "scan-" + r.id, order_id: scanBillOrder(r), doc_type: "pod", created_at: r.at, proto: true,
+        storage_path: r.storage_path, matched_by: "driver_scan",
+        // Named by when it was sent in: "POD scan 9-26-26 9.19 AM.pdf".
+        original_filename: "POD scan " + (d.getMonth() + 1) + "-" + d.getDate() + "-" + String(d.getFullYear()).slice(2) + " " +
+          d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).replace(":", ".") + ".pdf" };
+    });
+    try { repaintSeen(); } catch (e) { /* header not drawn yet */ }
+    if (sig === DRIVER_SIG) return;
+    var first = DRIVER_SIG === "";
+    DRIVER_SIG = sig;
+    var typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    if (DRAWER_OID && !typing) {
+      var nEl = $("#dw-drvnotes"), sEl = $("#dw-drvscans");
+      if (nEl) nEl.outerHTML = driverNotesHtml(DRAWER_OID);
+      if (sEl) sEl.outerHTML = driverScansHtml(DRAWER_OID);
+    }
+    if (!first && !typing) { try { render(); } catch (e) { /* mid-load */ } }
+  }).catch(function () { /* offline or not signed in yet: try again next minute */ });
+}
+setInterval(function () { if (!document.hidden) loadDriverActivity(); }, 60000);
+document.addEventListener("visibilitychange", function () { if (!document.hidden) loadDriverActivity(); });
+/* Driver scans section in the order drawer. A scan always stays on file on
+   the load it was scanned on; dispatch picks whether it bills, and with
+   which load (a BOL scanned on the wrong load, paperwork you don't bill). */
+function orderLabel(o) { return (o.solomon_order_no || o.broker_load_no || "no #") + " · " + buildChip(o).title; }
+function driverScansHtml(oid) {
+  var recs = PROTO_SCAN_RECS.filter(function (r) { return r.order_id === oid || scanBillOrder(r) === oid; });
+  var h = '<div id="dw-drvscans"><div class="sec-h">Driver scans — ' + recs.length + "</div>";
+  if (!recs.length) return h + '<p class="drvnote-empty">No POD / BOL scans from the driver yet.</p></div>';
+  var choices = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_at && !isHistorical(o); });
+  return h + '<div class="drvnote-list">' + recs.map(function (r) {
+    var d = new Date(r.at), bill = scanBillOrder(r), here = r.order_id === oid, src = order(r.order_id);
+    var opts = [["", "Not for billing (keep on file)"]], seen = {};
+    [r.order_id, bill].concat(choices.map(function (o) { return o.id; })).forEach(function (id) {
+      var o = id && order(id); if (!o || seen[id]) return; seen[id] = 1;
+      opts.push([id, (id === r.order_id ? "Scanned on · " : "") + orderLabel(o)]);
+    });
+    var status = !bill ? "Not used for billing" : bill === oid ? (here ? "Billing with this load" : "Moved here from " + (src ? orderLabel(src) : "another load"))
+      : "Billing with " + (order(bill) ? orderLabel(order(bill)) : "another load");
+    return '<div class="drvnote dscan"><div class="drvnote-hd"><b>' + esc(r.driver || "Driver") + "</b><span>" +
+      esc(d.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" }) + " " +
+        d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + " · " + r.pages + " page" + (r.pages > 1 ? "s" : "")) + "</span></div>" +
+      '<div class="dscan-row"><span class="dscan-st' + (bill ? "" : " off") + '">' + esc(status) + "</span>" +
+      '<button class="btn sm" data-viewpath="' + esc(r.storage_path) + '" data-viewname="POD scan">View</button></div>' +
+      '<label class="dscan-bill">Bill with <select data-scan-bill="' + esc(r.id) + '">' + opts.map(function (op) {
+        return '<option value="' + esc(op[0]) + '"' + ((op[0] || null) === (bill || null) ? " selected" : "") + ">" + esc(op[1]) + "</option>";
+      }).join("") + "</select></label></div>";
+  }).join("") + "</div></div>";
+}
+document.addEventListener("change", function (e) {
+  var sel = e.target.closest && e.target.closest("[data-scan-bill]");
+  if (!sel) return;
+  var id = sel.getAttribute("data-scan-bill"), val = sel.value || null;
+  api("driver/scan-bill", { id: id, bill_order_id: val }).then(function () {
+    toast(val ? "Scan will bill with " + orderLabel(order(val)) : "Scan kept on file, not billed");
+    DRIVER_SIG = "x"; return loadDriverActivity();
+  }).catch(function (err) { toast(err.message, true); });
+});
 function isExt(o) { return o && o.kind === "external"; }
 /* Backfilled 2025 rows (D65) — real on the Scheduler and in Reports, but kept
    out of the working Orders grids and the biller queue so history doesn't flood
@@ -1172,6 +1279,40 @@ var CELLS = {};
    drop target that gets replaced. */
 function cellHasLoad(key) { return !!(CELLS[key] && CELLS[key].oid); }
 
+/* Appointment times: a date, a start time and an optional end time for each
+   pick and drop, saved on the order (pick_appt_* / drop_appt_*). They reach
+   drivers through Publish Schedule. */
+var APPT_COLS = { pick: ["pick_appt_date", "pick_appt_from", "pick_appt_to"], drop: ["drop_appt_date", "drop_appt_from", "drop_appt_to"] };
+function apptGet(oid, which) {
+  var o = order(oid); if (!o) return null;
+  var c = APPT_COLS[which];
+  var a = { date: o[c[0]] ? String(o[c[0]]).slice(0, 10) : "", from: o[c[1]] ? String(o[c[1]]).slice(0, 5) : "",
+            to: o[c[2]] ? String(o[c[2]]).slice(0, 5) : "" };
+  return a.date || a.from || a.to ? a : null;
+}
+function apptSet(oid, which, val) {
+  var c = APPT_COLS[which], body = { id: oid };
+  body[c[0]] = (val && val.date) || ""; body[c[1]] = (val && val.from) || ""; body[c[2]] = (val && val.to) || "";
+  return api("order/update", body).then(function (row) {
+    var o = order(oid); if (o && row) for (var k in row) o[k] = row[k];
+    return row;
+  });
+}
+function apptHas(oid) { return !!(apptGet(oid, "pick") || apptGet(oid, "drop")); }
+function apptTime12(t) {
+  var m = /^(\d{1,2}):(\d{2})/.exec(t || "");
+  if (!m) return "";
+  var h = +m[1];
+  return (h % 12 || 12) + ":" + m[2] + " " + (h >= 12 ? "PM" : "AM");
+}
+// "MON 10/6 · 7:00–9:00 AM" (window) or "TUE 10/7 · 1:00 PM"; the date falls back to the load's day.
+function apptText(a, loadDay) {
+  var d = a.date || loadDay || "", day = "";
+  if (d) { var dt = new Date(d + "T12:00:00Z"); day = DOW[dt.getUTCDay()] + " " + (dt.getUTCMonth() + 1) + "/" + dt.getUTCDate(); }
+  var from = apptTime12(a.from), to = apptTime12(a.to), t = from || to;
+  if (from && to) t = from.slice(-2) === to.slice(-2) ? from.slice(0, -3) + "–" + to : from + "–" + to;
+  return [day, t].filter(Boolean).join(" · ");
+}
 /* Little notepad for the note line on external chips. */
 var NOTEPAD_ICON = '<svg class="notepad" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2h9v12h-9zM6 5.5h4M6 8h4M6 10.5h2.5"/></svg> ';
 /* ── Chip construction — built, never stored ─────────────────────────────── */
@@ -1305,8 +1446,10 @@ function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
         '<span class="numln"><i>Load #:</i> <b class="nowrap">' + esc(o.broker_load_no || "none") + "</b></span>" +
         '<span class="numln"><i>Rexius Order:</i> <b class="nowrap">' + esc(o.solomon_order_no || "none") + "</b></span></div>"
     : '<div class="meta"><span>' + esc(ch.line) + "</span></div>";
-  return '<div class="chip' + (filled ? " filled" : "") + (plainExt ? " xchip" : "") + (tinted ? " tinted" : "") + '" style="--edge:' + edge + bg + '" draggable="' + (drag ? "true" : "false") +
+  var hasAppt = plainExt && apptHas(o.id);
+  return '<div class="chip' + (filled ? " filled" : "") + (plainExt ? " xchip" : "") + (tinted ? " tinted" : "") + (hasAppt ? " has-appt" : "") + '" style="--edge:' + edge + bg + '" draggable="' + (drag ? "true" : "false") +
     '" data-oid="' + o.id + '" title="' + esc(chipTitle) + '" ' + (extra || "") + ">" +
+    (hasAppt ? '<span class="appt-ind" title="This load has an appointment">APPT</span>' : "") +
     '<div class="who"' + (ws ? ' style="' + ws + '"' : "") + ">" + esc(ch.title) + "</div>" +
     metaHtml +
     (f ? '<div class="flags">' + f + "</div>" : "") +
@@ -1856,6 +1999,31 @@ function schedBar(oid) {
     '<span style="font-size:var(--fs-label);color:var(--ink-3)">In the staging rail — not on the board yet.</span></div>';
   return '<div class="dw-sched">' + controls + "</div>";
 }
+/* Appointment fields under a pick or drop: date (blank = the load's day),
+   start time, optional end time for a window. */
+function apptRowHtml(oid, which, acts) {
+  var a = apptGet(oid, which) || {}, id = oid + "|" + which;
+  return '<div class="stop-row appt-row"><span class="stop-lbl">Appt</span><div class="appt-fields">' +
+    '<label><span>Date</span><input type="text" inputmode="numeric" data-smartdate data-appt="' + id + '|date" data-last-iso="' + esc(a.date || "") +
+      '" placeholder="Load day" value="' + esc(a.date ? isoToMdy(a.date) : "") + '"></label>' +
+    '<label><span>From</span><input type="time" step="300" data-appt="' + id + '|from" value="' + esc(a.from || "") + '"></label>' +
+    '<label><span>To (optional)</span><input type="time" step="300" data-appt="' + id + '|to" value="' + esc(a.to || "") + '"></label>' +
+    "</div>" + (acts ? "<span></span>" : "") + "</div>";
+}
+document.addEventListener("change", function (e) {
+  var el = e.target.closest && e.target.closest("[data-appt]");
+  if (!el) return;
+  var p = el.dataset.appt.split("|"), oid = p[0], which = p[1], field = p[2];
+  var cur = Object.assign({ date: "", from: "", to: "" }, apptGet(oid, which) || {});
+  var val = field === "date" ? (el.dataset.lastIso || "") : el.value;
+  if (cur[field] === val) return;
+  cur[field] = val;
+  apptSet(oid, which, cur).then(function () {
+    var found = schedValueForOrder(oid);
+    if (found) repaintCell(found.key);
+    refreshDrawerChipPreview();
+  }).catch(function (err) { toast(err.message, true); });
+});
 function openInternalOrder(o) {
   var ch = buildChip(o), ds = docsFor(o.id);
   var have = {}; ds.forEach(function (d) { have[d.doc_type] = 1; });
@@ -1878,15 +2046,15 @@ function openInternalOrder(o) {
     fld("pallet_count", "PAL", o.pallet_count, "") +
     fld("ordered_at", "Ordered", o.ordered_at && String(o.ordered_at).slice(0, 10), "", "date") +
     fld("delivered_at", "Delivered", o.delivered_at && String(o.delivered_at).slice(0, 10), "", "date") +
-    fld("notes", "Notes", o.notes, "") +
+    fld("notes", "Private notes", o.notes, "Only you see this. It never goes to drivers.") +
     "</div></div>";
 
   /* Two notes, every order kind (D140): Notes above is dispatcher-private,
      never pushed. Driver tab note is the one thing that reaches the
      driver's Sheets tab — same field/pattern Internal Freight transfers
      already had (D130), now universal. */
-  h += '<div><div class="sec-h">Driver tab note</div><div class="fields">' +
-    fld("driver_note", "Notes", o.driver_note, "What the driver should see when this pushes") +
+  h += '<div><div class="sec-h">Note for the driver</div><div class="fields">' +
+    fld("driver_note", "Driver note", o.driver_note, "Shows on the driver's tab and Current Week after you push") +
     "</div></div>";
 
   /* Freight to the bag plant (D38) — actual miles and the hand-entered
@@ -1918,6 +2086,8 @@ function openInternalOrder(o) {
   }
   h += "</details>";
 
+  // What the driver sent in (notes, POD/BOL scans), right above Documents.
+  h += driverNotesHtml(o.id) + driverScansHtml(o.id);
   h += '<div><div class="sec-h">Documents — ' + ds.length + "</div>" +
     '<div class="doclist" id="dw-docs">';
   ds.forEach(function (d) {
@@ -1932,7 +2102,7 @@ function openInternalOrder(o) {
        "Delivery receipt, signed POD, invoice — stays linked to this order.</div></div>";
 
   h += "</div>";
-  $("#drawer").innerHTML = h;
+  setDrawerHtml(h);
   $("#drawer").classList.add("on"); $("#scrim").classList.add("on");
   $("#drawer").setAttribute("aria-hidden", "false");
 }
@@ -2069,6 +2239,7 @@ function handleLocPick(opt) {
   if (opt.dataset.locpick) {
     var l = locById(opt.dataset.locpick);
     inp.value = l ? l.name : ""; inp.dataset.locid = opt.dataset.locpick;
+    if (/^stop:/.test(field)) { drawerStopPick(oid, field, opt.dataset.locpick); return; }
     body[field] = opt.dataset.locpick;
     api("order/update", body).then(reload).catch(function (e) { toast(e.message, true); });
   } else {
@@ -2175,8 +2346,8 @@ function openTransferOrder(o) {
   /* Load info stays dispatcher-facing only (drives the chip title, never
      pushed). driver_note is the separate field that actually reaches the
      driver's Sheets tab — D130. */
-  h += '<div><div class="sec-h">Driver tab note</div><div class="fields">' +
-    fld("driver_note", "Notes", o.driver_note, "What the driver should see when this pushes") +
+  h += '<div><div class="sec-h">Note for the driver</div><div class="fields">' +
+    fld("driver_note", "Driver note", o.driver_note, "Shows on the driver's tab and Current Week after you push") +
     "</div></div>";
 
   h += '<div><div class="sec-h">Mileage / transfer cost</div><div class="fields">' +
@@ -2184,8 +2355,10 @@ function openTransferOrder(o) {
     frFld("freight_amount", "Transfer $", o.internal_freight_amount, "") +
     "</div></div>";
 
+  // No Documents section on transfers — driver notes/scans go last.
+  h += driverNotesHtml(o.id) + driverScansHtml(o.id);
   h += "</div>";
-  $("#drawer").innerHTML = h;
+  setDrawerHtml(h);
   $("#drawer").classList.add("on"); $("#scrim").classList.add("on");
   $("#drawer").setAttribute("aria-hidden", "false");
 }
@@ -2204,10 +2377,6 @@ function openOrder(oid) {
     (o.broker_load_no ? " · load " + esc(o.broker_load_no) : "") + "</div></div>" +
     '<button class="btn" id="dw-close">Close</button></div><div class="dw-body">';
   h += schedBar(oid);
-  if (o.billed_at)
-    h += '<div class="dw-sched"><span class="pill on">Billed out</span>' +
-      '<button class="btn sm" data-reopen-bill="' + oid + '">Reopen For Billing</button></div>';
-
   h += drawerChipPreview(o);
   h += carrierSectionHtml(oid);
 
@@ -2222,7 +2391,7 @@ function openOrder(oid) {
     fld("delivery_number", "Delivery #", o.delivery_number, "") +
     fld("ordered_at", "Ordered", o.ordered_at && String(o.ordered_at).slice(0, 10), "", "date") +
     fld("delivered_at", "Delivered", o.delivered_at && String(o.delivered_at).slice(0, 10), "", "date") +
-    fld("notes", "Notes", o.notes, "") +
+    fld("notes", "Private notes", o.notes, "Only you see this. It never goes to drivers.") +
     "</div><label style=\"display:flex;align-items:center;gap:6px;font-size:var(--fs-body-sm);color:var(--ink-2);margin-top:8px\">" +
     '<input type="checkbox" data-oedit="' + oid + '" data-field="tarp"' + (o.tarp ? " checked" : "") +
     "> Tarp load</label></div>";
@@ -2231,8 +2400,8 @@ function openOrder(oid) {
      never pushed. Driver tab note is the one thing that reaches the
      driver's Sheets tab — same field/pattern Internal Freight transfers
      already had (D130), now universal. */
-  h += '<div><div class="sec-h">Driver tab note</div><div class="fields">' +
-    fld("driver_note", "Notes", o.driver_note, "What the driver should see when this pushes") +
+  h += '<div><div class="sec-h">Note for the driver</div><div class="fields">' +
+    fld("driver_note", "Driver note", o.driver_note, "Shows on the driver's tab and Current Week after you push") +
     "</div></div>";
 
   /* Pickup / Delivery (D42) — type-ahead against the Pick/Drop List, pre-filled
@@ -2240,25 +2409,52 @@ function openOrder(oid) {
   var sug = rateConSuggest(oid);
   var prefilled = (!o.pickup_location_id && sug.pickup) || (!o.delivery_location_id && sug.delivery);
   h += '<div><div class="sec-h">Pickup / Drop</div>';
-  if (o.route_mode === "custom") {
+  var routeLocked = !!(o.delivered_at || o.billed_at);
+  if (o.route_mode === "custom" && routeLocked) {
     h += '<div class="route-summary"><b>' + esc(routeCompactLabel(o)) + '</b>' +
       orderStops(oid).map(function (s) { return '<span><strong>' + s.sequence + ' ' +
         (s.stop_type === "pickup" ? "PICK" : "DROP") + '</strong> ' + esc(routeStopLabel(s)) + '</span>'; }).join("") +
-      '</div><button class="btn" data-route-edit="' + oid + '" style="margin-top:8px">Edit Full Route…</button>';
+      '</div><button class="btn" data-route-edit="' + oid + '" style="margin-top:8px">Stop Details…</button>';
   } else {
-    h += '<div style="display:flex;flex-direction:column;gap:9px">' +
-      '<div><label style="font-size:var(--fs-body-sm);color:var(--ink-2);display:block;margin-bottom:3px">Pickup</label>' +
-        locCombo(oid, "pickup_location_id", o.pickup_location_id, sug.pickup) + "</div>" +
-      '<div><label style="font-size:var(--fs-body-sm);color:var(--ink-2);display:block;margin-bottom:3px">Drop</label>' +
-        locCombo(oid, "delivery_location_id", o.delivery_location_id, sug.delivery) + "</div></div>" +
+    /* Every stop is its own Pick/Drop search box. A normal load is one pick
+       and one drop saved straight onto the order; + Add Pick / + Add Drop
+       turns it into a multi-stop route the moment the new stop gets a
+       location, and removing back down to one of each makes it normal again. */
+    var drafting = !!(STOP_DRAFT && STOP_DRAFT.oid === oid), acts = o.route_mode === "custom" || drafting;
+    h += '<div class="stop-rows' + (acts ? " has-actions" : "") + '">';
+    if (o.route_mode === "custom") {
+      var cnt = { pickup: 0, delivery: 0 }, tot = routeCounts(oid);
+      orderStops(oid).forEach(function (st, i) {
+        cnt[st.stop_type]++;
+        var last = tot[st.stop_type] <= 1;
+        h += '<div class="stop-row"><span class="stop-lbl">' + (st.stop_type === "pickup" ? "Pick " : "Drop ") + cnt[st.stop_type] + "</span>" +
+          locCombo(oid, "stop:" + i, st.location_id, null) +
+          '<button class="btn" data-stop-remove="' + i + '"' + (last ? ' disabled title="A route needs at least one pick and one drop"' : "") + ">Remove</button></div>";
+      });
+    } else {
+      var pad = acts ? "<span></span>" : "";
+      h += '<div class="stop-row"><span class="stop-lbl">Pickup</span>' + locCombo(oid, "pickup_location_id", o.pickup_location_id, sug.pickup) + pad + "</div>" +
+        apptRowHtml(oid, "pick", acts) +
+        '<div class="stop-row"><span class="stop-lbl">Drop</span>' + locCombo(oid, "delivery_location_id", o.delivery_location_id, sug.delivery) + pad + "</div>" +
+        apptRowHtml(oid, "drop", acts);
+    }
+    if (drafting) {
+      var n = (o.route_mode === "custom" ? routeCounts(oid)[STOP_DRAFT.type] : 1) + 1;
+      h += '<div class="stop-row stop-new"><span class="stop-lbl">' + (STOP_DRAFT.type === "pickup" ? "Pick " : "Drop ") + n + "</span>" +
+        locCombo(oid, "stop:new", null, null) + '<button class="btn" data-stop-cancel>Cancel</button></div>';
+    }
+    h += "</div>" +
       (prefilled ? '<div class="note-bar" style="margin-top:7px">Prefilled from the rate con — confirm each or pick from the list.</div>' : "") +
       ((sug.stops || []).filter(function (s) { return s.stop_type === "pickup"; }).length > 1 ||
        (sug.stops || []).filter(function (s) { return s.stop_type === "delivery"; }).length > 1
-        ? '<div class="note-bar" style="margin-top:7px"><b>Possible multi-stop route detected.</b> Use Edit full route to review it.</div>' : "") +
-      '<button class="btn" data-route-edit="' + oid + '" style="margin-top:8px">Edit Full Route…</button>';
+        ? '<div class="note-bar" style="margin-top:7px"><b>Possible multi-stop route detected.</b> Add the extra picks or drops below.</div>' : "") +
+      '<div class="stop-add">' + (routeLocked ? "" : '<button class="btn" data-stop-add="pickup">+ Add Pick</button><button class="btn" data-stop-add="delivery">+ Add Drop</button>') +
+      '<span style="flex:1"></span><button class="btn" data-route-edit="' + oid + '">Stop Details…</button></div>';
   }
   h += "</div>";
 
+  // What the driver sent in (notes, POD/BOL scans), right above Documents.
+  h += driverNotesHtml(o.id) + driverScansHtml(o.id);
   h += '<div><div class="sec-h">Documents — ' + ds.length + "</div>" +
     '<div class="doclist" id="dw-docs">';
   ds.forEach(function (d) {
@@ -2291,9 +2487,23 @@ function openOrder(oid) {
     '<button class="btn" data-pkg="individual">Download Individually</button></div></div>';
 
   h += "</div>";
-  $("#drawer").innerHTML = h;
+  setDrawerHtml(h);
   $("#drawer").classList.add("on"); $("#scrim").classList.add("on");
   $("#drawer").setAttribute("aria-hidden", "false");
+}
+/* Driver notes — what a driver wrote about this load from the Flatbed
+   Schedule page (driver/): a long wait, a bad site, anything dispatch
+   should know. Read from Supabase (driver_notes), refreshed every minute. */
+function driverNotesHtml(oid) {
+  var list = (DRIVER_NOTES[oid] || []).slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; });
+  var h = '<div id="dw-drvnotes"><div class="sec-h">Driver notes — ' + list.length + "</div>";
+  if (!list.length) return h + '<p class="drvnote-empty">No notes from the driver yet.</p></div>';
+  return h + '<div class="drvnote-list">' + list.map(function (n) {
+    var d = new Date(n.at);
+    return '<div class="drvnote"><div class="drvnote-hd"><b>' + esc(n.driver || "Driver") + "</b><span>" +
+      esc((n.truck ? n.truck + " · " : "") + d.toLocaleDateString([], { month: "numeric", day: "numeric" }) + " " +
+      d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) + "</span></div>" + esc(n.text) + "</div>";
+  }).join("") + "</div></div>";
 }
 function fld(name, label, val, ph, type) {
   // Every date field in the app is a smart date input now (D152) — same
@@ -2311,9 +2521,18 @@ function frFld(name, label, val, ph) {
   return "<label>" + esc(label) + '</label><input data-fr="' + name + '" type="number" step="0.1"' +
     ' value="' + esc(val == null ? "" : val) + '" placeholder="' + esc(ph || "") + '">';
 }
+/* Redrawing the drawer for the order already open (a save, + Add Drop, a
+   Bill With change…) keeps its scroll position instead of jumping to the top. */
+var DRAWER_SHOWN = null;
+function setDrawerHtml(h) {
+  var d = $("#drawer"), body = d.querySelector(".dw-body");
+  var top = d.classList.contains("on") && DRAWER_SHOWN === DRAWER_OID && body ? body.scrollTop : 0;
+  d.innerHTML = h; DRAWER_SHOWN = DRAWER_OID;
+  if (top) { var nb = d.querySelector(".dw-body"); if (nb) nb.scrollTop = top; }
+}
 function closeDrawer() {
   $("#drawer").classList.remove("on"); $("#scrim").classList.remove("on");
-  $("#drawer").setAttribute("aria-hidden", "true"); DRAWER_OID = null;
+  $("#drawer").setAttribute("aria-hidden", "true"); DRAWER_OID = null; DRAWER_SHOWN = null;
 }
 function packageDocs(oid) {
   var o = order(oid), ds = docsFor(oid);
@@ -2357,8 +2576,13 @@ function isFulfilled(oid) {
   return !!(have.pod && have.invoice);
 }
 function billDone(oid) {
-  if (!isFulfilled(oid) &&
-      !confirm("This order doesn't have both a POD and an invoice yet. Mark it billed anyway?")) return;
+  if (!isFulfilled(oid)) {
+    confirmModal("This load doesn't have both a POD and an invoice yet. Mark it billed anyway?", function () { markBilled(oid); }, "Mark Billed Anyway", true);
+    return;
+  }
+  markBilled(oid);
+}
+function markBilled(oid) {
   billOrder(oid, true).then(reload).then(function () {
     toast("Billed out");
     histPush("bill out",
@@ -2366,27 +2590,38 @@ function billDone(oid) {
       function () { return billOrder(oid, true).then(reload); });
   }).catch(function (e) { toast(e.message, true); });
 }
-/* Download the selected fulfilled orders in sequence, billing each out. */
-function billBatch(mode) {
-  var ids = GROUP.filter(function (id) { var o = order(id); return o && isExt(o) && !o.billed_at && isFulfilled(id); });
-  if (!ids.length) { toast("Tick fulfilled orders (POD + invoice) first.", true); return; }
-  var chain = Promise.resolve();
-  ids.forEach(function (id) {
-    chain = chain.then(function () { return doPackage(id, "merged"); })
-      .then(function () { return billOrder(id); });
+/* After a download: offer to mark those loads billed in one go, so a
+   package you already have doesn't need a second trip to Mark Billed. */
+function askMarkBilled(ids) {
+  ids = ids.filter(function (id) { var o = order(id); return o && isExt(o) && !o.billed_at; });
+  if (!ids.length) return;
+  var one = ids.length === 1, o1 = order(ids[0]);
+  openModal('<div class="modal-hd"><h2>Mark ' + (one ? "This Load" : ids.length + " Loads") + " Billed?</h2></div>" +
+    '<div class="modal-body"><p style="line-height:1.5;margin:0">' +
+    (one ? esc(orderLabel(o1)) + " downloaded." : ids.length + " packages downloaded.") +
+    " Mark " + (one ? "it" : "them") + " billed to take " + (one ? "it" : "them") + " out of the queue?</p></div>" +
+    '<div class="modal-ft"><button class="btn" id="modal-cancel">Not Yet</button>' +
+    '<button class="btn pri" id="modal-confirm">Mark Billed</button></div>');
+  $("#modal-confirm").addEventListener("click", function () {
+    closeModal();
+    Promise.all(ids.map(function (id) { return billOrder(id, true); })).then(function () { GROUP = []; return reload(); })
+      .then(function () {
+        toast((one ? "1 load" : ids.length + " loads") + " marked billed");
+        histPush("bill out",
+          function () { return Promise.all(ids.map(function (id) { return billOrder(id, false); })).then(reload); },
+          function () { return Promise.all(ids.map(function (id) { return billOrder(id, true); })).then(reload); });
+      }).catch(function (e) { toast(e.message, true); });
   });
-  chain.then(function () { GROUP = []; return reload(); })
-    .then(function () { toast(ids.length + " order(s) billed out"); })
-    .catch(function (e) { toast(e.message || "Batch failed", true); reload(); });
 }
-function billBatchDone() {
-  var ids = GROUP.filter(function (id) { var o = order(id); return o && isExt(o) && !o.billed_at; });
-  if (!ids.length) { toast("Tick orders first.", true); return; }
-  var incomplete = ids.filter(function (id) { return !isFulfilled(id); });
-  if (incomplete.length &&
-      !confirm(incomplete.length + " of these aren't fulfilled (missing POD/invoice). Mark all billed anyway?")) return;
-  Promise.all(ids.map(function (id) { return billOrder(id); })).then(function () { GROUP = []; return reload(); })
-    .then(function () { toast(ids.length + " marked billed"); }).catch(function (e) { toast(e.message, true); });
+/* Download Selected: each ticked load's merged package, one file per load.
+   Downloading never marks anything billed — that's Mark Billed. */
+function billBatch() {
+  var ids = GROUP.filter(function (id) { var o = order(id); return o && isExt(o) && packageDocs(id).length; });
+  if (!ids.length) { toast("Tick loads that have documents first.", true); return; }
+  var chain = Promise.resolve();
+  ids.forEach(function (id) { chain = chain.then(function () { return doPackage(id, "merged"); }); });
+  chain.then(function () { toast(ids.length + " package" + (ids.length > 1 ? "s" : "") + " downloaded"); askMarkBilled(ids); })
+    .catch(function (e) { toast(e.message || "Download failed", true); });
 }
 /* ═══ 04-views ═══ */
 /* ── Views ───────────────────────────────────────────────────────────────── */
@@ -2477,9 +2712,18 @@ function reorderDatabaseColumns(grid, draggedRef, targetRef) {
       function () { return applyDatabaseColumnOrder(grid, after); });
   }).catch(function (err) { toast(err.message, true); reload(); });
 }
+/* OFF day: the truck's cells are red-striped (td.offday) and one bold "OFF"
+   sits in the middle slot of that day, centered — the same OFF on every
+   screen (Scheduler, Current Week, the drivers' and bag plant pages). */
+function offLabelFor(key) {
+  var p = key.split("|"), ds = p[1], slot = +p[2];
+  if (!OFFDAYS[p[0] + "|" + ds]) return "";
+  var n = Math.max(3, DAYSLOT[ds] || 0, DAYADD[ds] || 0);
+  return slot === Math.ceil(n / 2) ? '<div class="off-label">OFF</div>' : "";
+}
 function cellInner(key) {
   var v = CELLS[key];
-  if (!v) return "";
+  if (!v) return offLabelFor(key);
   if (v.oid) { var o = order(v.oid); if (o) return chipHtml(o, true, 'data-from="' + key + '"', v.cat, v.fmt, pushColorFor(o, v), !!v.pushedAt); }
   var fill = effFill(v), fm = v.fmt || {};
   var st = "";
@@ -2679,6 +2923,9 @@ var HISTORY_FETCH = null;
 function needsHistory(ds) { return !!(DB && DB.history_cutoff && ds && ds < DB.history_cutoff); }
 function ensureHistory() {
   if (!DB || !DB.history_cutoff || !window.dept12LoadHistory) return Promise.resolve(false);
+  // Already have the older dates: nothing to load, so no "Loading…" message
+  // (it used to pop up again on every redraw of an older week).
+  if (window.dept12HistoryLoaded && window.dept12HistoryLoaded()) return Promise.resolve(false);
   if (!HISTORY_FETCH) {
     toast("Loading earlier dates…");
     HISTORY_FETCH = window.dept12LoadHistory()
@@ -2749,13 +2996,77 @@ function toolbarHtml(title, opts) {
     (opts.primary || "") +
     "</div>";
 }
+/* Driver read receipts (PROTOTYPE) — when each driver last looked at
+   Current Week and at their own tab on the Flatbed Schedule page (driver/),
+   measured against the last Publish Schedule. Read from Supabase
+   (driver_views), refreshed every minute. */
+var SEEN_OPEN = false;
+function driverViews() { return DRIVER_VIEWS; }
+function lastPushMs() {
+  var ms = LAST_PUBLISH_MS || 0;
+  (DB.loads || []).forEach(function (l) { var t = l.pushed_at ? Date.parse(l.pushed_at) : 0; if (t > ms) ms = t; });
+  return ms;
+}
+function seenWhen(ms) {
+  var d = new Date(ms), t = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString() ? t : d.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" }) + " " + t;
+}
+// {cls, txt} for one driver + one view ("cw" or "own"): seen since the last
+// push, only before it, or never.
+function seenState(truck, kind, push) {
+  var v = driverViews()[String(truck.number)] || {}, at = v[kind] ? Date.parse(v[kind]) : 0;
+  if (!at) return { cls: "none", txt: "Not opened" };
+  if (push && at < push) return { cls: "stale", txt: "Before update · " + seenWhen(at) };
+  return { cls: "ok", txt: "Seen " + seenWhen(at) };
+}
+function seenHtml(mode) {
+  var push = lastPushMs(), drivers = DB.trucks.filter(function (t) { return t.driver_name; }), label, cls;
+  if (mode === "dv") {
+    var t = truckById(DRIVER_VIEW), st = t ? seenState(t, "own", push) : { cls: "none", txt: "" };
+    label = (t && t.driver_name ? t.driver_name + " · " : "") + st.txt; cls = st.cls;
+  } else {
+    var n = drivers.filter(function (t) { return seenState(t, "cw", push).cls === "ok"; }).length;
+    label = "Seen by " + n + " of " + drivers.length; cls = n === drivers.length ? "ok" : n ? "stale" : "none";
+  }
+  var h = '<span class="seen-wrap" id="seen-wrap" data-mode="' + mode + '"><button class="btn seen-btn" id="seen-btn" aria-expanded="' + SEEN_OPEN + '">' +
+    '<span class="seen-dot ' + cls + '"></span>' + esc(label) + "</button>";
+  if (SEEN_OPEN) {
+    h += '<div class="seen-pop" role="dialog" aria-label="Who has seen the schedule"><div class="seen-hd">' +
+      (push ? "Last update pushed " + esc(seenWhen(push)) : "No push recorded yet") + "</div>" +
+      '<div class="seen-grid"><span class="lbl">Driver</span><span class="lbl">Current Week</span><span class="lbl">Their Tab</span>' +
+      drivers.map(function (t) {
+        var a = seenState(t, "cw", push), b = seenState(t, "own", push);
+        return "<b>" + esc(t.driver_name) + '<span class="trk"> ' + esc(t.number) + "</span></b>" +
+          '<span class="seen-st ' + a.cls + '">' + esc(a.txt) + '</span><span class="seen-st ' + b.cls + '">' + esc(b.txt) + "</span>";
+      }).join("") + "</div>" +
+      '<div class="seen-ft">Counts drivers who opened the Flatbed Schedule since the last update.</div></div>';
+  }
+  return h + "</span>";
+}
+// "Seen by" lives at the far right of the app header, only on the two
+// views drivers mirror (Current Week, Driver Tabs).
+function syncHeaderSeen() {
+  var host = $("#hdr-seen");
+  if (!host) { var r = $(".hdr-right"); if (!r) return; host = document.createElement("span"); host.id = "hdr-seen"; r.appendChild(host); }
+  var mode = SUB === "cw" ? "cw" : SUB === "driver" ? "dv" : "";
+  if (!mode) SEEN_OPEN = false;
+  host.innerHTML = mode ? seenHtml(mode) : "";
+}
+function repaintSeen() {
+  var w = $("#seen-wrap");
+  if (w) w.outerHTML = seenHtml(w.getAttribute("data-mode"));
+}
+document.addEventListener("click", function (e) {
+  if (e.target.closest("#seen-btn")) { SEEN_OPEN = !SEEN_OPEN; repaintSeen(); return; }
+  if (SEEN_OPEN && !e.target.closest(".seen-pop")) { SEEN_OPEN = false; repaintSeen(); }
+});
 function vScheduler() {
   return toolbarHtml("Scheduler", {
     className: "home-base-bar",
     context: '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate id="jump" data-last-iso="' + TODAY +
       '" value="' + esc(isoToMdy(TODAY)) + '">' +
       '<button class="btn" id="jump-btn">Go</button><button class="btn" id="today-jump">Today</button>',
-    primary: '<button class="btn pri" id="push-driver-tabs">' + icon("sync") + 'Update Google Schedule</button>'
+    primary: '<button class="btn pri" id="push-driver-tabs">' + icon("sync") + 'Publish Schedule</button>'
   });
 }
 /* Current Week — an editable window onto the Scheduler (D56, was read-only D28).
@@ -2773,7 +3084,7 @@ function vCurrentWeek() {
         '<input class="fb-fs-inp" type="text" inputmode="numeric" id="cw-days" value="' + CW_DAYS + '" title="Days shown (1–14)">' +
         '<button class="fb-fs-b" data-cw-step="1" title="Show one more day"' + (CW_DAYS >= 14 ? " disabled" : "") + '>+</button>' +
       "</span></span>",
-    primary: '<button class="btn pri" id="push-driver-tabs">' + icon("sync") + 'Update Google Schedule</button>'
+    primary: '<button class="btn pri" id="push-driver-tabs">' + icon("sync") + 'Publish Schedule</button>'
   });
   var dates = currentWeekDates();
   h += '<div class="grid-wrap"><table class="grid" style="width:' +
@@ -2855,37 +3166,130 @@ function driverPickupDropLinks(o) {
    Every caller must emit exactly 7 sibling elements in this order —
    repaintDvSlot() below walks siblings by position, there's no other way
    to address them (the .dv grid has no per-row wrapper, D137). */
-function dvSlotCellsHtml(key) {
-  var v = CELLS[key], o = v && v.oid ? order(v.oid) : null;
-  if (!o) {
-    var scheduleNoteInput = '<textarea class="dv-note" data-notekey="' + key + '" placeholder="Note">' +
-      esc(v ? (v.text || "") : "") + "</textarea>";
-    return '<div class="dv-cell" data-key="' + key + '"' +
-      (v && v.text ? ' style="color:var(--ink-2)"' : "") + '>' + (v && v.text ? esc(v.text) : "") + "</div>" +
-      '<div class="dv-cell">' + scheduleNoteInput + "</div><div></div><div></div><div></div><div></div><div></div>";
+/* Driver Tabs mirrors what a driver sees on the Flatbed Schedule page
+   (driver/driver.js): same columns, same load chip text, same scan button
+   spot. Keep the two in step when either changes. The Dispatch Notes, PO/PU #
+   and Delivery # boxes stay editable here; everything else is read-only. */
+var DV_LEGEND = { "early|false": "#D9EAD3", "anytime|false": "#FFF2CC", "early|true": "#F1C232", "anytime|true": "#783F04" };
+function dvLighten(hex) {
+  var x = String(hex || "").replace(/^#+/, "");
+  if (x.length === 8) x = x.slice(0, 6);
+  if (x.length !== 6) return null;
+  return "#" + [0, 2, 4].map(function (i) {
+    var v = parseInt(x.slice(i, i + 2), 16);
+    return Math.round(v + (255 - v) * 0.78).toString(16).toUpperCase().padStart(2, "0");
+  }).join("");
+}
+function dvPlace(l) {
+  return l ? [l.name, l.address, [l.city, l.state].filter(Boolean).join(" ")].filter(Boolean).join(", ") : "";
+}
+/* The chip text and fill a driver gets for one slot. */
+function dvChip(o, v, truck, day) {
+  if (!o) return { html: v && v.text ? esc(v.text) : "", color: v && v.fmt && v.fmt.fill || (v && v.cat) || null };
+  if (o.is_transfer) {
+    var dept = departmentById(o.transfer_department_id);
+    return { html: esc([o.driver_note, o.transfer_department_name || "(no department)"].filter(Boolean).join("\n")),
+             color: dept && dept.color && dept.color.charAt(0) === "#" ? dept.color : null };
   }
-  var links = isExt(o) ? driverPickupDropLinks(o) : { pickup: "", drop: "" };
-  var storeMap = (!isExt(o) && o.customer_party_id) ? (locFor(o.customer_party_id) || {}).map_url || "" : "";
-  // Placeholder is generic "Note" (Nate's ask) — it shouldn't announce what
-  // the field becomes once you're in it; that's what the label column
-  // already says.
+  if (isExt(o)) {
+    var pick = dvPlace(locById(o.pickup_location_id)), drop = dvPlace(locById(o.delivery_location_id));
+    var pa = apptGet(o.id, "pick"), da = apptGet(o.id, "drop");
+    var tag = function (a) { return a && (a.from || a.to || a.date) ? ' <span class="appt">APPT ' + esc(apptText(a, day)) + "</span>" : ""; };
+    return { html: ["<b>Broker/Customer:</b> " + esc(o.broker_name || "—"), "",
+        "<b>PICK:</b> " + esc(pick) + tag(pa), "", "<b>DROP:</b> " + esc(drop) + tag(da)].join("\n"),
+      color: truck && truck.driver_color ? dvLighten(truck.driver_color) : null };
+  }
+  var loc = o.customer_party_id ? locFor(o.customer_party_id) : null;
+  var citystate = loc ? [loc.city, loc.state].filter(Boolean).join(" ") : "";
+  var info = (citystate + (loc && loc.forklift ? " - " + loc.forklift : "")).trim();
+  var orderLine = (o.solomon_order_no || "(no order #)") + (o.pallet_count ? " - " + o.pallet_count + " PAL" : "");
+  var text = [o.customer_name || "(no customer)", info, orderLine].filter(Boolean).join("\n");
+  var flags = [];
+  var fk = String((loc && loc.forklift) || "").trim().toLowerCase();
+  if (fk) flags.push(fk === "nf" || fk === "none" || fk === "no" || fk === "no forklift" ? "NO FORKLIFT" : fk.indexOf("spyder") >= 0 ? "SPYDER" : "FORKLIFT");
+  var flagHtml = flags.length ? '<div class="flags" style="margin-top:6px">' + flags.map(function (x) { return '<span class="flag">' + esc(x) + "</span>"; }).join("") + "</div>" : "";
+  return { html: esc(text).replace(/(\b07-\d{4}-\d{4}\b)/g, "<b>$1</b>") + flagHtml,
+    color: loc ? (DV_LEGEND[(loc.timing_window || "") + "|" + !!loc.is_umatilla] || null) : null };
+}
+/* What the driver has put on a load, read-only (drivers add these on their page). */
+function dvDriverNotesHtml(oid) {
+  var list = (DRIVER_NOTES[oid] || []).slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; });
+  return list.map(function (n) {
+    var d = new Date(n.at);
+    return '<div class="drv-note-item"><span>' + esc(d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) + "</span>" + esc(n.text) + "</div>";
+  }).join("");
+}
+function dvScanStatusHtml(oid) {
+  var rec = PROTO_SCAN_RECS.filter(function (r) { return r.order_id === oid; })[0];
+  if (!rec) return "";
+  var d = new Date(rec.at);
+  return '<span class="drv-scanned"><span><b>Scanned</b> · ' + rec.pages + " page" + (rec.pages > 1 ? "s" : "") + " · " +
+    esc(d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) + '</span></span>' +
+    '<button class="btn sm" data-viewpath="' + esc(rec.storage_path) + '" data-viewname="POD scan">View PDF</button>';
+}
+/* Store map (bag orders): the picture saved on the customer's location. Same
+   button and full-screen viewer a driver gets. Picture links only. */
+function dvStoreMapUrl(o) {
+  var loc = o && !isExt(o) && o.customer_party_id ? locFor(o.customer_party_id) : null;
+  var u = loc && loc.map_url || "";
+  return /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(u) ? u : "";
+}
+function dvStoreMapBtn(o) {
+  return !o.is_transfer && dvStoreMapUrl(o) ? '<button class="btn sm" data-smap-dv="' + o.id + '">Store Map</button>' : "";
+}
+function closeDvStoreMap() {
+  var el = document.querySelector(".smap");
+  if (el) { el.remove(); document.body.style.overflow = ""; }
+}
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("[data-smap-dv]");
+  if (b) {
+    e.stopPropagation();
+    var o = order(b.getAttribute("data-smap-dv")), url = o && dvStoreMapUrl(o);
+    if (!url || document.querySelector(".smap")) return;
+    var el = document.createElement("div");
+    el.className = "smap"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Store map");
+    el.innerHTML = '<div class="smap-top"><button class="btn" data-smap-close>Close</button>' +
+      '<div class="smap-title"><b>' + esc(o.customer_name || "Store") + "</b><span>Store map</span></div>" +
+      '<a class="btn" href="' + esc(url) + '" target="_blank" rel="noopener">Open Full Size</a></div>' +
+      '<div class="smap-body"><img src="' + esc(url) + '" alt="Store map for ' + esc(o.customer_name || "this store") + '"></div>';
+    document.body.appendChild(el);
+    document.body.style.overflow = "hidden";
+    return;
+  }
+  if (e.target.closest && e.target.closest("[data-smap-close]")) { e.stopPropagation(); closeDvStoreMap(); }
+}, true);
+document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeDvStoreMap(); });
+function dvNum(o, val) {
+  return '<div class="dv-cell dv-num mono" data-oid="' + o.id + '" title="Open this load to edit">' + esc(val || "") + "</div>";
+}
+function dvSlotCellsHtml(key) {
+  var v = CELLS[key], o = v && v.oid ? order(v.oid) : null, truck = truckById(key.split("|")[0]);
+  var ch = dvChip(o, v, truck, key.split("|")[1]);
+  var chipBody = ch.html ? '<div class="load-txt' + (ch.color ? "" : " unfilled") + '"' +
+    (ch.color ? ' style="background:' + esc(ch.color) + ";color:" + textOn(ch.color) + '"' : "") + ">" + ch.html +
+    (o && !o.is_transfer ? '<div class="chip-scan">' + dvStoreMapBtn(o) + '<button class="btn sm dv-dead" tabindex="-1" title="Drivers use this on their own page">Scan POD / BOL</button>' +
+      dvScanStatusHtml(o.id) + "</div>" : "") + "</div>" : "";
+  if (!o) {
+    // A typed or empty slot is edited right in the chip cell (click it), the
+    // same text the Scheduler and Current Week edit.
+    return '<div class="dv-cell dv-typed" data-key="' + key + '" title="Click to write a note">' + chipBody + "</div>" +
+      "<div></div><div></div><div></div><div></div><div></div><div></div>";
+  }
   var driverNoteInput = '<textarea class="dv-note" data-notekey="' + key + '" data-oid="' + o.id +
     '" placeholder="Note">' + esc(o.driver_note || "") + "</textarea>";
-  // PO/PU# and Delivery# (D185) — same two fields that land in the pushed
-  // sheet's E/F columns, editable here the same way; internal orders never
-  // carry them, matching `_driver_week_payload`'s own external-only gate.
-  var poInput = isExt(o) ? '<input class="dv-field-inp" type="text" data-dvfield="po_number" data-oid="' +
-    o.id + '" value="' + esc(o.po_number || "") + '">' : "";
-  var deliveryInput = isExt(o) ? '<input class="dv-field-inp" type="text" data-dvfield="delivery_number" data-oid="' +
-    o.id + '" value="' + esc(o.delivery_number || "") + '">' : "";
+  var cn = !isExt(o) && o.customer_party_id ? (locFor(o.customer_party_id) || {}).notes || "" : "";
+  var dnotes = dvDriverNotesHtml(o.id);
   return '<div class="dv-cell" data-key="' + key + '" draggable="true" data-oid="' + o.id + '" data-from="' + key +
-    '" style="cursor:grab">' + chipHtml(o, false, "", v.cat, v.fmt, pushColorFor(o, v), !!v.pushedAt) + "</div>" +
-    '<div class="dv-cell">' + driverNoteInput + "</div>" +
-    '<div class="dv-cell">' + poInput + "</div>" +
-    '<div class="dv-cell">' + deliveryInput + "</div>" +
-    '<div class="dv-cell">' + mapLinkHtml(storeMap, "Store Maps") + "</div>" +
-    '<div class="dv-cell">' + mapLinkHtml(links.pickup, "Pickup") + "</div>" +
-    '<div class="dv-cell">' + mapLinkHtml(links.drop, "Drop") + "</div>";
+    '" style="cursor:grab">' + chipBody + "</div>" +
+    // The numbers come from the load itself: click one to open the load's side
+    // window, where they're edited (and reach drivers on the next push).
+    dvNum(o, o.solomon_order_no) +
+    '<div class="dv-cell">' + driverNoteInput + (cn ? '<div class="dv-cust-note">' + esc(cn) + "</div>" : "") + "</div>" +
+    dvNum(o, isExt(o) ? o.po_number : "") +
+    dvNum(o, isExt(o) ? o.delivery_number : "") +
+    dvNum(o, isExt(o) ? o.broker_load_no : "") +
+    '<div class="dv-cell">' + (o.is_transfer ? "" : '<button class="btn sm dv-dead" tabindex="-1" title="Drivers use this on their own page">Add Note</button>') + dnotes + "</div>";
 }
 /* Repaints one Driver Tabs slot in place after its data changes (drag-drop
    move, note save) — finds the slot's Load cell by data-key, then swaps it
@@ -2946,36 +3350,33 @@ function vDriverView() {
         '<input class="fb-fs-inp" type="text" inputmode="numeric" id="cw-days" value="' + CW_DAYS + '" title="Days shown (1–14)">' +
         '<button class="fb-fs-b" data-cw-step="1" title="Show one more day"' + (CW_DAYS >= 14 ? " disabled" : "") + '>+</button>' +
       "</span></span>",
-    primary: '<button class="btn pri" id="push-driver-tabs">' + icon("sync") + 'Update Google Schedule</button>'
+    primary: '<button class="btn pri" id="push-driver-tabs">' + icon("sync") + 'Publish Schedule</button>'
   });
   h += '<div style="flex:1;min-height:0;overflow:auto;padding:10px 14px 14px">';
-  h += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px">' +
+  // The same big tabs a driver sees on their page, one per truck.
+  h += '<div class="driver-app dv-tabs-wrap"><nav class="db-tabs" role="tablist" aria-label="Driver tabs">' +
     DB.trucks.map(function (t) {
-      return '<button class="btn sm' + (t.id === DRIVER_VIEW ? " pri" : "") + '" data-dvpick="' + t.id + '">' +
-        esc(t.driver_name || "— unassigned —") + '<span style="opacity:.6"> · ' + esc(t.number) + " " + esc(t.eq || "") + "</span></button>";
-    }).join("") + "</div>";
+      return '<button class="sub-tab" role="tab" data-dvpick="' + t.id + '" aria-selected="' + (t.id === DRIVER_VIEW) + '">' +
+        esc(t.driver_name || "Unassigned") + '<span class="trk">' + esc(t.number) + "</span></button>";
+    }).join("") + "</nav></div>";
   var dvTruck = truckById(DRIVER_VIEW);
-  // Column order matches the real pushed sheet's B:I letters exactly
-  // (D185): Date/Load/Notes/PO-PU#/Delivery#/Store Maps/Pickup/Drop.
-  h += '<div class="dv" style="grid-template-columns:78px 1.6fr 1.3fr 84px 84px 64px 64px 64px">' +
-    '<div class="hd">Date</div><div class="hd">' + esc((dvTruck && dvTruck.driver_name) || "Load") + '</div>' +
-    '<div class="hd">Notes</div><div class="hd">PO / PU #</div><div class="hd">Delivery #</div>' +
-    '<div class="hd">Store Maps</div><div class="hd">Pickup</div><div class="hd">Drop</div>';
-  if (!dvTruck) return h + "</div></div>";
+  // The same columns, in the same order, as a driver's own tab.
+  h += '<div class="driver-app dv-embed"><div class="dv">' +
+    '<div class="hd">' + esc((dvTruck && dvTruck.driver_name) || "Load") + '</div><div class="hd">Rexius Order #</div>' +
+    '<div class="hd">Dispatch Notes</div><div class="hd">PO / PU #</div><div class="hd">Delivery #</div>' +
+    '<div class="hd">Load #</div><div class="hd">Driver Notes</div>';
+  if (!dvTruck) return h + "</div></div></div>";
   var dates = currentWeekDates();
-  // Every slot renders now, not just occupied ones (D137) — an empty slot is
-  // still a real drop target (data-key, same cellKey the Scheduler/Current
-  // Week use), so a chip can be dragged in from Staging here too.
+  // Every slot renders (an empty slot is still a drop target), with a day bar
+  // between days exactly like the driver's page.
   for (var i = 0; i < dates.length; i++) {
     var day = dates[i], ds = iso(day);
-    for (var s = 1; s <= 3; s++) {
-      var key = cellKey(dvTruck.id, ds, s);
-      var dateCell = s === 1 ? '<div class="n" style="font-weight:600">' + DOW[day.getUTCDay()] + " " + ds.slice(5) + "</div>"
-        : '<div class="n"></div>';
-      h += dateCell + dvSlotCellsHtml(key);
-    }
+    h += '<div class="day-bar' + (ds === TODAY ? " today" : "") + '" id="d-' + ds + '"><span class="dwk">' + DOW[day.getUTCDay()] +
+      '</span><span class="dnum">' + (+ds.slice(5, 7)) + "/" + (+ds.slice(8, 10)) + "</span>" + (ds === TODAY ? '<span class="today-tag">Today</span>' : "") + "</div>";
+    if (OFFDAYS[dvTruck.id + "|" + ds]) { h += '<div class="off-cell off-hatch"><div class="off-label">OFF</div></div>'; continue; }
+    for (var s = 1; s <= 3; s++) h += dvSlotCellsHtml(cellKey(dvTruck.id, ds, s));
   }
-  h += "</div></div>";
+  h += "</div></div></div>";
   return h;
 }
 /* External Orders (D33) — full parity with the legacy External Order
@@ -3438,7 +3839,7 @@ function vInternalFreight() {
 function vBilling() {
   var h = toolbarHtml("Billing", {
     secondary: '<button class="btn" id="bill-dl-sel">Download Selected (' + GROUP.length + ")</button>",
-    primary: '<button class="btn pri" id="bill-done-sel">Mark Done</button>'
+    primary: '<button class="btn pri" id="bill-combine-sel">Combine Into One PDF (' + GROUP.length + ")</button>"
   });
   // Everything below the toolbar shares one outer .grid-wrap (D256) so it
   // fills the space below the now-real toolbar header and scrolls as one
@@ -3451,6 +3852,7 @@ function vBilling() {
   h += '<div class="grid-wrap">';
   h += '<div class="drop" id="batch-drop" style="margin-bottom:10px"><b>Drop a Rexius invoice batch here</b></div>';
   h += '<div class="drop" id="loose-drop" style="margin-bottom:10px"><b>Drop a POD or loose document here</b></div>';
+  h += batchReviewHtml();
 
   /* Unmatched documents queue (Phase 4) — anything the D7 matcher couldn't
      place. Attach each to an order by hand. */
@@ -3483,17 +3885,6 @@ function vBilling() {
     h += '<div class="sec-h">Unmatched documents — 0</div>' +
       emptyStateHtml("Nothing unmatched right now");
   }
-  if (POOL.length) {
-    h += '<div class="sec-h">Unassigned invoices — ' + POOL.filter(function (p) { return !p.used; }).length +
-      " of " + POOL.length + '</div><div class="pool" style="margin-bottom:12px">';
-    POOL.forEach(function (p, i) {
-      h += '<div class="pill-inv' + (p.used ? " used" : "") + '" draggable="' + (!p.used) +
-        '" data-pool="' + i + '">' + (p.scanning ? '<span class="spin"></span>' : "") +
-        "<span>" + esc(p.label) + "</span>" +
-        (p.invoiceNum ? '<span class="num">#' + esc(p.invoiceNum) + "</span>" : "") + "</div>";
-    });
-    h += "</div>";
-  }
   var queue = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_at && !isHistorical(o); });
   h += '<div class="sec-h">Billing queue — ' + queue.length + "</div>";
   h += '<div class="grid-wrap"><table class="data" style="min-width:1040px"><thead><tr>' +
@@ -3501,8 +3892,13 @@ function vBilling() {
     '<th style="width:80px">POD</th><th style="width:80px">Invoice</th><th style="width:110px">Status</th>' +
     '<th style="width:270px"></th></tr></thead><tbody>';
   queue.forEach(function (o) {
-    var have = {}; docsFor(o.id).forEach(function (d) { have[d.doc_type] = 1; });
-    function tick(t) { return have[t] ? '<span class="pill on">Yes</span>' : '<span class="pill bad">No</span>'; }
+    var have = {}; docsFor(o.id).forEach(function (d) { have[d.doc_type] = d; });
+    function tick(t) {
+      if (!have[t]) return '<span class="pill bad">No</span>';
+      // An invoice matched automatically says so, so it's easy to spot-check.
+      var auto = t === "invoice" && have[t].matched_by && have[t].matched_by !== "manual" ? '<span class="auto-tag">Auto</span>' : "";
+      return '<span class="pill on">Yes</span>' + auto;
+    }
     var ready = have.pod && have.invoice;
     h += '<tr class="bill-row" data-bill="' + o.id + '" data-roworder="' + o.id + '">' +
       '<td><div class="cell"><input type="checkbox" data-group="' + o.id + '"' +
@@ -3513,8 +3909,8 @@ function vBilling() {
       '<td><div class="cell">' + tick("invoice") + "</div></td>" +
       '<td><div class="cell">' + (ready ? '<span class="pill on">Ready</span>' : '<span class="pill mid">Waiting</span>') + "</div></td>" +
       '<td><div class="cell" style="display:flex;gap:4px">' +
-        '<button class="btn sm" data-bill-dl="' + o.id + '"' + (ready ? "" : " disabled") + ">Download</button>" +
-        '<button class="btn sm" data-bill-done="' + o.id + '">Mark Complete</button>' +
+        '<button class="btn sm" data-bill-dl="' + o.id + '"' + (packageDocs(o.id).length ? "" : " disabled") + ">Download</button>" +
+        '<button class="btn sm" data-bill-done="' + o.id + '">Mark Billed</button>' +
       "</div></td></tr>";
   });
   h += "</tbody></table></div>";
@@ -4373,7 +4769,6 @@ function ordersToolbarExtras() {
     '<button class="btn sm" id="sync-btn">' + icon("calendar") + 'Sync Delivery Dates</button>';
 }
 function render() {
-  if (window.Dept12SheetsPreload && (SUB === "sched" || SUB === "cw" || SUB === "driver")) window.Dept12SheetsPreload();
   if ((SUB === "cw" || SUB === "driver") && needsHistory(CW_START) && !HISTORY_FETCH)
     ensureHistory().then(function (got) { if (got) render(); });
   reindexLookups(); CELLS = cellContents(); buildOffDays(); buildDayNotes(); buildCatColor(); buildSheetCells(); buildGridFmt(); renderFmtBar();
@@ -4384,6 +4779,7 @@ function render() {
   var openSuggest = document.getElementById("loc-suggest-portal");
   if (openSuggest) openSuggest.style.display = "none";
   $("#conn").textContent = "";
+  syncHeaderSeen();
   // The persistent top-level .sections/.subs bars are retired (D200). The
   // sidebar owns section navigation. Database and Settings use in-page tabs.
   renderSideNav();
@@ -4395,6 +4791,15 @@ function render() {
   // the DOM, or switching away from Scheduler and back silently dumps the
   // view back to the top of its rolling window (D141).
   if (schedNode && schedNode.parentNode === main) schedScrollTop = schedNode.scrollTop;
+  /* Redrawing the view you're already on (after a save/reload) puts every
+     scrolling area back where it was; switching views starts at the top.
+     Positions are matched by order, and the view's structure is the same
+     from one draw to the next. */
+  var viewKey = SEC + "|" + SUB + "|" + (SUB === "driver" ? DRIVER_VIEW : ""), SCROLL_SEL = ".grid-wrap, .pad, #main > div";
+  var keepScroll = viewKey === LAST_VIEW_KEY ? [].map.call(main.querySelectorAll(SCROLL_SEL), function (el) { return [el.scrollTop, el.scrollLeft]; }) : null;
+  var railEl = $("#rail"), railTop = railEl ? railEl.scrollTop : 0;
+  var navEl = $("#sidenav-body"), navTop = navEl ? navEl.scrollTop : 0;
+  LAST_VIEW_KEY = viewKey;
   main.innerHTML = ""; applyZoom();
   if (SEC === "database") main.insertAdjacentHTML("beforeend", databaseTabsHtml());
   if (SEC === "settings") main.insertAdjacentHTML("beforeend", settingsTabsHtml());
@@ -4404,7 +4809,8 @@ function render() {
 
   if (SUB === "sched") {
     main.insertAdjacentHTML("beforeend", vScheduler());
-    if (!schedNode) schedNode = buildScheduler();
+    if (!schedNode) { schedNode = buildScheduler(); if (SCHED_KEEP) schedNeedsScroll = false; }
+    SCHED_KEEP = false;
     main.appendChild(schedNode);
     /* On a fresh build, land the viewport on today once it's in the DOM (D53).
        Reusing the cached node instead just restores wherever it was (D141). */
@@ -4452,9 +4858,20 @@ function render() {
     });
   }
   if (railOn) renderRail();
+  if (keepScroll && keepScroll.length) {
+    var els = main.querySelectorAll(SCROLL_SEL);
+    keepScroll.forEach(function (p, i) { if (els[i] && (p[0] || p[1])) { els[i].scrollTop = p[0]; els[i].scrollLeft = p[1]; } });
+  }
+  if (railEl && $("#rail")) $("#rail").scrollTop = railTop;
+  if (navEl && $("#sidenav-body")) $("#sidenav-body").scrollTop = navTop;
 }
+var LAST_VIEW_KEY = null, SCHED_KEEP = false, DRIVER_BOOTED = false;
 function reload() { return api("bootstrap").then(function (d) {
+  // A reload rebuilds the Scheduler; keep the spot you were at instead of
+  // snapping back to today.
+  if (schedNode && schedNode.parentNode) { schedScrollTop = schedNode.scrollTop; SCHED_KEEP = true; }
   DB = d; schedNode = null; render();
+  if (!DRIVER_BOOTED) { DRIVER_BOOTED = true; loadDriverActivity(); }   // first load: bring in notes, scans, views
   if (typeof refreshDrawerChipPreview === "function") refreshDrawerChipPreview();
   // Keep the durable History panel current with whatever just changed —
   // reload() already runs after essentially every mutation in the app, so
@@ -4624,6 +5041,65 @@ function captureRouteDraft() {
     s.notes = get("notes").value.trim();
   });
 }
+/* Drawer Pickup / Drop: add or remove picks/drops inline (no Full Route
+   popup needed). STOP_DRAFT is a stop row added in the drawer that's still
+   waiting for its location; nothing saves until a location is picked. */
+var STOP_DRAFT = null;
+function drawerRouteStops(o) {
+  return o.route_mode === "custom" ? orderStops(o.id).map(function (s) { return Object.assign({}, s); }) : [
+    { stop_type: "pickup", location_id: o.pickup_location_id, reference_number: o.po_number },
+    { stop_type: "delivery", location_id: o.delivery_location_id, reference_number: o.delivery_number }
+  ];
+}
+function saveDrawerRoute(oid, stops) {
+  var simple = stops.length === 2 && stops[0].stop_type === "pickup" && stops[1].stop_type === "delivery";
+  var clean = stops.map(function (s) {
+    return { stop_type: s.stop_type, location_id: s.location_id || null, reference_number: s.reference_number || "",
+      scheduled_at: s.scheduled_at || null, appointment_required: !!s.appointment_required,
+      pallet_count: s.pallet_count == null ? "" : s.pallet_count, notes: s.notes || "" };
+  });
+  var go = function () {
+    api("order/route", { order_id: oid, stops: clean, route_mode: simple ? "simple" : "custom" })
+      .then(function () { STOP_DRAFT = null; return reload(); })
+      .then(function () { openOrder(oid); toast(simple ? "Back to one pick and one drop" : "Route saved · " + routeCompactLabel(order(oid))); })
+      .catch(function (err) { toast(err.message, true); openOrder(oid); });
+  };
+  if (placement()[oid]) confirmModal("This order is already scheduled. Save the route and update the scheduled truck run too?", go, "Update Route");
+  else go();
+}
+// A location picked in one of the drawer's stop boxes ("stop:<index>" or the
+// new row, "stop:new").
+function drawerStopPick(oid, field, locId) {
+  var o = order(oid); if (!o) return;
+  var stops = drawerRouteStops(o);
+  if (field === "stop:new") {
+    if (!STOP_DRAFT) return;
+    var ns = { stop_type: STOP_DRAFT.type, location_id: locId };
+    if (ns.stop_type === "pickup") {
+      var at = 0; stops.forEach(function (s, i) { if (s.stop_type === "pickup") at = i + 1; });
+      stops.splice(at, 0, ns);                   // new picks go after the last pick
+    } else stops.push(ns);                       // new drops go last
+  } else {
+    var i = +field.split(":")[1]; if (!stops[i]) return;
+    stops[i].location_id = locId;
+  }
+  saveDrawerRoute(oid, stops);
+}
+document.addEventListener("click", function (e) {
+  var add = e.target.closest && e.target.closest("[data-stop-add]");
+  if (add && DRAWER_OID) {
+    STOP_DRAFT = { oid: DRAWER_OID, type: add.getAttribute("data-stop-add") }; openOrder(DRAWER_OID);
+    var ni = document.querySelector('[data-loccombo="stop:new"]'); if (ni) ni.focus();
+    return;
+  }
+  if (e.target.closest && e.target.closest("[data-stop-cancel]")) { STOP_DRAFT = null; if (DRAWER_OID) openOrder(DRAWER_OID); return; }
+  var rm = e.target.closest && e.target.closest("[data-stop-remove]");
+  if (rm && DRAWER_OID && !rm.disabled) {
+    var o = order(DRAWER_OID), stops = drawerRouteStops(o);
+    stops.splice(+rm.getAttribute("data-stop-remove"), 1);
+    saveDrawerRoute(DRAWER_OID, stops);
+  }
+});
 function routeEditorModal(oid, suppliedStops) {
   var o = order(oid); if (!o) return;
   if ((o.delivered_at || o.billed_at) && !suppliedStops) {
@@ -4674,7 +5150,7 @@ function routeEditorModal(oid, suppliedStops) {
       '<label class="mf chk"><input type="checkbox" data-route-field="appointment_required"' + (s.appointment_required ? " checked" : "") + '> <span>Appointment required</span></label>' +
       '</div></section>';
   }).join("");
-  openModal('<div class="modal-hd"><h2>Full route · ' + esc(o.solomon_order_no || o.broker_load_no || "new order") + '</h2></div>' +
+  openModal('<div class="modal-hd"><h2>Stop Details · ' + esc(o.solomon_order_no || o.broker_load_no || "new order") + '</h2></div>' +
     '<div class="modal-body route-editor"><p class="route-help">Normal orders stay one pickup and one delivery. Add stops only for the exception.</p>' +
     cards + '<div class="route-add"><button class="btn" data-route-add="pickup">+ Pickup</button>' +
     '<button class="btn" data-route-add="delivery">+ Delivery</button></div></div>' +
@@ -4790,12 +5266,12 @@ function dayNoteModal(ds) {
 }
 /* In-app confirm dialog (D77) — replaces the browser's confirm() so destructive
    actions get a styled modal. onYes runs after the user confirms. */
-function confirmModal(message, onYes, confirmLabel) {
+function confirmModal(message, onYes, confirmLabel, primary) {
   openModal('<div class="modal-hd"><h2>Are you sure?</h2></div>' +
     '<div class="modal-body"><p style="line-height:1.5;margin:0">' + esc(message) + "</p></div>" +
     '<div class="modal-ft"><span style="flex:1"></span>' +
     '<button class="btn" id="modal-cancel">Cancel</button>' +
-    '<button class="btn bad" id="modal-confirm">' + esc(confirmLabel || "Delete") + "</button></div>");
+    '<button class="btn ' + (primary ? "pri" : "bad") + '" id="modal-confirm">' + esc(confirmLabel || "Delete") + "</button></div>");
   var btn = $("#modal-confirm");
   if (btn) btn.addEventListener("click", function () { closeModal(); onYes(); });
 }
@@ -5414,6 +5890,16 @@ function startEdit(td, seed) {
   td.appendChild(ta); ta.focus();
   if (seed === undefined) ta.select(); else ta.setSelectionRange(ta.value.length, ta.value.length);
 }
+/* How many loads already carry this customer/broker (the older ones only exist
+   in memory once their dates have been loaded, so load them first). */
+function renameLoadCount(partyId) {
+  var count = function () {
+    return (DB.orders || []).filter(function (o) { return o.broker_party_id === partyId || o.customer_party_id === partyId; }).length;
+  };
+  var n = count();
+  if (n || !(DB && DB.history_cutoff)) return Promise.resolve(n);
+  return ensureHistory().then(function () { return count(); }, function () { return count(); });
+}
 function commitEdit() {
   if (!EDITING) return;
   var td = EDITING.td, ta = td.querySelector(".cell-input"), val = ta ? ta.value.trim() : "";
@@ -5422,13 +5908,26 @@ function commitEdit() {
   if (td.dataset.field) {
     var prevG = td.querySelector(".cell").textContent;
     if (val === prevG) return;
-    td.querySelector(".cell").innerHTML = cellDisplayHtml(val);
-    var table = td.dataset.table, id = td.dataset.id, field = td.dataset.field;
-    gridCellSet(table, id, field, val).then(function () {
-      histPush("edit " + field,
-        function () { return gridCellSet(table, id, field, prevG); },
-        function () { return gridCellSet(table, id, field, val); });
-    }).catch(function (e) { toast(e.message, true); });
+    var table = td.dataset.table, id = td.dataset.id, field = td.dataset.field, cellEl = td.querySelector(".cell");
+    var apply = function () {
+      cellEl.innerHTML = cellDisplayHtml(val);
+      gridCellSet(table, id, field, val).then(function () {
+        histPush("edit " + field,
+          function () { return gridCellSet(table, id, field, prevG); },
+          function () { return gridCellSet(table, id, field, val); });
+      }).catch(function (e) { cellEl.innerHTML = cellDisplayHtml(prevG); toast(e.message, true); });
+    };
+    // Renaming a customer that already has loads changes those loads too:
+    // ask first. A new or unused customer renames without a prompt.
+    if (table === "parties" && field === "name" && val) {
+      renameLoadCount(id).then(function (n) {
+        if (!n) { apply(); return; }
+        confirmModal("This will change the name on " + n + (n === 1 ? " previous order" : " previous orders") +
+          " for “" + prevG + "”. Rename it to “" + val + "”?", apply, "Yes, Rename", true);
+      });
+      return;
+    }
+    apply();
   } else {
     var key = td.dataset.key;
     var cur = CELLS[key];
@@ -5785,62 +6284,125 @@ function ingestLoose(file) {
   }).catch(function (e) { toast("Document failed: " + e.message, true); });
 }
 
-/* ── Invoice batch split — ported from legacy :2341 ──────────────────────── */
+/* ── Invoice batch (Rexius invoices printed as one PDF) ───────────────────
+   Two pages per invoice; the second is the back of the paper and is dropped.
+   Every invoice is saved the moment it's read (nothing waits in the browser
+   to be lost on a refresh), matched to its load by what's printed on it, and
+   listed in the batch review so a person can double-check or fix it. */
+var BATCH_REVIEW = null;   // { name, total, done, odd, items:[{docId, label, read, how, orderId, ambiguous}] }
+function queueOrders() {
+  return orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_at && !isHistorical(o); });
+}
+// Which load an invoice belongs to, from its text: Rexius order # first, then
+// the broker's load #, PO / PU #, Delivery #. Loads still waiting to bill win
+// ties; if a number fits more than one load, leave it for a person.
+function matchInvoiceText(text) {
+  var T = " " + String(text || "").toUpperCase().replace(/\s+/g, " ") + " ";
+  var exts = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !isHistorical(o); });
+  var sols = String(text || "").match(/\d{2}-\d{4}-\d{4}/g) || [];
+  function has(v) {
+    v = String(v || "").trim().toUpperCase(); if (v.replace(/[^A-Z0-9]/g, "").length < 4) return false;
+    return new RegExp("[^A-Z0-9]" + v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[^A-Z0-9]").test(T);
+  }
+  var tiers = [
+    ["Rexius order #", "solomon_order_no", function (o) { return o.solomon_order_no && sols.indexOf(o.solomon_order_no) >= 0; }],
+    ["Load #", "broker_load_no", function (o) { return has(o.broker_load_no); }],
+    ["PO / PU #", "manual", function (o) { return has(o.po_number); }],
+    ["Delivery #", "manual", function (o) { return has(o.delivery_number); }]
+  ];
+  for (var k = 0; k < tiers.length; k++) {
+    var hits = exts.filter(tiers[k][2]); if (!hits.length) continue;
+    var open = hits.filter(function (o) { return !o.billed_at; });
+    var pick = open.length === 1 ? open[0] : (!open.length && hits.length === 1 ? hits[0] : null);
+    if (pick) return { order: pick, how: tiers[k][0], matchedBy: tiers[k][1] };
+    return { order: null, how: "More than one load has that " + tiers[k][0], ambiguous: true };
+  }
+  return { order: null, how: sols.length ? "No load has order # " + sols[0] : "No order, load or PO number found" };
+}
 function ingestBatch(file) {
   toast("Splitting batch…");
-  return file.arrayBuffer().then(function (buf) {
-    return PDFLib.PDFDocument.load(buf).then(function (pdf) {
-      var total = pdf.getPageCount();
-      if (total % 2 !== 0) throw new Error("Batch has " + total + " pages — expected an even number (2 per invoice).");
-      var count = total / 2, offset = POOL.length, jobs = [];
-      for (var i = 0; i < count; i++) {
-        jobs.push((function (idx) {
-          return PDFLib.PDFDocument.create().then(function (doc) {
-            return doc.copyPages(pdf, [idx * 2]).then(function (pgs) {
-              doc.addPage(pgs[0]);
-              return doc.save().then(function (bytes) {
-                return { b64: b64FromBytes(bytes), label: "Invoice " + (offset + idx + 1),
-                         invoiceNum: null, scanning: true, used: false };
-              });
+  return file.arrayBuffer().then(function (buf) { return PDFLib.PDFDocument.load(buf); }).then(function (pdf) {
+    var total = pdf.getPageCount(), count = Math.ceil(total / 2);
+    BATCH_REVIEW = { name: file.name, total: count, done: 0, odd: total % 2 !== 0, items: [] };
+    render();
+    var chain = Promise.resolve();
+    for (var i = 0; i < count; i++) (function (idx) {
+      chain = chain.then(function () {
+        return PDFLib.PDFDocument.create().then(function (doc) {
+          return doc.copyPages(pdf, [idx * 2]).then(function (pgs) { doc.addPage(pgs[0]); return doc.save(); });
+        }).then(function (bytes) {
+          var b64 = b64FromBytes(bytes);
+          return extractInvoiceInfo(b64).then(function (info) {
+            var m = matchInvoiceText(info.text || ""), label = info.invoiceNum ? "Invoice #" + info.invoiceNum : "Invoice " + (idx + 1);
+            var body = { doc_type: "invoice", filename: (info.invoiceNum ? "Invoice " + info.invoiceNum : "Invoice " + (idx + 1)) + ".pdf", b64: b64,
+              extracted_fields: { invoiceNum: info.invoiceNum || null, read_order_no: info.solomon || null, match_how: m.how, batch: file.name } };
+            if (m.order) { body.order_id = m.order.id; body.matched_by = m.matchedBy; }
+            return api("document", body).then(function (doc) {
+              BATCH_REVIEW.items.push({ docId: doc.id, label: label, read: info.solomon || "", how: doc.order_id && !m.order ? "Order # in the file name" : m.how,
+                orderId: doc.order_id || null, ambiguous: !!m.ambiguous, path: doc.storage_path, name: doc.original_filename });
             });
           });
-        })(i));
-      }
-      return Promise.all(jobs).then(function (pills) {
-        POOL = POOL.concat(pills); render();
-        toast("Split into " + count + " invoice" + (count !== 1 ? "s" : "") + " — drag each onto an order.");
-        pills.forEach(function (pill) {
-          extractInvoiceInfo(pill.b64).then(function (info) {
-            pill.scanning = false;
-            pill.invoiceNum = info.invoiceNum || null;
-            pill.solomon = info.solomon || null;
-            if (pill.solomon) pill.label = pill.solomon;
-            else if (pill.invoiceNum) pill.label = "#" + pill.invoiceNum;
-            render();
-          }).catch(function () { pill.scanning = false; render(); });
-        });
+        }).then(function () { BATCH_REVIEW.done++; repaintBatchReview(); },
+          function (err) { BATCH_REVIEW.done++; BATCH_REVIEW.items.push({ label: "Invoice " + (idx + 1), error: err.message }); repaintBatchReview(); });
       });
+    })(i);
+    return chain.then(reload).then(function () {
+      var ok = BATCH_REVIEW.items.filter(function (it) { return it.orderId; }).length;
+      toast(ok + " of " + count + " invoices matched" + (ok < count ? " · check the rest below" : ""));
     });
   }).catch(function (e) { toast("Split failed: " + e.message, true); });
 }
-function assignInvoice(poolIdx, orderId) {
-  var p = POOL[poolIdx]; if (!p || p.used) return;
-  api("document", { order_id: orderId, doc_type: "invoice",
-                    filename: (p.invoiceNum ? "Invoice_" + p.invoiceNum : p.label) + ".pdf",
-                    b64: p.b64, extracted_fields: { invoiceNum: p.invoiceNum, solomon: p.solomon },
-                    matched_by: p.solomon ? "solomon_order_no" : "manual" })
-    .then(function () { p.used = true; return reload(); })
-    .then(function () { toast("Invoice attached"); })
-    .catch(function (e) { toast(e.message, true); });
+function batchReviewHtml() {
+  var b = BATCH_REVIEW; if (!b) return "";
+  var matched = b.items.filter(function (it) { return it.orderId; }).length, busy = b.done < b.total;
+  var loads = queueOrders();
+  var h = '<div class="batch-review" id="batch-review"><div class="batch-hd"><div><b>Invoice batch · ' + esc(b.name) + "</b><span>" +
+    (busy ? "Reading " + (b.done + 1) + " of " + b.total + "…" : b.total + " invoices · " + matched + " matched · " + (b.total - matched) + " need a load") +
+    (b.odd ? " · odd page count, the last invoice had no back page" : "") + "</span></div>" +
+    (busy ? "" : '<button class="btn" id="batch-dismiss">Done Reviewing</button>') + "</div>";
+  h += '<table class="data batch-table"><thead><tr><th>Invoice</th><th>Read off the page</th><th>Matched by</th><th>Bills with</th><th></th></tr></thead><tbody>';
+  b.items.forEach(function (it, i) {
+    if (it.error) { h += "<tr><td><div class=\"cell\">" + esc(it.label) + '</div></td><td colspan="4"><div class="cell" style="color:var(--bad)">Couldn\'t save: ' + esc(it.error) + "</div></td></tr>"; return; }
+    var o = it.orderId ? order(it.orderId) : null, opts = '<option value="">Not matched · pick a load</option>', seen = {};
+    (o ? [o] : []).concat(loads).forEach(function (x) {
+      if (seen[x.id]) return; seen[x.id] = 1;
+      opts += '<option value="' + x.id + '"' + (x.id === it.orderId ? " selected" : "") + ">" + esc(orderLabel(x)) + (x.billed_at ? " (billed)" : "") + "</option>";
+    });
+    h += '<tr class="' + (it.orderId ? "" : "batch-miss") + '"><td><div class="cell"><b>' + esc(it.label) + "</b></div></td>" +
+      '<td><div class="cell n">' + esc(it.read || "—") + "</div></td>" +
+      '<td><div class="cell">' + (it.orderId ? '<span class="pill on">' + esc(it.how) + "</span>" : '<span class="pill ' + (it.ambiguous ? "mid" : "bad") + '">' + esc(it.how) + "</span>") + "</div></td>" +
+      '<td><div class="cell"><select class="cell-i" data-batch-bill="' + i + '">' + opts + "</select></div></td>" +
+      '<td><div class="cell"><a class="btn sm" href="#" data-filepath="' + esc(it.path) + '" data-filename="' + esc(it.name) + '" data-filemode="open">View</a></div></td></tr>';
+  });
+  return h + "</tbody></table></div>";
 }
+function repaintBatchReview() {
+  var el = $("#batch-review");
+  if (el) el.outerHTML = batchReviewHtml(); else if (SUB === "bill") render();
+}
+// Fix a match from the review: move it to another load, or unassign it
+// (it then waits in Unmatched documents).
+document.addEventListener("change", function (e) {
+  var sel = e.target.closest && e.target.closest("[data-batch-bill]");
+  if (!sel || !BATCH_REVIEW) return;
+  var it = BATCH_REVIEW.items[+sel.getAttribute("data-batch-bill")]; if (!it) return;
+  var to = sel.value || null;
+  var call = to ? api("document/attach", { id: it.docId, order_id: to }) : api("document/unassign", { id: it.docId });
+  call.then(function (row) {
+    it.orderId = to; it.how = to ? "Picked by hand" : "Unassigned by hand"; it.ambiguous = false;
+    if (row && row.storage_path) it.path = row.storage_path;
+    return reload();
+  }).then(function () { toast(to ? "Invoice now bills with " + orderLabel(order(to)) : "Invoice unassigned · it's in Unmatched documents"); })
+    .catch(function (err) { toast(err.message, true); repaintBatchReview(); });
+});
 /* Group merge — ported from legacy :3090, including the multi-broker guard. */
 function groupMerge() {
-  if (GROUP.length < 2) { toast("Tick at least two orders to group.", true); return; }
+  if (GROUP.length < 2) { toast("Tick at least two loads for the same customer to combine.", true); return; }
   var os = GROUP.map(order).filter(Boolean);
   var keys = {};
   os.forEach(function (o) { keys[normBroker(buildChip(o).title)] = 1; });
   if (Object.keys(keys).length > 1) {
-    toast("Those orders are for different customers — a grouped package can only go to one. Group one at a time.", true);
+    toast("Those loads are for different customers. One combined PDF can only go to one customer.", true);
     return;
   }
   var all = [];
@@ -5849,8 +6411,9 @@ function groupMerge() {
   toast("Merging " + all.length + " documents from " + os.length + " orders…");
   Promise.all(all.map(fetchDocB64)).then(mergePdfs).then(function (m) {
     var nm = normBroker(buildChip(os[0]).title).replace(/\s+/g, "") || "Group";
-    saveBlob(nm + "_grouped_" + os.length + "orders.pdf", bytesFromB64(m));
-    toast("Grouped package downloaded — " + os.length + " orders, " + all.length + " documents");
+    saveBlob(nm + "_" + os.length + "_loads.pdf", bytesFromB64(m));
+    toast("Combined PDF downloaded · " + os.length + " loads, " + all.length + " documents");
+    askMarkBilled(os.map(function (o) { return o.id; }));
   }).catch(function (e) { toast("Group merge failed: " + e.message, true); });
 }
 /* ═══ 07-events ═══ */
@@ -6087,7 +6650,7 @@ document.addEventListener("click", function (e) {
     "#profile-btn,[data-profile],[data-setpref],[data-showsched],[data-screc],[data-screset],[data-scresetall]," +
     "[data-cw-step],[data-schedsize-step],[data-schedsize-reset],[data-accent-pick],[data-accent-save],[data-accent-forget],[data-custom-accent-toggle],[data-numbering-save]," +
     "#navtoggle,[data-navto],[data-navsec],[data-navcycle],[data-bill-done],[data-bill-dl],[data-reopen-bill]," +
-    "#bill-dl-sel,#bill-done-sel");
+    "#bill-dl-sel,#bill-combine-sel,#batch-dismiss");
   if (!t) return;
   if (t.id === "scrim") { closeDrawer(); closeModal(); return; }
   if (t.id === "nav-scrim") { closeMobileNav(); return; }
@@ -6150,8 +6713,17 @@ document.addEventListener("click", function (e) {
   }
   if (t.dataset.sheetRename) {
     var srn = sheetById(t.dataset.sheetRename);
-    if (srn) { var nn = prompt("Rename sheet:", srn.name); if (nn && nn.trim())
-      api("sheet", { id: srn.id, name: nn.trim() }).then(reload).catch(function (err) { toast(err.message, true); }); }
+    if (srn) {
+      openModal('<div class="modal-hd"><h2>Rename Sheet</h2></div><div class="modal-body">' +
+        '<label class="mf"><span>Name</span><input id="sheet-rename-in" value="' + esc(srn.name) + '"></label></div>' +
+        '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button><button class="btn pri" id="modal-confirm">Rename</button></div>');
+      var rin = $("#sheet-rename-in"); if (rin) { rin.focus(); rin.select(); }
+      $("#modal-confirm").addEventListener("click", function () {
+        var nn = ($("#sheet-rename-in").value || "").trim(); if (!nn) return;
+        closeModal();
+        api("sheet", { id: srn.id, name: nn }).then(reload).catch(function (err) { toast(err.message, true); });
+      });
+    }
     return;
   }
   if (t.dataset.catdel) {
@@ -6262,7 +6834,7 @@ document.addEventListener("click", function (e) {
       (restoring ? "They will return to the active database and new order pickers." :
         "They will leave the active database and new order pickers. Existing orders, documents, and reports stay intact.") +
       '</p></div><div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
-      '<button class="btn" id="confirm-customer-archive" data-archive-grid="' + ag + '" data-archive-mode="' +
+      '<button class="btn pri" id="confirm-customer-archive" data-archive-grid="' + ag + '" data-archive-mode="' +
       (restoring ? "restore" : "archive") + '">' + (restoring ? "Restore " : "Archive ") + aids.length + "</button></div>");
     return;
   }
@@ -6398,8 +6970,11 @@ document.addEventListener("click", function (e) {
       ld[f.dataset.cf] = f.type === "checkbox" ? f.checked : f.value;
     });
     if (!ld.name || !ld.name.trim()) { toast("Company name is required", true); return; }
-    var locTarget = MODAL_LOC_TARGET; MODAL_LOC_TARGET = null;
+    var locTarget = MODAL_LOC_TARGET, stopTarget = null, newLocId = null; MODAL_LOC_TARGET = null;
+    // A drawer stop box ("stop:…") finishes through the route save instead.
+    if (locTarget && /^stop:/.test(locTarget.field)) { stopTarget = locTarget; locTarget = null; }
     api("location", ld).then(function (loc) {
+      newLocId = loc.id;
       return saveCustomFields("pickdrop", "locations", loc.id, ld).then(function () {
         // Opened from a drawer/tracker combo's "+Create" — finish the pick
         // too, so confirming this popup is the whole action (Nate: "add
@@ -6408,7 +6983,10 @@ document.addEventListener("click", function (e) {
         var body = { id: locTarget.oid }; body[locTarget.field] = loc.id;
         return api("order/update", body);
       });
-    }).then(reload).then(function () { closeModal(); toast(locTarget ? "Location added and set" : "Location added"); })
+    }).then(reload).then(function () {
+      closeModal(); toast(locTarget || stopTarget ? "Location added and set" : "Location added");
+      if (stopTarget) drawerStopPick(stopTarget.oid, stopTarget.field, newLocId);
+    })
       .catch(function (err) { toast(err.message, true); });
     return;
   }
@@ -6437,12 +7015,14 @@ document.addEventListener("click", function (e) {
   if (t.dataset.pkg) { if (DRAWER_OID) doPackage(DRAWER_OID, t.dataset.pkg); return; }
   if (t.dataset.billDone) { billDone(t.dataset.billDone); return; }
   if (t.dataset.billDl) {
-    doPackage(t.dataset.billDl, "merged").then(function () { return billOrder(t.dataset.billDl); })
-      .then(reload).catch(function (err) { toast(err.message || "Download failed", true); });
+    var dlId = t.dataset.billDl;
+    doPackage(dlId, "merged").then(function () { askMarkBilled([dlId]); })
+      .catch(function (err) { toast(err.message || "Download failed", true); });
     return;
   }
-  if (t.id === "bill-dl-sel") { billBatch("dl"); return; }
-  if (t.id === "bill-done-sel") { billBatchDone(); return; }
+  if (t.id === "bill-dl-sel") { billBatch(); return; }
+  if (t.id === "bill-combine-sel") { groupMerge(); return; }
+  if (t.id === "batch-dismiss") { BATCH_REVIEW = null; render(); return; }
   if (t.dataset.reopenBill) {
     var roid = t.dataset.reopenBill;
     billOrder(roid, false).then(reload).then(function () {
@@ -6627,21 +7207,18 @@ document.addEventListener("click", function (e) {
     return;
   }
   if (t.id === "push-driver-tabs") {
-    // Pushes straight away (no confirm step); the Google sign-in popup, when
-    // one is needed, has to open from this click.
+    // Publish Schedule: saves what drivers and the bag plant see.
     if (t.disabled) return;
     t.disabled = true;
-    toast("Updating Google schedule…");
-    api("sheets/push-driver-tabs", { start_date: CW_START, days: CW_DAYS, confirm: true })
+    toast("Publishing the schedule…");
+    api("sheets/push-driver-tabs", { start_date: CW_START, days: CW_DAYS })
       .then(function (r) {
-        // The push sets loads.pushed_at server-side, which flips external
-        // chips over to the truck's driver-color fill (pushColorFor,
-        // D85 Phase 2) — without a reload() here the Scheduler/Current
-        // Week/Driver Tabs views keep showing the pre-push color until
-        // some unrelated action happens to trigger one (caught live,
-        // Nate: pushed a chip, ran it, no visual change).
+        // The publish stamps loads.pushed_at server-side, which flips external
+        // chips over to the truck's driver-color tint (pushColorFor); reload so
+        // the Scheduler/Current Week/Driver Tabs show it right away.
         return reload().then(function () {
-          toast("Google schedule updated · Current Week + " + r.pushed.length + " driver tab(s)");
+          DRIVER_SIG = "x"; loadDriverActivity();
+          toast("Schedule published · " + r.pushed.length + " driver tab(s)");
         });
       })
       .catch(function (err) { toast(err.message, true); })
@@ -6795,6 +7372,12 @@ document.addEventListener("change", function (e) {
       // right away — not a full render(), which would rebuild the very
       // <select> being tabbed through and break tab-through (D84).
       renderRail();
+      // The chip shows several of these fields (TARP flag, order and load
+      // numbers, pallets…): repaint every copy of it, and the one at the top
+      // of an open side window, so a change appears right away.
+      var onSched = schedValueForOrder(ov.id);
+      if (onSched) repaintCell(onSched.key);
+      refreshDrawerChipPreview();
       // Bag Orders is auto-sorted by order # (D156) — reposition the row's
       // <tr> in place rather than a full render(), same tab-through concern.
       if (ofield === "solomon_order_no" && o && o.kind === "internal") resortInternalTrackerRow(ov.id);
@@ -7130,6 +7713,29 @@ document.addEventListener("blur", function (e) {
       function () { return scheduleNote(key, next); });
   }).catch(function (err) { toast(err.message, true); ta.value = prev; });
 }, true);
+/* Driver Tabs: click a typed or empty slot to write in it. Saves exactly like
+   the Scheduler and Current Week do (scheduleNote), so all three windows show
+   the same text. Enter saves, Escape cancels. */
+document.addEventListener("click", function (e) {
+  var cell = e.target.closest && e.target.closest(".dv-typed");
+  if (!cell || e.target.closest("textarea, a, button")) return;
+  var key = cell.dataset.key, cur = CELLS[key];
+  var ta = document.createElement("textarea");
+  ta.className = "dv-note dv-inline"; ta.dataset.notekey = key; ta.placeholder = "Note";
+  ta.value = (cur && cur.text) || ""; ta.dataset.was = ta.value;
+  cell.innerHTML = ""; cell.appendChild(ta); ta.focus();
+});
+document.addEventListener("keydown", function (e) {
+  var ta = e.target.closest && e.target.closest(".dv-inline");
+  if (!ta) return;
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ta.blur(); }
+  else if (e.key === "Escape") { e.preventDefault(); ta.value = ta.dataset.was; ta.blur(); }
+});
+document.addEventListener("blur", function (e) {
+  var ta = e.target.closest && e.target.closest(".dv-inline");
+  // Unchanged: nothing is saved, so put the plain chip back ourselves.
+  if (ta && ta.value.trim() === ta.dataset.was.trim()) setTimeout(function () { repaintDvSlot(ta.dataset.notekey); }, 0);
+}, true);
 /* Driver Tabs' PO/PU# and Delivery# columns (D185) — same blur-to-save
    pattern as the Notes column above, via the lightweight orderPoDeliverySet
    (no repaint needed, neither field shows on any chip). */
@@ -7373,6 +7979,15 @@ function patchLocalRow(table, id, row) {
               departments: DB.departments }[table];
   var obj = arr && arr.filter(function (x) { return x.id === id; })[0];
   if (obj && row) { for (var k in row) obj[k] = row[k]; }
+  // A customer/broker rename: every load keeps its own copy of the display
+  // name (customer_name/broker_name come from a JOIN at bootstrap), so renaming
+  // the party row alone left old loads showing the old name until a reload.
+  if (table === "parties" && obj && row && row.name !== undefined) {
+    (DB.orders || []).forEach(function (o) {
+      if (o.broker_party_id === id) o.broker_name = obj.name;
+      if (o.customer_party_id === id) o.customer_name = obj.name;
+    });
+  }
   return obj;
 }
 function gridCellSet(table, id, field, value) {
@@ -7778,15 +8393,6 @@ function openDayMenu(x, y, rowhd) {
 function openMenu(x, y, items) {
   closeCtxMenu(); closePalette();
   var m = document.createElement("div"); m.id = "ctxmenu"; m.className = "ctxmenu";
-  // A customer/broker rename: every load keeps its own copy of the display
-  // name (customer_name/broker_name come from a JOIN at bootstrap), so renaming
-  // the party row alone left old loads showing the old name until a reload.
-  if (table === "parties" && obj && row && row.name !== undefined) {
-    (DB.orders || []).forEach(function (o) {
-      if (o.broker_party_id === id) o.broker_name = obj.name;
-      if (o.customer_party_id === id) o.customer_name = obj.name;
-    });
-  }
   m.innerHTML = items.map(function (it, i) {
     return '<button data-mi="' + i + '"' + (it.danger ? ' class="bad"' : "") + ">" + esc(it.label) + "</button>";
   }).join("");
@@ -8963,10 +9569,6 @@ document.addEventListener("dragstart", function (e) {
   var c = e.target.closest("[draggable=true][data-oid]");
   if (c) { DRAG = { kind: "load", oid: c.dataset.oid, from: c.dataset.from }; c.classList.add("dragging");
            e.dataTransfer.effectAllowed = "move"; return; }
-  var p = e.target.closest("[data-pool]");
-  if (p && p.getAttribute("draggable") === "true") {
-    DRAG = { kind: "invoice", idx: +p.dataset.pool }; e.dataTransfer.effectAllowed = "copy"; return;
-  }
   var th = e.target.closest("th.trkcol[draggable=true]");
   if (th) { DRAG = { kind: "truckcol", truckId: th.dataset.truckid }; th.classList.add("dragging");
             e.dataTransfer.effectAllowed = "move"; return; }
@@ -9048,11 +9650,6 @@ document.addEventListener("drop", function (e) {
     return;
   }
   if (!DRAG) return;
-  if (DRAG.kind === "invoice") {
-    var row = e.target.closest("[data-bill]");
-    if (row) { e.preventDefault(); row.classList.remove("over"); assignInvoice(DRAG.idx, row.dataset.bill); }
-    DRAG = null; return;
-  }
   if (DRAG.kind === "truckcol") {
     var th = e.target.closest("th.trkcol:not(.carriercol)");
     if (th) { e.preventDefault(); th.classList.remove("over"); reorderTrucks(DRAG.truckId, th.dataset.truckid); }

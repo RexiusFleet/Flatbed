@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FAF8F4">
+<title>Flatbed Schedule</title>
+<link rel="stylesheet" href="../app.css?v=20261007a">
+<link rel="stylesheet" href="driver.css?v=20261007a">
+</head>
+<body class="driver-app">
+<div class="header-row">
+  <header class="drv-hdr">
+    <div class="brand" aria-label="Flatbed Schedule">
+      <span class="brand-mark"><img src="../rexius-logo.png" alt="Rexius"></span>
+      <span class="drv-title">Flatbed Schedule</span>
+    </div>
+    <div class="drv-who" id="hdr-who"></div>
+    <div class="hdr-right" id="hdr"></div>
+  </header>
+</div>
+<nav class="db-tabs" id="tabs" role="tablist" aria-label="Schedule tabs"></nav>
+<main id="main"></main>
+<div id="toast" role="status"></div>
+<script src="../config.js?v=20261007a"></script>
+<script src="../sheets-push.js?v=20261007a"></script>
+<script src="../vendor/pdf-lib.min.js"></script>
+<script src="scanner.js?v=20261007a"></script>
+<script src="driver.js?v=20261007a"></script>
+</body>
+</html>

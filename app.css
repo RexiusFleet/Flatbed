@@ -281,7 +281,7 @@ main{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden
    label actually differs across these three ("+ New Order" vs "Add
    Orders" — Bag Orders/Internal Freight already share the literal same
    label and width). */
-.orders-toolbar h2{min-width:150px}
+.orders-toolbar h2{min-width:112px}
 .orders-primary-btn{min-width:100px;text-align:center}
 .cw-toolbar{position:relative;padding:4px 10px}
 .cw-toolbar h2{min-width:120px}
@@ -624,9 +624,14 @@ table.data.sheet td.sheet-plusgap{border:0;background:none}
 .ctxmenu button:hover{background:var(--panel-2)}
 .ctxmenu button.bad{color:var(--bad)}
 .ctxmenu button.bad:hover{background:color-mix(in srgb,var(--bad) 12%,transparent)}
-/* Truck off for the day (D65) — a soft red wash + hatch, like the old sheet. */
-table.grid td.offday{background:
-     repeating-linear-gradient(135deg,rgba(255,0,0,.10) 0 8px,rgba(255,0,0,.16) 8px 16px)}
+/* Truck off for the day (D65) — red stripes plus one bold "OFF" centered in
+   the day (offLabelFor). One look on every screen: .off-hatch for the stripes,
+   .off-label for the word. Built from --bad so it holds up in dark mode. */
+:root{--off-stripes:repeating-linear-gradient(135deg,
+     color-mix(in srgb,var(--bad) 9%,transparent) 0 8px,color-mix(in srgb,var(--bad) 16%,transparent) 8px 16px)}
+table.grid td.offday,.off-hatch{background:var(--off-stripes)}
+.off-label{height:100%;display:flex;align-items:center;justify-content:center;
+     font:800 var(--fs-body-lg) var(--font);letter-spacing:.14em;color:var(--bad);pointer-events:none}
 /* Outside-carrier lane (D115) — pinned far right, deliberately reads as not a
    real truck: grayed header, no grab cursor, no drag affordance. */
 table.grid th.trkcol.carriercol{cursor:default;opacity:.6;background:var(--panel-2)}
@@ -760,16 +765,33 @@ select.cell-i{cursor:pointer}
 .mf>input:focus,.mf>select:focus{outline:none;border-color:var(--focus)}
 .mf.chk{flex-direction:row;align-items:center;gap:7px}
 .mf.chk>input{width:auto}
-/* Time card calculator (D258) — hh/mm text inputs + an AM/PM toggle button,
-   not a direct .mf>input child, so they get their own rule instead of the
-   generic one above. */
-  font-size:var(--fs-body-sm);font-variant-numeric:tabular-nums;color:var(--ink);width:2.1em;text-align:center}
 .modal-ft{padding:12px 18px;border-top:1px solid var(--rule);display:flex;justify-content:flex-end;gap:8px}
 .sort-dialog{gap:14px}
 .sort-dialog section{border:1px solid var(--rule);border-radius:var(--r-lg);padding:11px 12px;background:var(--paper)}
 .sort-dialog section>b{font-size:var(--fs-body-sm)}
 .sort-dialog section>p{font-size:var(--fs-label);color:var(--ink-3);line-height:1.45;margin:3px 0 9px}
 .sort-actions{display:flex;flex-wrap:wrap;gap:7px}
+/* Drawer Pickup / Drop: one search box per stop, + Add Pick / + Add Drop. */
+/* Same 120px label column as the drawer's .fields above, so every box
+   lines up; the action column is fixed so all rows stay the same width. */
+/* Billing: invoice batch review (double-check every auto-match) */
+.batch-review{border:1px solid var(--rule-2);border-radius:var(--r-md);background:var(--panel);margin:0 0 14px;overflow:hidden}
+.batch-hd{display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid var(--rule)}
+.batch-hd>div{flex:1;display:flex;flex-direction:column;gap:2px}
+.batch-hd b{font-size:var(--fs-body)}
+.batch-hd span{font-size:var(--fs-label);color:var(--ink-3)}
+.batch-table{width:100%;min-width:760px}
+.batch-table td .cell{display:flex;align-items:center}
+.batch-table select.cell-i{width:100%;max-width:340px}
+.batch-table tr.batch-miss td{background:color-mix(in srgb,var(--warn) 9%,transparent)}
+.auto-tag{margin-left:6px;font-family:var(--mono);font-size:var(--fs-caption);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.stop-rows{display:flex;flex-direction:column;gap:8px}
+.stop-row{display:grid;grid-template-columns:120px minmax(0,1fr);gap:10px;align-items:center}
+.stop-rows.has-actions .stop-row{grid-template-columns:120px minmax(0,1fr) 76px}
+.stop-row .btn{width:100%;justify-content:center;text-align:center}
+.stop-lbl{font-family:var(--mono);font-size:var(--fs-caption);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.stop-new .loc-in{border-color:var(--focus)}
+.stop-add{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .route-summary{display:flex;flex-direction:column;gap:5px;border:1px solid var(--rule);border-radius:var(--r-md);padding:9px 10px;background:var(--paper);font-size:var(--fs-body-sm)}
 .route-summary>span strong{display:inline-block;width:64px;font-size:var(--fs-caption);color:var(--ink-3)}
 .route-cell{border:0;background:none;color:var(--ink);font:inherit;text-align:left;width:100%;padding:3px 7px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -780,17 +802,18 @@ select.cell-i{cursor:pointer}
    text, opacity slider, delete) — the default 460px modal clipped the
    opacity slider off the right edge (Nate). */
 #modal.wide-modal .modal-card{max-width:640px}
-.route-editor{gap:10px}
+.route-editor{gap:14px}
 .route-help{font-size:var(--fs-body-sm);color:var(--ink-3);margin:0}
-.route-stop{border:1px solid var(--rule);border-radius:var(--r-lg);background:var(--paper);padding:9px 10px}
+.route-stop{border:1px solid var(--rule);border-radius:var(--r-lg);background:var(--paper);padding:12px 14px 14px}
 .route-stop.over{border-color:var(--focus);box-shadow:inset 0 0 0 1px var(--focus)}
-.route-stop-head{display:flex;align-items:center;gap:7px;margin-bottom:8px;font-size:var(--fs-body-sm)}
+.route-stop-head{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:var(--fs-body-sm)}
 .route-grip{cursor:grab;color:var(--ink-3);font-weight:800;letter-spacing:-2px;padding:2px 5px}
-.route-fields{display:grid;grid-template-columns:100px minmax(210px,2fr) minmax(130px,1fr) minmax(170px,1.1fr) 80px;gap:7px;align-items:end}
-.route-fields .route-notes{grid-column:2 / span 3}
-.route-fields .mf.chk{padding-bottom:6px}
-.route-add{display:flex;gap:7px;padding-top:2px}
-@media(max-width:760px){.route-fields{grid-template-columns:1fr}.route-fields .route-notes{grid-column:auto}}
+.route-fields{display:grid;grid-template-columns:110px minmax(210px,2fr) minmax(130px,1fr) minmax(170px,1.1fr) 80px;gap:12px 12px;align-items:end}
+.route-fields .mf{gap:5px}
+.route-fields .route-notes{grid-column:2 / span 2}
+.route-fields .mf.chk{grid-column:4 / span 2;padding-bottom:7px;gap:8px}
+.route-add{display:flex;gap:8px}
+@media(max-width:760px){.route-fields{grid-template-columns:1fr}.route-fields .route-notes,.route-fields .mf.chk{grid-column:auto}}
 /* In-app document viewer (D51) */
 #viewer{position:fixed;inset:0;z-index:400;display:flex;align-items:center;justify-content:center;
   background:rgba(0,0,0,.62);padding:24px;visibility:hidden;opacity:0;pointer-events:none;
@@ -1063,6 +1086,34 @@ body.pre-auth #bodywrap{grid-template-columns:minmax(0,1fr)}
 .docrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sec-h{font-family:var(--mono);font-size:var(--fs-caption);letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);
        border-bottom:1px solid var(--rule);padding-bottom:4px;margin-bottom:7px}
+/* Driver read receipts on Current Week / Driver Tabs (prototype, see seenHtml). */
+.seen-wrap{position:relative;display:inline-flex}
+.seen-btn{display:inline-flex;align-items:center;gap:6px}
+.seen-dot{width:8px;height:8px;border-radius:50%;background:var(--ink-3);flex:none}
+.seen-dot.ok{background:var(--good)}
+.seen-dot.stale{background:var(--warn)}
+.seen-pop{position:absolute;right:0;top:calc(100% + 6px);z-index:60;width:min(430px,90vw);background:var(--panel);
+  border:1px solid var(--rule-2);border-radius:var(--r-lg);box-shadow:var(--e2);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.seen-hd{font-size:var(--fs-body-sm);font-weight:700}
+.seen-grid{display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:6px 10px;align-items:baseline;font-size:var(--fs-body-sm)}
+.seen-grid b{font-weight:650;white-space:nowrap}
+.seen-st{font-size:var(--fs-label)}
+.seen-st.ok{color:var(--good);font-weight:650}
+.seen-st.stale{color:var(--warn)}
+.seen-st.none{color:var(--ink-3)}
+.seen-ft{font-size:var(--fs-caption);color:var(--ink-3);border-top:1px solid var(--rule);padding-top:6px}
+/* Driver notes in the order drawer (prototype, see driverNotesHtml). */
+.drvnote-list{display:flex;flex-direction:column;gap:6px}
+.drvnote{background:var(--sunk);border-radius:var(--r-sm);padding:7px 9px;font-size:var(--fs-body-sm);line-height:1.4;word-break:break-word}
+.drvnote-hd{display:flex;justify-content:space-between;gap:8px;margin-bottom:2px;font-size:var(--fs-label)}
+.drvnote-hd span{font-family:var(--mono);font-size:var(--fs-caption);color:var(--ink-3)}
+.dscan-row{display:flex;align-items:center;gap:8px;margin:4px 0 6px}
+.dscan-st{flex:1;font-size:var(--fs-label);font-weight:650;color:var(--good)}
+.dscan-st.off{color:var(--ink-3)}
+.dscan-bill{display:flex;align-items:center;gap:6px;font-size:var(--fs-label);color:var(--ink-2)}
+.dscan-bill select{flex:1;min-width:0;font-size:var(--fs-label);padding:3px 5px;border:1px solid var(--rule-2);border-radius:var(--r-sm);
+  background:var(--paper);color:var(--ink)}
+.drvnote-empty{font-size:var(--fs-label);color:var(--ink-3)}
 summary.sec-h{cursor:pointer;list-style:none;display:flex;align-items:center;gap:5px;user-select:none}
 summary.sec-h::-webkit-details-marker{display:none}
 summary.sec-h::before{content:"\25B8";font-size:var(--fs-caption)}
@@ -1360,3 +1411,44 @@ body.nav-collapsed .nav-footer-btn>span:last-child{display:none}
 /* Touch drag ghost (D61) */
 .touch-ghost{position:fixed;z-index:500;pointer-events:none;opacity:.92;margin:0;
   box-shadow:0 10px 26px rgba(0,0,0,.45);transform:scale(1.03)}
+
+/* Driver Tabs mirrors the driver page (driver/driver.css supplies the rest). */
+.dv-embed .dv-cell{max-height:none;overflow:visible}
+.dv-embed .dv-cust-note{margin-top:4px;font-size:var(--fs-label);color:var(--ink-2)}
+.dv-embed .drv-note-item{margin-top:4px;padding:3px 6px;border-radius:var(--r-sm);background:var(--panel-2);font-size:var(--fs-label)}
+.dv-embed .drv-note-item span{display:block;font-family:var(--mono);font-size:var(--fs-caption);color:var(--ink-3)}
+.dv-embed .dv-cell.mono{font-family:var(--mono);font-size:var(--fs-label)}
+.dv-dead{pointer-events:none;opacity:.4;filter:grayscale(1)}
+.dv-embed .chip-scan .dv-dead{background:var(--panel);color:var(--ink)}
+.dv-tabs-wrap{margin-bottom:10px;border:1px solid var(--rule-2);border-radius:var(--r-sm);overflow:hidden}
+.dv-tabs-wrap .db-tabs{overflow-x:auto}
+.dv-embed .dv-typed{cursor:text}
+.dv-embed .dv-typed:hover{background:var(--panel-2)}
+.dv-embed .dv-inline{min-height:64px}
+.dv-embed .dv-num{cursor:pointer}
+.dv-embed .dv-num:hover{background:var(--panel-2)}
+
+/* Appointments: a small square box on a chip, and the fields in the side window. */
+.appt-ind{position:absolute;top:3px;right:3px;font-family:var(--mono);font-size:8.5px;font-weight:700;letter-spacing:.06em;line-height:1.35;
+  padding:0 4px;background:var(--panel);color:var(--ink);border:1.5px solid var(--ink);border-radius:0;white-space:nowrap}
+.chip.has-appt .who{padding-right:34px}
+.appt-fields{display:flex;gap:8px;flex-wrap:wrap}
+.appt-fields label{display:flex;flex-direction:column;gap:2px;font-size:var(--fs-caption);color:var(--ink-3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em}
+.appt-fields input{width:118px;font-family:var(--font);font-size:var(--fs-body-sm);letter-spacing:0;text-transform:none;color:var(--ink)}
+.appt-row .stop-lbl{align-self:end;padding-bottom:6px}
+
+/* Every load chip: square corners and a hard outline in the text color
+   (black in the light theme). The colored accent is a strip INSIDE that
+   outline on the left; solid-filled chips (bag orders, internal freight)
+   have no strip. */
+.chip{border:1px solid var(--ink);border-radius:0;box-shadow:none;padding-left:12px}
+.chip::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--edge,var(--ink-3));border-right:1px solid var(--ink);pointer-events:none}
+.chip.xchip{border-left-width:1px;padding-left:13px}
+.chip.xchip::before{width:6px}
+.chip.filled{border-color:var(--ink);padding-left:7px}
+.chip.filled::before{display:none}
+
+/* Every indicator on a load (EARLY, ANYTIME, FORKLIFT, SPYDER, TARP…): the same
+   hard square box with black text as the APPT box. NO ORDER # stays red. */
+.flag{border:1.5px solid var(--ink);color:var(--ink);background:var(--panel);border-radius:0;padding:0 4px}
+.flag.warn{border-color:var(--bad);color:var(--bad);background:var(--panel)}
