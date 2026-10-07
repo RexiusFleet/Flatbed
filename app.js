@@ -4468,6 +4468,9 @@ function dateRange() {
    amount on its load (external_revenue_share). The backhaul tile waits for the backhaul checkbox. */
 var REP = { tab: "dash", per: "3m", from: "", to: "", saved: null, noSql: false, win: null, data: null, numeric: {}, dataAt: null, loading: false, stale: false, err: "" };
 try { var _rp = localStorage.getItem("dept12RepPer"); if (_rp === "month" || _rp === "3m" || _rp === "ytd") REP.per = _rp; } catch (e) {}
+var RPT_HIDDEN = [];   // built-in tiles taken off the Dashboard (remembered in this browser)
+try { RPT_HIDDEN = JSON.parse(localStorage.getItem("dept12RepHidden") || "[]") || []; } catch (e) { RPT_HIDDEN = []; }
+function rptHideSave() { try { localStorage.setItem("dept12RepHidden", JSON.stringify(RPT_HIDDEN)); } catch (e) {} }
 var RPT_AGG = { count: "Count", countd: "Count distinct", sum: "Sum", avg: "Average", min: "Min", max: "Max", ratio: "Ratio" };
 var RPT_OPS = { eq: "is", ne: "is not", contains: "contains", gt: ">", gte: ">=", lt: "<", lte: "<=", blank: "is blank", notblank: "is not blank" };
 var RPT_PER = [["all", "All time"], ["dash", "Dashboard period"], ["month", "This Month"], ["3m", "Last 3 Months"], ["ytd", "Year to Date"], ["custom", "Custom"]];
@@ -4674,11 +4677,16 @@ function rptDashHtml() {
   [["Loads delivered", function (l) { return l.length.toLocaleString(); }], ["Total mileage", function (l) { return Math.round(sum(l, "internal_miles")).toLocaleString(); }], ["Total revenue", function (l) { return rptMoney(sum(l, "revenue")); }]].forEach(function (r) {
     h += "<tr><td>" + r[0] + "</td>" + ml.map(function (l, i) { return "<td" + (months[i] === lastM ? ' class="cur"' : "") + ">" + r[1](l) + "</td>"; }).join("") + "</tr>"; });
   h += '</tbody></table><div class="rpt-foot">* partial month</div></div>';
+  var shown = 0;
   h += '<div class="rpt-tiles">' + rptTiles().map(function (t, i) {
+    if (t.sys && RPT_HIDDEN.indexOf(t.name) >= 0) return "";
+    shown++;
     var mute = !!t.later && (REP.fields || []).indexOf("backhaul") < 0, res = mute ? null : rptRun(t.cfg), tv = res ? rptTotalVal(t.cfg, res) : null;
     var v = mute ? "—" : tv.v ? rptValFmt(tv.v, tv.x) + (tv.v.f === "days_to_deliver" && tv.x != null ? " days" : "") : "—";
     return '<button class="rpt-tile' + (t.sys ? "" : " mine") + (mute ? " mute" : "") + '" data-rpttile="' + i + '"><span class="go">Open &rarr;</span><div class="lbl">' + esc(t.name) +
       '</div><div class="rpt-big sm">' + v + '</div><div class="rpt-sub">' + esc(mute ? "turns on with the backhaul checkbox" : t.tag + (t.sys ? "" : " · your report")) + "</div></button>"; }).join("") + "</div>";
+  if (!shown) h += '<div class="empty">No tiles on the Dashboard. Restore the built-in ones below, or click + New Report.</div>';
+  if (RPT_HIDDEN.length) h += '<div class="rpt-foot"><button class="btn sm" data-rptrestore="1">Restore ' + RPT_HIDDEN.length + " Hidden Tile" + (RPT_HIDDEN.length === 1 ? "" : "s") + "</button></div>";
   return h;
 }
 function rptExportsHtml() {
@@ -4721,7 +4729,7 @@ function rptWinOpen(tile) {
   REP.win = { id: tile && tile.id || null, sys: !!(tile && tile.sys), name: tile ? tile.name : "New report", cfg: c, sortCol: null, dir: -1, drill: null };
   openModal('<div class="modal-hd"><input class="rpt-name" id="rpt-name" value="' + esc(REP.win.name) + '"' + (REP.win.sys ? " disabled" : "") + '></div>' +
     '<div class="modal-body rpt-win"><datalist id="rpt-fields">' + rptFieldOpts() + '</datalist><div id="rpt-ctlbox"></div><div id="rpt-out"></div></div>' +
-    '<div class="modal-ft"><button class="btn" id="rpt-csv">Export CSV</button>' + (REP.win.id ? '<button class="btn bad" id="rpt-del">Delete</button>' : "") + '<span style="flex:1"></span>' +
+    '<div class="modal-ft"><button class="btn" id="rpt-csv">Export CSV</button>' + (REP.win.id ? '<button class="btn bad" id="rpt-del">Unpin Report</button>' : REP.win.sys ? '<button class="btn" id="rpt-unpinsys">Unpin Report</button>' : "") + '<span style="flex:1"></span>' +
     (REP.win.id ? '<button class="btn" id="rpt-saveas">Save As New</button><button class="btn pri" id="rpt-save">Save Changes</button>' : '<button class="btn pri" id="rpt-save">Save &amp; Pin to Dashboard</button>') +
     '<button class="btn" id="modal-cancel">Close</button></div>');
   $("#modal").classList.add("wide-modal", "rpt-modal");
@@ -7108,7 +7116,7 @@ document.addEventListener("click", function (e) {
     paintRowSel(g, table); return;
   }
   var t = e.target.closest("[data-sec],[data-sub],[data-stage],[data-report],[data-open],[data-pkgrow],[data-route-edit]," +
-    "[data-pkg],[data-nodelivery],[data-restore-order],[data-tracker-collapse],[data-tracker-collapse-more],[data-tsort],[data-rpttab],[data-rpttile],[data-rptsort],[data-rptcell],[data-rptdo],[data-rptrefresh],[data-rptopen],#rpt-new,#rpt-csv,#rpt-save,#rpt-saveas,#rpt-del," +
+    "[data-pkg],[data-nodelivery],[data-restore-order],[data-tracker-collapse],[data-tracker-collapse-more],[data-tsort],[data-rpttab],[data-rpttile],[data-rptrestore],#rpt-unpinsys,[data-rptsort],[data-rptcell],[data-rptdo],[data-rptrefresh],[data-rptopen],#rpt-new,#rpt-csv,#rpt-save,#rpt-saveas,#rpt-del," +
     "[data-copy-order],[data-addcust],[data-addcol]," +
     "[data-addrow],[data-delrows],[data-archiverows],[data-archiveview],[data-orderdelrows],[data-ordercancelrows],[data-delete-doc],[data-frreset],[data-catadd],[data-catdel],[data-sortsave],[data-sortclear]," +
     "[data-addsheet],[data-sheet-addrow],[data-sheet-addcol],[data-sheet-rename]," +
@@ -7647,6 +7655,7 @@ document.addEventListener("click", function (e) {
   if (t.dataset.rpttab) { REP.tab = t.dataset.rpttab; render(); return; }
   if (t.dataset.rptrefresh) { rptDataLoad(); render(); return; }
   if (t.dataset.rpttile) { rptWinOpen(rptTiles()[+t.dataset.rpttile]); return; }
+  if (t.dataset.rptrestore) { RPT_HIDDEN = []; rptHideSave(); render(); return; }
   if (t.id === "rpt-new") { REP.tab = "dash"; rptWinOpen(null); return; }
   if (t.dataset.rptdo && REP.win) { var rc = REP.win.cfg, ri2 = +t.dataset.i, act = t.dataset.rptdo;
     if (act === "rowdel") rc.rows.splice(ri2, 1);
@@ -7663,12 +7672,16 @@ document.addEventListener("click", function (e) {
   if (t.id === "rpt-csv" && REP.win) { rptWinCsv(); return; }
   if (t.id === "rpt-save" && REP.win) { rptWinSave(false); return; }
   if (t.id === "rpt-saveas" && REP.win) { rptWinSave(true); return; }
+  if (t.id === "rpt-unpinsys" && REP.win && REP.win.sys) {
+    var hn = REP.win.name; if (RPT_HIDDEN.indexOf(hn) < 0) RPT_HIDDEN.push(hn); rptHideSave();
+    closeModal(); REP.win = null; toast("Unpinned \u201c" + hn + "\u201d. Restore it from the bottom of the Dashboard."); render(); return;
+  }
   if (t.id === "rpt-del" && REP.win && REP.win.id) {
     var delId = REP.win.id;
-    confirmModal("Delete this report from the Dashboard? The orders it reads are not touched.", function () {
+    confirmModal("Unpin this report from the Dashboard? This deletes the saved report. The orders it reads are not touched.", function () {
       api("saved-report/delete", { id: delId }).then(function () { REP.saved = null; REP.win = null; toast("Report deleted"); render(); })
         .catch(function (err) { toast(err.message, true); });
-    }, "Delete Report");
+    }, "Unpin Report");
     return;
   }
   if (t.id === "ifr-toggle") {
