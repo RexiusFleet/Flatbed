@@ -258,7 +258,9 @@ function tabChipHtml(key, r) {
   var fl = o && o.kind === "internal" && !o.is_transfer ? flagsHtml(bagFlags(o)) : "";
   return loadTextHtml(r.chip) + (fl ? '<div style="margin-top:6px">' + fl + "</div>" : "");
 }
-function rexiusOrderNo(key) { var o = orderForKey(key); return o && o.solomon_order_no || ""; }
+// The published schedule carries the order number as rexius_order_no; schedules published before the rename say solomon_order_no.
+function ordNo(o) { return o && (o.rexius_order_no || o.solomon_order_no) || ""; }
+function rexiusOrderNo(key) { return ordNo(orderForKey(key)); }
 function loadNo(key) { var o = orderForKey(key); return o && o.broker_load_no || ""; }
 function fleet() { return (S.payload && S.payload.drivers || []).filter(function (d) { return d.driver; }); }
 // A typed name matches a driver regardless of case/spacing, or by a first
@@ -450,7 +452,7 @@ function dashChipHtml(o, r, attrs, cls, dcolor) {
   } else {
     title = o.customer_name || "(no customer)";
     meta = '<div class="meta meta-2line">' + (o.pallet_count ? "<span>" + esc(o.pallet_count) + " PAL</span>" : "") +
-      '<span class="nowrap">' + esc(o.solomon_order_no || "no order #") + "</span></div>";
+      '<span class="nowrap">' + esc(ordNo(o) || "no order #") + "</span></div>";
     flags = bagFlags(o);
   }
   var note = o.driver_note ? '<div class="dnote">&#9998; ' + esc(o.driver_note) + "</div>" : "";
@@ -830,13 +832,13 @@ function sampleData(dates) {
   ];
   var plant3 = { name: "Rexius Plant 3", address: "88110 Territorial Hwy", city: "Eugene", state: "OR", phone: "" };
   function bag(id, cust, city, fork, timing, east, ord, pal, note) {
-    return { id: id, kind: "internal", is_transfer: false, route_mode: "standard", solomon_order_no: ord, pallet_count: pal,
+    return { id: id, kind: "internal", is_transfer: false, route_mode: "standard", rexius_order_no: ord, pallet_count: pal,
       customer_name: cust, cust_city: city, cust_state: "OR", cust_forklift: fork, cust_timing: timing, cust_umatilla: east,
       customer_map_url: "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(cust + " " + city + " OR"),
       customer_notes: note || "", driver_note: "" };
   }
   function ext(id, broker, ord, load, drop, po, del, note) {
-    return { id: id, kind: "external", is_transfer: false, route_mode: "standard", solomon_order_no: ord, broker_load_no: load,
+    return { id: id, kind: "external", is_transfer: false, route_mode: "standard", rexius_order_no: ord, broker_load_no: load,
       broker_name: broker, po_number: po, delivery_number: del, driver_note: note || "",
       pickup_name: plant3.name, pickup_address: plant3.address, pickup_city: plant3.city, pickup_state: plant3.state,
       delivery_name: drop[0], delivery_address: drop[1], delivery_city: drop[2], delivery_state: "OR", delivery_phone: drop[3] || "" };

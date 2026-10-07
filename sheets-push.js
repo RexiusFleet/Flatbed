@@ -43,7 +43,7 @@ function internalChipText(o, pallets = null) {
   const customer = o.customer_name || "(no customer)";
   const citystate = [s(o.cust_city), s(o.cust_state)].filter(Boolean).join(" ");
   const info = citystate + (o.cust_forklift ? " - " + o.cust_forklift : "");
-  let orderLine = o.solomon_order_no || "(no order #)";
+  let orderLine = o.rexius_order_no || "(no order #)";
   if (pallets !== null && pallets !== void 0) orderLine += ` - ${pallets} PAL`;
   return [customer, info.trim(), orderLine].filter(Boolean).join("\n");
 }
@@ -53,7 +53,7 @@ function transferChipText(o) {
 function driverChipText(o, pallets, stops) {
   if (o.is_transfer) return transferChipText(o);
   if (o.kind === "external") {
-    const header = `${o.broker_name || "(no broker)"} - Rexius Order: ${o.solomon_order_no || ""} | Load: ${o.broker_load_no || ""}`;
+    const header = `${o.broker_name || "(no broker)"} - Rexius Order: ${o.rexius_order_no || ""} | Load: ${o.broker_load_no || ""}`;
     if (o.route_mode === "custom" && stops.length) {
       const lines = [header];
       for (const stop of stops) {

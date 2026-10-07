@@ -142,10 +142,10 @@ function yearPicker() {
 }
 function orderYearCode(o) {
   if (o.order_period) return String(o.order_period).slice(2, 4);
-  var m = String(o.solomon_order_no || "").match(/^..-(0[1-9]|1[0-2])(\d{2})-/);
+  var m = String(o.rexius_order_no || "").match(/^..-(0[1-9]|1[0-2])(\d{2})-/);
   return m ? m[2] : null;
 }
-/* A copied/blank Bag Order has no order_period and no solomon_order_no yet
+/* A copied/blank Bag Order has no order_period and no rexius_order_no yet
    (D30's Copy button deliberately leaves those unique-per-load fields
    blank, and api_copy_order sets no year field at all) — orderYearCode(o)
    returns null for it, which used to fail `=== yy` and silently vanish the
@@ -160,13 +160,13 @@ function internalOrderInYear(o, yy) {
   return !code || code === yy;
 }
 /* External's own order numbers are hand-typed from Solomon (D117), so there is
-   no reliable year to parse out of them. Year filtering goes by ordered_at. An order
-   with no ordered_at yet always shows regardless of the selected year — the
+   no reliable year to parse out of them. Year filtering goes by order_date. An order
+   with no order_date yet always shows regardless of the selected year — the
    existing "keep the live workflow independent of dates" rule
    (externalOrderCompare) already protects incomplete/live rows from being
    sorted away by date; a year filter shouldn't quietly hide them either. */
 function externalOrderInYear(o, year) {
-  return !o.ordered_at || +String(o.ordered_at).slice(0, 4) === year;
+  return !o.order_date || +String(o.order_date).slice(0, 4) === year;
 }
 
 var DB = null, SEC = "dispatch", SUB = "sched", SEL = null, EDITING = null;
@@ -459,22 +459,22 @@ var LAST_DATABASE_SUB = null;
 /* A closed-out order never "needs placement" again, but this used to only
    check placement/staging — found live (2026-09-18) as a real stray count:
    a billed external order with no load ever attached still counted toward
-   unExt forever, since billed_at/stage were never consulted, showing "1"
+   unExt forever, since billed_date/stage were never consulted, showing "1"
    in the nav badge with no matching row for Nate to actually go place.
    `needsPlacement` excludes cancelled orders across all three kinds (D93 —
    a cancelled order is detached from scheduling for good); each kind's own
    "done" field matches its own tracker's live/collapsed-group split
-   (`vOrders`/`vInternal`/`vInternalFreight`, 04-views.js): billed_at for
-   External, delivered_at for Bag Orders and Internal Freight. */
+   (`vOrders`/`vInternal`/`vInternalFreight`, 04-views.js): billed_date for
+   External, delivery_date for Bag Orders and Internal Freight. */
 function needsPlacement(o, pm) {
   return o.stage !== "cancelled" && !pm[o.id] && STAGED.indexOf(o.id) < 0;
 }
 function navUnplacedCounts() {
   var pm = placement(); // built once (D222) — needsPlacement takes it in, not a fresh scan per order
   return {
-    unInt: orders().filter(function (o) { return o.kind === "internal" && !o.delivered_at && needsPlacement(o, pm); }).length,
-    unXfer: orders().filter(function (o) { return o.is_transfer && !o.delivered_at && needsPlacement(o, pm); }).length,
-    unExt: orders().filter(function (o) { return o.kind === "external" && !o.is_transfer && !o.billed_at && needsPlacement(o, pm); }).length
+    unInt: orders().filter(function (o) { return o.kind === "internal" && !o.delivery_date && needsPlacement(o, pm); }).length,
+    unXfer: orders().filter(function (o) { return o.is_transfer && !o.delivery_date && needsPlacement(o, pm); }).length,
+    unExt: orders().filter(function (o) { return o.kind === "external" && !o.is_transfer && !o.billed_date && needsPlacement(o, pm); }).length
   };
 }
 function navOrderCountFor(subKey, counts) {
@@ -949,7 +949,7 @@ function nextInternalOrderStart(month, year) {
   var escaped = rendered.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   var numberRe = new RegExp("^" + escaped.replace(marker, "(\\d+)") + "$", "i"), max = 0;
   orders().forEach(function (o) {
-    var found = numberRe.exec(o.solomon_order_no || "");
+    var found = numberRe.exec(o.rexius_order_no || "");
     if (found && +found[1] > max) max = +found[1];
   });
   return max + 1;
@@ -1143,12 +1143,12 @@ document.addEventListener("visibilitychange", function () { if (!document.hidden
 /* Driver scans section in the order drawer. A scan always stays on file on
    the load it was scanned on; dispatch picks whether it bills, and with
    which load (a BOL scanned on the wrong load, paperwork you don't bill). */
-function orderLabel(o) { return (o.solomon_order_no || o.broker_load_no || "no #") + " · " + buildChip(o).title; }
+function orderLabel(o) { return (o.rexius_order_no || o.broker_load_no || "no #") + " · " + buildChip(o).title; }
 function driverScansHtml(oid) {
   var recs = PROTO_SCAN_RECS.filter(function (r) { return r.order_id === oid || scanBillOrder(r) === oid; });
   var h = '<div id="dw-drvscans"><div class="sec-h">Driver scans — ' + recs.length + "</div>";
   if (!recs.length) return h + '<p class="drvnote-empty">No POD / BOL scans from the driver yet.</p></div>';
-  var choices = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_at && !isHistorical(o); });
+  var choices = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_date && !isHistorical(o); });
   return h + '<div class="drvnote-list">' + recs.map(function (r) {
     var d = new Date(r.at), bill = scanBillOrder(r), here = r.order_id === oid, src = order(r.order_id);
     var opts = [["", "Not for billing (keep on file)"]], seen = {};
@@ -1343,13 +1343,13 @@ function buildChip(o) {
     var dropTxt = drop && drop.city ? drop.city + (drop.state ? ", " + drop.state : "") : "?";
     route = originTxt + " → " + dropTxt;
     if (o.route_mode === "custom") route += " · " + routeCompactLabel(o);
-    nums = (o.broker_load_no || "no load #") + " / " + (o.solomon_order_no || "no order #");
+    nums = (o.broker_load_no || "no load #") + " / " + (o.rexius_order_no || "no order #");
     line = route + " · " + nums;
     if (o.tarp) flags.push("TARP");
     if (o.notes) notes.push(o.notes);
   } else {
     title = o.customer_name || "(no customer)";
-    line = (o.pallet_count ? o.pallet_count + " PAL · " : "") + (o.solomon_order_no || "no order #");
+    line = (o.pallet_count ? o.pallet_count + " PAL · " : "") + (o.rexius_order_no || "no order #");
     var loc = o.customer_party_id ? locFor(o.customer_party_id) : null;
     if (loc) {
       // EAST/Umatilla is a separate is_umatilla boolean (D36), NOT a timing_window
@@ -1371,7 +1371,7 @@ function buildChip(o) {
     if (o.notes) notes.push(o.notes); // this dispatch's own note, from the drawer — D34
   }
   return { title: title, line: line, route: route, nums: nums, win: win, flags: flags,
-           note: notes.join(" · "), needsNumber: !o.solomon_order_no && !o.is_transfer };
+           note: notes.join(" · "), needsNumber: !o.rexius_order_no && !o.is_transfer };
 }
 function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
   var ch = buildChip(o), w = WIN[ch.win] || WIN.anytime;
@@ -1440,11 +1440,11 @@ function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
   var metaHtml = (o.kind === "internal" && !o.is_transfer)
     ? '<div class="meta meta-2line">' +
         (o.pallet_count ? "<span>" + esc(o.pallet_count) + " PAL</span>" : "") +
-        '<span class="nowrap">' + esc(o.solomon_order_no || "no order #") + "</span></div>"
+        '<span class="nowrap">' + esc(o.rexius_order_no || "no order #") + "</span></div>"
     : (isExt(o) && !o.is_transfer)
     ? '<div class="meta meta-2line meta-route"><span class="route-line">' + esc(ch.route) + "</span>" +
         '<span class="numln"><i>Load #:</i> <b class="nowrap">' + esc(o.broker_load_no || "none") + "</b></span>" +
-        '<span class="numln"><i>Rexius Order:</i> <b class="nowrap">' + esc(o.solomon_order_no || "none") + "</b></span></div>"
+        '<span class="numln"><i>Rexius Order:</i> <b class="nowrap">' + esc(o.rexius_order_no || "none") + "</b></span></div>"
     : '<div class="meta"><span>' + esc(ch.line) + "</span></div>";
   var hasAppt = plainExt && apptHas(o.id);
   return '<div class="chip' + (filled ? " filled" : "") + (plainExt ? " xchip" : "") + (tinted ? " tinted" : "") + (hasAppt ? " has-appt" : "") + '" style="--edge:' + edge + bg + '" draggable="' + (drag ? "true" : "false") +
@@ -1878,8 +1878,8 @@ function queueDrawerSave(work) {
    leaving the screen. */
 function lastOrderDate(customerId, excludeId) {
   var dates = DB.orders.filter(function (o2) {
-    return o2.customer_party_id === customerId && o2.id !== excludeId && o2.ordered_at;
-  }).map(function (o2) { return String(o2.ordered_at).slice(0, 10); });
+    return o2.customer_party_id === customerId && o2.id !== excludeId && o2.order_date;
+  }).map(function (o2) { return String(o2.order_date).slice(0, 10); });
   if (!dates.length) return null;
   dates.sort();
   return dates[dates.length - 1];
@@ -2031,7 +2031,7 @@ function openInternalOrder(o) {
   var loc = o.customer_party_id ? locFor(o.customer_party_id) : null;
 
   var h = '<div class="dw-hd"><div style="flex:1"><h2 id="dw-title">' + esc(ch.title) + "</h2>" +
-    '<div class="sub">' + esc(o.solomon_order_no || "— no order # —") + "</div></div>" +
+    '<div class="sub">' + esc(o.rexius_order_no || "— no order # —") + "</div></div>" +
     '<button class="btn" id="dw-close">Close</button></div><div class="dw-body">';
   h += schedBar(o.id);
 
@@ -2044,8 +2044,8 @@ function openInternalOrder(o) {
      dispatch fields come before the customer reference lookup, not after. */
   h += '<div><div class="sec-h">Order details</div><div class="fields">' +
     fld("pallet_count", "PAL", o.pallet_count, "") +
-    fld("ordered_at", "Ordered", o.ordered_at && String(o.ordered_at).slice(0, 10), "", "date") +
-    fld("delivered_at", "Delivered", o.delivered_at && String(o.delivered_at).slice(0, 10), "", "date") +
+    fld("order_date", "Ordered", o.order_date && String(o.order_date).slice(0, 10), "", "date") +
+    fld("delivery_date", "Delivered", o.delivery_date && String(o.delivery_date).slice(0, 10), "", "date") +
     fld("notes", "Private notes", o.notes, "Only you see this. It never goes to drivers.") +
     "</div></div>";
 
@@ -2339,8 +2339,8 @@ function openTransferOrder(o) {
         esc(dpt.name) + "</option>";
     }).join("") + "</select>" +
     fld("notes", "Load info", o.notes, "e.g. Bag Plant to Umatilla Yard # 23") +
-    fld("ordered_at", "Date", o.ordered_at && String(o.ordered_at).slice(0, 10), "", "date") +
-    fld("delivered_at", "Delivered", o.delivered_at && String(o.delivered_at).slice(0, 10), "", "date") +
+    fld("order_date", "Date", o.order_date && String(o.order_date).slice(0, 10), "", "date") +
+    fld("delivery_date", "Delivered", o.delivery_date && String(o.delivery_date).slice(0, 10), "", "date") +
     "</div></div>";
 
   /* Load info stays dispatcher-facing only (drives the chip title, never
@@ -2373,24 +2373,24 @@ function openOrder(oid) {
   var pkgLabel = "rate con + POD/BOL + invoice";
 
   var h = '<div class="dw-hd"><div style="flex:1"><h2 id="dw-title">' + esc(ch.title) + "</h2>" +
-    '<div class="sub">' + esc(o.solomon_order_no || "— no order # —") +
+    '<div class="sub">' + esc(o.rexius_order_no || "— no order # —") +
     (o.broker_load_no ? " · load " + esc(o.broker_load_no) : "") + "</div></div>" +
     '<button class="btn" id="dw-close">Close</button></div><div class="dw-body">';
   h += schedBar(oid);
   h += drawerChipPreview(o);
   h += carrierSectionHtml(oid);
 
-  if (!o.solomon_order_no)
+  if (!o.rexius_order_no)
     h += '<div class="note-bar"><b>Needs a Rexius order number</b> — can\'t bill out without it.</div>';
 
   h += '<div><div class="sec-h">Order</div><div class="fields">' +
     "<label>Broker</label>" + partyCombo(oid, "broker_party_id", o.broker_party_id, "Search brokers") +
-    fld("solomon_order_no", "Order #", o.solomon_order_no, externalOrderPlaceholder()) +
+    fld("rexius_order_no", "Order #", o.rexius_order_no, externalOrderPlaceholder()) +
     fld("broker_load_no", "Load #", o.broker_load_no, "") +
     fld("po_number", "PU / PO", o.po_number, "") +
     fld("delivery_number", "Delivery #", o.delivery_number, "") +
-    fld("ordered_at", "Ordered", o.ordered_at && String(o.ordered_at).slice(0, 10), "", "date") +
-    fld("delivered_at", "Delivered", o.delivered_at && String(o.delivered_at).slice(0, 10), "", "date") +
+    fld("order_date", "Ordered", o.order_date && String(o.order_date).slice(0, 10), "", "date") +
+    fld("delivery_date", "Delivered", o.delivery_date && String(o.delivery_date).slice(0, 10), "", "date") +
     fld("notes", "Private notes", o.notes, "Only you see this. It never goes to drivers.") +
     "</div><label style=\"display:flex;align-items:center;gap:6px;font-size:var(--fs-body-sm);color:var(--ink-2);margin-top:8px\">" +
     '<input type="checkbox" data-oedit="' + oid + '" data-field="tarp"' + (o.tarp ? " checked" : "") +
@@ -2409,7 +2409,7 @@ function openOrder(oid) {
   var sug = rateConSuggest(oid);
   var prefilled = (!o.pickup_location_id && sug.pickup) || (!o.delivery_location_id && sug.delivery);
   h += '<div><div class="sec-h">Pickup / Drop</div>';
-  var routeLocked = !!(o.delivered_at || o.billed_at);
+  var routeLocked = !!(o.delivery_date || o.billed_date);
   if (o.route_mode === "custom" && routeLocked) {
     h += '<div class="route-summary"><b>' + esc(routeCompactLabel(o)) + '</b>' +
       orderStops(oid).map(function (s) { return '<span><strong>' + s.sequence + ' ' +
@@ -2549,7 +2549,7 @@ function doPackage(oid, mode) {
   var o = order(oid), ds = packageDocs(oid);
   if (!ds.length) { toast("No documents attached to package.", true); return Promise.reject(new Error("no docs")); }
   var base = (buildChip(o).title || "package").replace(/[^A-Za-z0-9]+/g, "") + "_" +
-             (o.solomon_order_no || o.broker_load_no || "pkg");
+             (o.rexius_order_no || o.broker_load_no || "pkg");
   if (mode === "individual") {
     ds.forEach(function (d) {
       fetchDocB64(d).then(function (b) { saveBlob(d.original_filename || (base + ".pdf"), bytesFromB64(b)); });
@@ -2568,7 +2568,7 @@ function doPackage(oid, mode) {
    or reopen it. */
 function billOrder(oid, billed) {
   return api("order/bill", { id: oid, billed: billed !== false }).then(function () {
-    var o = order(oid); if (o) o.billed_at = billed === false ? null : new Date().toISOString();
+    var o = order(oid); if (o) o.billed_date = billed === false ? null : new Date().toISOString();
   });
 }
 function isFulfilled(oid) {
@@ -2593,7 +2593,7 @@ function markBilled(oid) {
 /* After a download: offer to mark those loads billed in one go, so a
    package you already have doesn't need a second trip to Mark Billed. */
 function askMarkBilled(ids) {
-  ids = ids.filter(function (id) { var o = order(id); return o && isExt(o) && !o.billed_at; });
+  ids = ids.filter(function (id) { var o = order(id); return o && isExt(o) && !o.billed_date; });
   if (!ids.length) return;
   var one = ids.length === 1, o1 = order(ids[0]);
   openModal('<div class="modal-hd"><h2>Mark ' + (one ? "This Load" : ids.length + " Loads") + " Billed?</h2></div>" +
@@ -3172,7 +3172,7 @@ function dvChip(o, v, truck, day) {
   var loc = o.customer_party_id ? locFor(o.customer_party_id) : null;
   var citystate = loc ? [loc.city, loc.state].filter(Boolean).join(" ") : "";
   var info = (citystate + (loc && loc.forklift ? " - " + loc.forklift : "")).trim();
-  var orderLine = (o.solomon_order_no || "(no order #)") + (o.pallet_count ? " - " + o.pallet_count + " PAL" : "");
+  var orderLine = (o.rexius_order_no || "(no order #)") + (o.pallet_count ? " - " + o.pallet_count + " PAL" : "");
   var text = [o.customer_name || "(no customer)", info, orderLine].filter(Boolean).join("\n");
   var flags = [];
   var fk = String((loc && loc.forklift) || "").trim().toLowerCase();
@@ -3254,7 +3254,7 @@ function dvSlotCellsHtml(key) {
     '" style="cursor:grab">' + chipBody + "</div>" +
     // The numbers come from the load itself: click one to open the load's side
     // window, where they're edited (and reach drivers on the next push).
-    dvNum(o, o.solomon_order_no) +
+    dvNum(o, o.rexius_order_no) +
     '<div class="dv-cell">' + driverNoteInput + (cn ? '<div class="dv-cust-note">' + esc(cn) + "</div>" : "") + "</div>" +
     dvNum(o, isExt(o) ? o.po_number : "") +
     dvNum(o, isExt(o) ? o.delivery_number : "") +
@@ -3362,7 +3362,7 @@ function vDriverView() {
    ad-hoc on-board/staged pills. Computed, not stored — mirrors how "on board"
    already worked via placement(); orders.stage (the order_stage enum) is left
    alone except for the existing cancelled<->ordered "No delivery" toggle.
-   "Billed" reads the real orders.billed_at (the Billing page's own biller-
+   "Billed" reads the real orders.billed_date (the Billing page's own biller-
    queue toggle, D62/api_bill_order) — not a guess, the actual field Billing
    already uses to mean "left the queue".
    Internal: No delivery > Delivered > Scheduled > Staging (default).
@@ -3370,8 +3370,8 @@ function vDriverView() {
 function stagePill(o, on) {
   var label = "Staging", cls = "staging";
   if (o.stage === "cancelled") { label = "Cancelled"; cls = "bad"; }
-  else if (o.kind === "external" && o.billed_at) { label = "Billed"; cls = "billed"; }
-  else if (o.delivered_at) { label = "Delivered"; cls = "on"; }
+  else if (o.kind === "external" && o.billed_date) { label = "Billed"; cls = "billed"; }
+  else if (o.delivery_date) { label = "Delivered"; cls = "on"; }
   else if (on) { label = "Scheduled"; cls = "mid"; }
   // Outside-carrier is a second axis (D115), so preserve it as a small marker
   // inside the fixed status segment instead of adding another segment that
@@ -3386,14 +3386,14 @@ function stagePill(o, on) {
    cancelled or already sitting in the STAGED rail. */
 function canStageOrder(o, on) {
   if (o.stage === "cancelled") return false;
-  if (o.kind === "external" && o.billed_at) return false;
-  if (o.delivered_at || on) return false;
+  if (o.kind === "external" && o.billed_date) return false;
+  if (o.delivery_date || on) return false;
   return STAGED.indexOf(o.id) < 0;
 }
 function canCancelOrder(o) {
-  return o.stage !== "cancelled" && !o.delivered_at && !o.billed_at;
+  return o.stage !== "cancelled" && !o.delivery_date && !o.billed_date;
 }
-function canDeleteOrder(o) { return !o.delivered_at && !o.billed_at; }
+function canDeleteOrder(o) { return !o.delivery_date && !o.billed_date; }
 function trackerOpenTh() {
   return '<th class="tracker-open-col"><span class="tracker-open-head" role="img" aria-label="Open order panel" title="Open order panel">' +
     icon("orderPanel") + "</span></th>";
@@ -3426,13 +3426,13 @@ function stageControls(o, on, includeCopy) {
    create an order before Solomon assigns its number, so numberless live rows
    stay at the very top where they cannot be overlooked. */
 function externalOrderCompare(a, b) {
-  var billed = Number(!!a.billed_at) - Number(!!b.billed_at);
+  var billed = Number(!!a.billed_date) - Number(!!b.billed_date);
   if (billed) return billed;
 
-  var an = String(a.solomon_order_no || "").trim();
-  var bn = String(b.solomon_order_no || "").trim();
-  if (!an && bn) return a.billed_at ? 1 : -1;
-  if (an && !bn) return b.billed_at ? -1 : 1;
+  var an = String(a.rexius_order_no || "").trim();
+  var bn = String(b.rexius_order_no || "").trim();
+  if (!an && bn) return a.billed_date ? 1 : -1;
+  if (an && !bn) return b.billed_date ? -1 : 1;
   return bn.localeCompare(an, undefined, { numeric: true, sensitivity: "base" });
 }
 /* Collapsed "already handled" section on an order tracker (D232) — Nate:
@@ -3461,7 +3461,7 @@ function tsortTh(grid, key, label, width, cls) {
 function tsortValue(o, key) {
   var loc = function (id) { var l = id ? locById(id) : null; return l ? l.name || "" : ""; };
   switch (key) {
-    case "order": return o.solomon_order_no || "";
+    case "order": return o.rexius_order_no || "";
     case "load": return o.broker_load_no || "";
     case "broker": return o.broker_name || (o.broker_party_id && party(o.broker_party_id) ? party(o.broker_party_id).name : "") || "";
     case "po": return o.po_number || "";
@@ -3470,8 +3470,8 @@ function tsortValue(o, key) {
     case "tarp": return o.tarp ? 1 : 0;
     case "pickup": return loc(o.pickup_location_id);
     case "drop": return loc(o.delivery_location_id);
-    case "ordered": return String(o.ordered_at || "").slice(0, 10);
-    case "delivered": return String(o.delivered_at || "").slice(0, 10);
+    case "ordered": return String(o.order_date || "").slice(0, 10);
+    case "delivered": return String(o.delivery_date || "").slice(0, 10);
     case "docs": return docsFor(o.id).length;
     case "pal": return o.pallet_count == null ? null : +o.pallet_count;
     case "customer": return o.customer_name || (o.customer_party_id && party(o.customer_party_id) ? party(o.customer_party_id).name : "") || "";
@@ -3546,8 +3546,8 @@ function extOrderRowHtml(o, i, pm) {
     trackerSelTd("ext", o.id, i + 1) +
     trackerOpenTd(o) +
     '<td class="order-actions-col"><div class="cell">' + stageControls(o, on, true) + "</div></td>" +
-    '<td><div class="cell"><input class="cell-i n" data-oedit="' + o.id + '" data-field="solomon_order_no" value="' +
-      esc(o.solomon_order_no || "") + '"></div></td>' +
+    '<td><div class="cell"><input class="cell-i n" data-oedit="' + o.id + '" data-field="rexius_order_no" value="' +
+      esc(o.rexius_order_no || "") + '"></div></td>' +
     '<td><div class="cell"><input class="cell-i n" data-oedit="' + o.id + '" data-field="broker_load_no" value="' +
       esc(o.broker_load_no || "") + '"></div></td>' +
     '<td><div class="cell" style="padding:0">' +
@@ -3566,8 +3566,8 @@ function extOrderRowHtml(o, i, pm) {
     '<td><div class="cell">' + (customRoute ? '<button class="route-cell" data-route-edit="' + o.id + '">' +
       esc(routeStopLabel(lastDrop)) + '<small>Open full route</small></button>' :
       locCombo(o.id, "delivery_location_id", o.delivery_location_id, null)) + "</div></td>" +
-    dateOeditCell(o.id, "ordered_at", o.ordered_at && String(o.ordered_at).slice(0, 10)) +
-    dateOeditCell(o.id, "delivered_at", o.delivered_at && String(o.delivered_at).slice(0, 10)) +
+    dateOeditCell(o.id, "order_date", o.order_date && String(o.order_date).slice(0, 10)) +
+    dateOeditCell(o.id, "delivery_date", o.delivery_date && String(o.delivery_date).slice(0, 10)) +
     '<td><div class="cell n">' + nd + "</div></td></tr>";
 }
 var EXT_TRACKER_COLS = 15;  // keep in sync with vOrders' <thead> — colspan for the Billed toggle row
@@ -3576,8 +3576,8 @@ function vOrders(kind) {
   var rows = orders().filter(function (o) {
     return o.kind === "external" && !o.is_transfer && !isHistorical(o) && externalOrderInYear(o, YEAR);
   }).sort(externalOrderCompare);
-  var liveRows = rows.filter(function (o) { return !o.billed_at; });
-  var billedRows = rows.filter(function (o) { return o.billed_at; });
+  var liveRows = rows.filter(function (o) { return !o.billed_date; });
+  var billedRows = rows.filter(function (o) { return o.billed_date; });
   var h = toolbarHtml("External Orders", {
     className: "orders-toolbar", context: yearPicker(),
     secondary: ordersToolbarExtras() + trackerBulkButtonsHtml("ext"),
@@ -3664,7 +3664,7 @@ function repaintFreightCell(oid, field) {
   return true;
 }
 /* Bag Orders' order # is type-overable (D156), same as External's
-   solomon_order_no — so the grid must live-resort as a number is edited
+   rexius_order_no — so the grid must live-resort as a number is edited
    (Nate: "auto sort by the order number so its always sorted and live
    updated as i edit order numbers"). A full render() on every blur would
    rebuild the row the user just tabbed INTO and break tab-through (the same
@@ -3675,15 +3675,15 @@ function repaintFreightCell(oid, field) {
    full render(). Newest-to-oldest, same numeric compare as
    externalOrderCompare (D233 dropped the monthly breakout — flat,
    year-scoped, delivered orders collapsed the same way as External's
-   Billed group). A number edit never itself changes delivered_at, so the
+   Billed group). A number edit never itself changes delivery_date, so the
    row stays within whichever bucket (live/delivered) it was already in —
    reposition only within that bucket, anchored on the collapse toggle row
    (if the row is moving to the end of the live bucket) or the tbody's own
    end otherwise. If the row isn't in the DOM at all (its bucket is
    currently collapsed), there's nothing to reposition — no-op. */
 function bagOrderCompare(a, b) {
-  var an = String(a.solomon_order_no || "").trim();
-  var bn = String(b.solomon_order_no || "").trim();
+  var an = String(a.rexius_order_no || "").trim();
+  var bn = String(b.rexius_order_no || "").trim();
   if (!an && bn) return -1;
   if (an && !bn) return 1;
   return bn.localeCompare(an, undefined, { numeric: true, sensitivity: "base" });
@@ -3697,7 +3697,7 @@ function resortInternalTrackerRow(oid) {
   var yy = String(YEAR).slice(2);
   if (o.kind !== "internal" || !internalOrderInYear(o, yy)) { render(); return; }
   var bucket = orders().filter(function (x) {
-    return x.kind === "internal" && internalOrderInYear(x, yy) && !!x.delivered_at === !!o.delivered_at;
+    return x.kind === "internal" && internalOrderInYear(x, yy) && !!x.delivery_date === !!o.delivery_date;
   }).sort(bagOrderCompare);
   var idx = bucket.indexOf(o);
   var hasNextInBucket = idx >= 0 && idx + 1 < bucket.length;
@@ -3707,7 +3707,7 @@ function resortInternalTrackerRow(oid) {
   // anchor to reposition against, fall back to a full render() rather than
   // guessing a spot.
   if (hasNextInBucket && !nextInBucket) { render(); return; }
-  var anchor = nextInBucket || (!o.delivered_at ? tbody.querySelector(".tracker-collapse-row") : null);
+  var anchor = nextInBucket || (!o.delivery_date ? tbody.querySelector(".tracker-collapse-row") : null);
   if (anchor) tbody.insertBefore(tr, anchor); else tbody.appendChild(tr);
   // The numbered gutter (D159) is just a positional index, not a stable id —
   // renumber it after the move so it doesn't go stale until a real render().
@@ -3731,8 +3731,8 @@ function bagOrderRowHtml(o, i, pm) {
     trackerSelTd("int", o.id, i + 1) +
     trackerOpenTd(o) +
     '<td class="order-actions-col"><div class="cell">' + stageControls(o, on, true) + "</div></td>" +
-    '<td><div class="cell"><input class="cell-i n" data-oedit="' + o.id + '" data-field="solomon_order_no" value="' +
-      esc(o.solomon_order_no || "") + '"' + (dead ? " disabled" : "") + '></div></td>' +
+    '<td><div class="cell"><input class="cell-i n" data-oedit="' + o.id + '" data-field="rexius_order_no" value="' +
+      esc(o.rexius_order_no || "") + '"' + (dead ? " disabled" : "") + '></div></td>' +
     '<td><div class="cell"><input class="cell-i n" type="number" min="0" data-oedit="' + o.id +
       '" data-field="pallet_count" value="' + (o.pallet_count == null ? "" : o.pallet_count) + '"' +
       (dead ? " disabled" : "") + "></div></td>" +
@@ -3740,8 +3740,8 @@ function bagOrderRowHtml(o, i, pm) {
       partyCombo(o.id, "customer_party_id", o.customer_party_id, "Search customers", dead) + "</div></td>" +
     '<td><div class="cell">' + (win ? '<span class="flag w" style="--fc:' + win.c + '">' + esc(win.t) +
       "</span>" : "") + "</div></td>" +
-    dateOeditCell(o.id, "ordered_at", o.ordered_at && String(o.ordered_at).slice(0, 10), dead) +
-    dateOeditCell(o.id, "delivered_at", o.delivered_at && String(o.delivered_at).slice(0, 10), dead) +
+    dateOeditCell(o.id, "order_date", o.order_date && String(o.order_date).slice(0, 10), dead) +
+    dateOeditCell(o.id, "delivery_date", o.delivery_date && String(o.delivery_date).slice(0, 10), dead) +
     '<td><div class="cell"><input class="cell-i" data-oedit="' + o.id + '" data-field="notes" value="' +
       esc(o.notes || "") + '"' + (dead ? " disabled" : "") + "></div></td>" +
     truckCell(o) + milesCell(o) + freightCell(o) + "</tr>";
@@ -3753,8 +3753,8 @@ function vInternal() {
   var rows = orders().filter(function (o) {
     return o.kind === "internal" && internalOrderInYear(o, yy);
   }).sort(bagOrderCompare);
-  var liveRows = rows.filter(function (o) { return !o.delivered_at; });
-  var deliveredRows = rows.filter(function (o) { return o.delivered_at; });
+  var liveRows = rows.filter(function (o) { return !o.delivery_date; });
+  var deliveredRows = rows.filter(function (o) { return o.delivery_date; });
 
   var h = toolbarHtml("Bag Orders", {
     className: "orders-toolbar", context: yearPicker(),
@@ -3808,8 +3808,8 @@ function xferOrderRowHtml(o, i) {
         return '<option value="' + dpt.id + '"' + (dpt.id === o.transfer_department_id ? " selected" : "") + ">" +
           esc(dpt.name) + "</option>";
       }).join("") + "</select></div></td>" +
-    dateOeditCell(o.id, "ordered_at", o.ordered_at && String(o.ordered_at).slice(0, 10)) +
-    dateOeditCell(o.id, "delivered_at", o.delivered_at && String(o.delivered_at).slice(0, 10)) +
+    dateOeditCell(o.id, "order_date", o.order_date && String(o.order_date).slice(0, 10)) +
+    dateOeditCell(o.id, "delivery_date", o.delivery_date && String(o.delivery_date).slice(0, 10)) +
     truckCell(o) + milesCell(o) + freightCell(o) + "</tr>";
 }
 var XFER_TRACKER_COLS = 10;  // keep in sync with vInternalFreight's <thead> — colspan for the Delivered toggle row
@@ -3821,13 +3821,13 @@ function vInternalFreight() {
      concept (Nate: the year picker already does that job). */
   var rows = orders().filter(function (o) {
     return o.is_transfer && externalOrderInYear(o, YEAR);
-  }).sort(function (a, b) { return String(b.ordered_at || "").localeCompare(String(a.ordered_at || "")); });
+  }).sort(function (a, b) { return String(b.order_date || "").localeCompare(String(a.order_date || "")); });
   // Transfers are never billed (no solomon #, no customer/broker, ever —
-  // orders_transfer_shape) so "handled" here reads delivered_at instead of
-  // billed_at, unlike External Orders' Billed group (Nate: "same with
+  // orders_transfer_shape) so "handled" here reads delivery_date instead of
+  // billed_date, unlike External Orders' Billed group (Nate: "same with
   // internal freight if its delivered collapse it").
-  var liveRows = rows.filter(function (o) { return !o.delivered_at; });
-  var deliveredRows = rows.filter(function (o) { return o.delivered_at; });
+  var liveRows = rows.filter(function (o) { return !o.delivery_date; });
+  var deliveredRows = rows.filter(function (o) { return o.delivery_date; });
   var depts = departmentsForPicker(null);
   var h = toolbarHtml("Internal Freight", {
     className: "orders-toolbar", context: yearPicker(),
@@ -3893,7 +3893,7 @@ function vBilling() {
         '<option value="">— pick an order —</option>' +
         exts.map(function (o) {
           return '<option value="' + o.id + '">' +
-            esc((o.solomon_order_no || o.broker_load_no || "no #") + " · " + buildChip(o).title) + "</option>";
+            esc((o.rexius_order_no || o.broker_load_no || "no #") + " · " + buildChip(o).title) + "</option>";
         }).join("") + "</select></div></td>" +
         '<td><div class="cell" style="display:flex;gap:4px"><a class="btn sm" href="#" data-filepath="' + esc(d.storage_path) +
         '" data-filemode="open">Open</a>' +
@@ -3904,7 +3904,7 @@ function vBilling() {
     h += '<div class="sec-h">Unmatched documents — 0</div>' +
       emptyStateHtml("Nothing unmatched right now");
   }
-  var queue = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_at && !isHistorical(o); });
+  var queue = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_date && !isHistorical(o); });
   h += '<div class="sec-h">Billing queue — ' + queue.length + "</div>";
   h += '<div class="grid-wrap"><table class="data" style="min-width:1040px"><thead><tr>' +
     '<th style="width:44px"></th><th style="width:140px">Order #</th><th style="width:220px">Customer / Broker</th>' +
@@ -3922,7 +3922,7 @@ function vBilling() {
     h += '<tr class="bill-row" data-bill="' + o.id + '" data-roworder="' + o.id + '">' +
       '<td><div class="cell"><input type="checkbox" data-group="' + o.id + '"' +
         (GROUP.indexOf(o.id) >= 0 ? " checked" : "") + "></div></td>" +
-      '<td><div class="cell n">' + esc(o.solomon_order_no || "—") + "</div></td>" +
+      '<td><div class="cell n">' + esc(o.rexius_order_no || "—") + "</div></td>" +
       '<td><div class="cell" style="font-weight:600">' + esc(buildChip(o).title) + "</div></td>" +
       '<td><div class="cell">' + tick("pod") + "</div></td>" +
       '<td><div class="cell">' + tick("invoice") + "</div></td>" +
@@ -4513,8 +4513,8 @@ function rptEnrich(r) {
   var xfer = r.is_transfer === true || r.is_transfer === "true";
   r.order_type = xfer ? "Internal Freight" : r.kind === "internal" ? "Bag Order" : "External";
   r.party = xfer ? "(internal freight)" : r.kind === "internal" ? (r.customer || "(no customer)") : (r.broker || r.customer || "(no broker)");
-  r.delivered_month = r.delivered_at ? String(r.delivered_at).slice(0, 7) : null;
-  var a = r.ordered_at && Date.parse(String(r.ordered_at).slice(0, 10) + "T12:00:00"), b = r.delivered_at && Date.parse(String(r.delivered_at).slice(0, 10) + "T12:00:00");
+  r.delivered_month = r.delivery_date ? String(r.delivery_date).slice(0, 7) : null;
+  var a = r.order_date && Date.parse(String(r.order_date).slice(0, 10) + "T12:00:00"), b = r.delivery_date && Date.parse(String(r.delivery_date).slice(0, 10) + "T12:00:00");
   var dd = a && b ? Math.round((b - a) / 86400000) : null;
   r.days_to_deliver = dd != null && dd >= 0 ? dd : null;
   var mi = rptNum(r.order_miles != null ? r.order_miles : r.miles);
@@ -4787,7 +4787,7 @@ function rptWinUpdate() {
 function rptFindOrder(r) {
   if (r.order_id) return order(r.order_id);
   var no = r.rexius_order_no, ld = r.broker_load_no, found = null;
-  orders().some(function (o) { if ((no && o.solomon_order_no === no) || (!no && ld && o.broker_load_no === ld)) { found = o; return true; } return false; });
+  orders().some(function (o) { if ((no && o.rexius_order_no === no) || (!no && ld && o.broker_load_no === ld)) { found = o; return true; } return false; });
   return found;
 }
 function rptWinCsv() {
@@ -5164,7 +5164,7 @@ function ordersToolbarExtras() {
    Runs "sync delivery dates" and the Motive mileage pull together, fills any blank Transfer $ from the
    miles, then lists every order that changed so it can be corrected right there. Edits in the window
    save like the same boxes in the order trackers (the $ follows the miles every time). */
-var SYNC_FIELDS = ["delivered_at", "truck_id", "truck_number", "miles", "motive_miles", "miles_adjusted", "internal_freight_amount", "motive_synced_at"];
+var SYNC_FIELDS = ["delivery_date", "truck_id", "truck_number", "miles", "motive_miles", "miles_adjusted", "internal_freight_amount", "motive_synced_at"];
 function syncSnapshot() {
   var snap = {};
   orders().forEach(function (o) {
@@ -5190,21 +5190,21 @@ function runSyncAll(btn) {
 }
 function syncOrderLabel(o) {
   if (o.is_transfer) return [o.notes || "Internal freight", o.transfer_department_name || ""];
-  if (o.kind === "internal") return [o.solomon_order_no || "Bag order", o.customer_name || (o.customer_party_id && party(o.customer_party_id) ? party(o.customer_party_id).name : "")];
+  if (o.kind === "internal") return [o.rexius_order_no || "Bag order", o.customer_name || (o.customer_party_id && party(o.customer_party_id) ? party(o.customer_party_id).name : "")];
   var who = o.broker_name || o.customer_name || "";
-  return [o.solomon_order_no || o.broker_load_no || "External order", who];
+  return [o.rexius_order_no || o.broker_load_no || "External order", who];
 }
 function syncResultsModal(before, notes, unmatched) {
   var rows = [];
   orders().forEach(function (o) {
     var b = before[o.id]; if (!b) return;
-    var dateChg = String(b.delivered_at || "").slice(0, 10) !== String(o.delivered_at || "").slice(0, 10);
+    var dateChg = String(b.delivery_date || "").slice(0, 10) !== String(o.delivery_date || "").slice(0, 10);
     var milesChg = b.miles !== o.miles || b.motive_miles !== o.motive_miles;
     var frChg = b.internal_freight_amount !== o.internal_freight_amount;
     var noData = !!o.motive_synced_at && !b.motive_synced_at && o.motive_miles == null;
     if (!(dateChg || milesChg || frChg || noData)) return;
     var tags = [];
-    if (dateChg) tags.push(b.delivered_at ? "Date was " + isoToMdy(String(b.delivered_at).slice(0, 10)) : "Date filled in");
+    if (dateChg) tags.push(b.delivery_date ? "Date was " + isoToMdy(String(b.delivery_date).slice(0, 10)) : "Date filled in");
     if (o.motive_miles != null && b.motive_miles !== o.motive_miles) tags.push(o.miles_adjusted ? "Motive " + o.motive_miles + " (kept your typed miles)" : "Miles from Motive");
     if (noData) tags.push("No Motive data for truck " + (o.truck_number || "?"));
     if (frChg && !milesChg) tags.push("$ calculated");
@@ -5223,8 +5223,8 @@ function syncResultsModal(before, notes, unmatched) {
       var o = r.o, lab = syncOrderLabel(o), id = esc(o.id);
       h += '<tr data-syncrow="' + id + '"><td><div class="cell"><b>' + esc(lab[0]) + "</b>" + (lab[1] ? "<br><small>" + esc(lab[1]) + "</small>" : "") + "</div></td>" +
         '<td><div class="cell n">' + esc(o.truck_number || "") + "</div></td>" +
-        '<td><div class="cell"><input class="cell-i n" type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-syncedit="' + id + '|delivered_at" data-last-iso="' +
-          esc(String(o.delivered_at || "").slice(0, 10)) + '" value="' + esc(isoToMdy(String(o.delivered_at || "").slice(0, 10))) + '"></div></td>' +
+        '<td><div class="cell"><input class="cell-i n" type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-syncedit="' + id + '|delivery_date" data-last-iso="' +
+          esc(String(o.delivery_date || "").slice(0, 10)) + '" value="' + esc(isoToMdy(String(o.delivery_date || "").slice(0, 10))) + '"></div></td>' +
         (r.miles
           ? '<td><div class="cell"><input class="cell-i n" type="number" step="0.1" data-syncedit="' + id + '|miles" value="' + (o.miles == null ? "" : o.miles) + '"></div></td>' +
             '<td><div class="cell"><input class="cell-i n" data-syncedit="' + id + '|freight_amount" value="' + (o.internal_freight_amount == null ? "" : o.internal_freight_amount) + '"></div></td>'
@@ -5243,7 +5243,7 @@ document.addEventListener("change", function (e) {
   var p = el.dataset.syncedit.split("|"), oid = p[0], field = p[1], o = order(oid);
   if (!o) return;
   var req, val;
-  if (field === "delivered_at") { val = el.dataset.lastIso || ""; req = api("order/update", { id: oid, delivered_at: val || null }); }
+  if (field === "delivery_date") { val = el.dataset.lastIso || ""; req = api("order/update", { id: oid, delivery_date: val || null }); }
   else { val = el.value; var body = { order_id: oid }; body[field] = val; req = api("freight", body); }
   req.then(function (row) {
     if (row) for (var k in row) o[k] = row[k];
@@ -5434,7 +5434,7 @@ function searchResults(qraw) {
       run: function () { gotoDate(dq.ds); } });
     loadsOnDate(dq.ds).forEach(function (o) {
       out.push({ type: "Load", label: buildChip(o).title + " · " + prettyDate(dq.ds),
-        sub: o.solomon_order_no || o.broker_load_no || "",
+        sub: o.rexius_order_no || o.broker_load_no || "",
         run: function () { gotoDate(dq.ds, o.id); } });
     });
   }
@@ -5443,10 +5443,10 @@ function searchResults(qraw) {
     var v = arguments[i]; if (v != null && String(v).toLowerCase().indexOf(q) >= 0) return true; } return false; }
   DB.orders.forEach(function (o) {
     var cust = o.customer_party_id && party(o.customer_party_id), brok = o.broker_party_id && party(o.broker_party_id);
-    if (has(o.solomon_order_no, o.broker_load_no, o.po_number, o.delivery_number, o.notes,
+    if (has(o.rexius_order_no, o.broker_load_no, o.po_number, o.delivery_number, o.notes,
             cust && cust.name, brok && brok.name)) {
       out.push({ type: o.kind === "internal" ? "Internal" : "Order",
-        label: (o.solomon_order_no || o.broker_load_no || "no #") + " · " + buildChip(o).title,
+        label: (o.rexius_order_no || o.broker_load_no || "no #") + " · " + buildChip(o).title,
         sub: [o.po_number && "PO " + o.po_number, o.broker_load_no && "load " + o.broker_load_no,
               o.delivery_number && "del " + o.delivery_number].filter(Boolean).join(" · "),
         run: function () { openOrder(o.id); } });
@@ -5591,13 +5591,13 @@ document.addEventListener("click", function (e) {
 });
 function routeEditorModal(oid, suppliedStops) {
   var o = order(oid); if (!o) return;
-  if ((o.delivered_at || o.billed_at) && !suppliedStops) {
+  if ((o.delivery_date || o.billed_date) && !suppliedStops) {
     var lockedStops = orderStops(oid);
     if (!lockedStops.length) lockedStops = [
       { sequence: 1, stop_type: "pickup", location_id: o.pickup_location_id, reference_number: o.po_number },
       { sequence: 2, stop_type: "delivery", location_id: o.delivery_location_id, reference_number: o.delivery_number }
     ];
-    openModal('<div class="modal-hd"><h2>Route · ' + esc(o.solomon_order_no || o.broker_load_no || "order") + '</h2></div>' +
+    openModal('<div class="modal-hd"><h2>Route · ' + esc(o.rexius_order_no || o.broker_load_no || "order") + '</h2></div>' +
       '<div class="modal-body"><div class="note-bar">Delivered and billed routes are read-only to protect history.</div>' +
       '<div class="route-summary">' + lockedStops.map(function (s, i) {
         return '<span><strong>' + (s.sequence || i + 1) + ' ' + (s.stop_type === "pickup" ? "PICK" : "DROP") + '</strong> ' +
@@ -5639,7 +5639,7 @@ function routeEditorModal(oid, suppliedStops) {
       '<label class="mf chk"><input type="checkbox" data-route-field="appointment_required"' + (s.appointment_required ? " checked" : "") + '> <span>Appointment required</span></label>' +
       '</div></section>';
   }).join("");
-  openModal('<div class="modal-hd"><h2>Stop Details · ' + esc(o.solomon_order_no || o.broker_load_no || "new order") + '</h2></div>' +
+  openModal('<div class="modal-hd"><h2>Stop Details · ' + esc(o.rexius_order_no || o.broker_load_no || "new order") + '</h2></div>' +
     '<div class="modal-body route-editor"><p class="route-help">Normal orders stay one pickup and one delivery. Add stops only for the exception.</p>' +
     cards + '<div class="route-add"><button class="btn" data-route-add="pickup">+ Pickup</button>' +
     '<button class="btn" data-route-add="delivery">+ Delivery</button></div></div>' +
@@ -6677,7 +6677,7 @@ function ingestRateCon(file) {
         var scanned = finalText.replace(/\s/g, "").length < 40;
         return api("order/ingest", {
           kind: "external", broker_name: p.broker, broker_load_no: p.load_no,
-          solomon_order_no: p.solomon, po_number: p.po, filename: file.name,
+          rexius_order_no: p.solomon, po_number: p.po, filename: file.name,
           notes: p.rate ? "Rate con rate: $" + p.rate.toFixed(2) : ""
         }).then(function (o) {
           return api("document", {
@@ -6704,7 +6704,7 @@ function ingestRateCon(file) {
     return reload().then(function () {
       openOrder(r.o.id);
       if (r.o._match && r.o._match !== "created") {
-        toast("Matched to existing order " + (r.o.solomon_order_no || r.o.broker_load_no || "") +
+        toast("Matched to existing order " + (r.o.rexius_order_no || r.o.broker_load_no || "") +
           " (" + r.o._match.replace("_", " ") + ") — rate con attached.");
       } else {
         var multiDetected = (r.p.stops || []).filter(function (s) { return s.stop_type === "pickup"; }).length > 1 ||
@@ -6755,7 +6755,7 @@ function ingestLoose(file) {
    listed in the batch review so a person can double-check or fix it. */
 var BATCH_REVIEW = null;   // { name, total, done, odd, items:[{docId, label, read, how, orderId, ambiguous}] }
 function queueOrders() {
-  return orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_at && !isHistorical(o); });
+  return orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_date && !isHistorical(o); });
 }
 // Which load an invoice belongs to, from its text: Rexius order # first, then
 // the broker's load #, PO / PU #, Delivery #. Loads still waiting to bill win
@@ -6769,14 +6769,14 @@ function matchInvoiceText(text) {
     return new RegExp("[^A-Z0-9]" + v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[^A-Z0-9]").test(T);
   }
   var tiers = [
-    ["Rexius order #", "solomon_order_no", function (o) { return o.solomon_order_no && sols.indexOf(o.solomon_order_no) >= 0; }],
+    ["Rexius order #", "rexius_order_no", function (o) { return o.rexius_order_no && sols.indexOf(o.rexius_order_no) >= 0; }],
     ["Load #", "broker_load_no", function (o) { return has(o.broker_load_no); }],
     ["PO / PU #", "manual", function (o) { return has(o.po_number); }],
     ["Delivery #", "manual", function (o) { return has(o.delivery_number); }]
   ];
   for (var k = 0; k < tiers.length; k++) {
     var hits = exts.filter(tiers[k][2]); if (!hits.length) continue;
-    var open = hits.filter(function (o) { return !o.billed_at; });
+    var open = hits.filter(function (o) { return !o.billed_date; });
     var pick = open.length === 1 ? open[0] : (!open.length && hits.length === 1 ? hits[0] : null);
     if (pick) return { order: pick, how: tiers[k][0], matchedBy: tiers[k][1] };
     return { order: null, how: "More than one load has that " + tiers[k][0], ambiguous: true };
@@ -6830,7 +6830,7 @@ function batchReviewHtml() {
     var o = it.orderId ? order(it.orderId) : null, opts = '<option value="">Not matched · pick a load</option>', seen = {};
     (o ? [o] : []).concat(loads).forEach(function (x) {
       if (seen[x.id]) return; seen[x.id] = 1;
-      opts += '<option value="' + x.id + '"' + (x.id === it.orderId ? " selected" : "") + ">" + esc(orderLabel(x)) + (x.billed_at ? " (billed)" : "") + "</option>";
+      opts += '<option value="' + x.id + '"' + (x.id === it.orderId ? " selected" : "") + ">" + esc(orderLabel(x)) + (x.billed_date ? " (billed)" : "") + "</option>";
     });
     h += '<tr class="' + (it.orderId ? "" : "batch-miss") + '"><td><div class="cell"><b>' + esc(it.label) + "</b></div></td>" +
       '<td><div class="cell n">' + esc(it.read || "—") + "</div></td>" +
@@ -7867,7 +7867,7 @@ document.addEventListener("change", function (e) {
       refreshDrawerChipPreview();
       // Bag Orders is auto-sorted by order # (D156) — reposition the row's
       // <tr> in place rather than a full render(), same tab-through concern.
-      if (ofield === "solomon_order_no" && o && o.kind === "internal") resortInternalTrackerRow(ov.id);
+      if (ofield === "rexius_order_no" && o && o.kind === "internal") resortInternalTrackerRow(ov.id);
       histPush("edit " + ofield,
         function () { return orderFieldSet(ov.id, ofield, oprev); },
         function () { return orderFieldSet(ov.id, ofield, onext); });
