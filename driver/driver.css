@@ -270,3 +270,7 @@ body.driver-app.drv-bagplant .chip.bp-bag{border:2px solid var(--ink)}
 /* Hand-written cells: full width of the load column, like the load chips, and a slightly larger font so they can't be missed. */
 .driver-app .dv .load-txt.unfilled,.dv-embed .dv .load-txt.unfilled{display:block;width:100%;box-sizing:border-box;
   font-size:var(--fs-body-lg);font-weight:600;line-height:1.35;padding:8px 10px}
+
+/* Driver page header: just the title on the left, color code and Log Out on the right. */
+.drv-hdr.drv-hdr-two{grid-template-columns:1fr auto}
+.drv-hdr.drv-hdr-two .drv-title{font-size:var(--fs-h3)}

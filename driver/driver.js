@@ -308,7 +308,8 @@ function allowedTab(tab) {
 
 /* ── Header + tabs ────────────────────────────────────────────────────── */
 function renderHeader() {
-  $("#hdr-who").innerHTML = !S.who ? "" : isBagPlant() ? "<b>Current Week</b><span>Bag Orders · View Only</span>" :
+  var whoEl = $("#hdr-who");   // the driver page has no name/truck in the header
+  if (whoEl) whoEl.innerHTML = !S.who ? "" : isBagPlant() ? "<b>Current Week</b><span>Bag Orders · View Only</span>" :
     "<b>" + esc(S.who.name) + "</b><span>Truck " + esc(S.who.truck) + "</span>";
   // The bag order color code sits in the header, just left of Log Out.
   $("#hdr").innerHTML = S.who ? bagKeyHtml() +
