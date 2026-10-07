@@ -239,6 +239,7 @@ var HISTORY_LABELS = {
   "load/carrier": "Schedule outside carrier", "unschedule": "Unschedule load",
   "cell/color": "Color scheduler cell", "cell/format": "Format scheduler cell",
   "truck/off": "Change truck availability", "day-note": "Edit day note",
+  "saved-report": "Save report", "saved-report/delete": "Delete report", "saved-report/list": "List saved reports",
   "freight": "Edit freight", "motive/sync-miles": "Sync Motive mileage",
   "internal-freight-rate": "Change internal freight rate",
   "internal-freight-rate/calculate": "Calculate internal freight charges",
@@ -626,6 +627,14 @@ var ROUTES = {
   "internal-freight-rate": viaRpc("api_internal_freight_rate_save"),
   "internal-freight-rate/calculate": viaRpc("api_internal_freight_rate_calculate"),
   "sync-delivery-dates": viaRpc("api_sync_delivery_dates"),
+  // The Reports data: api_report_rows (adds the order id, rate and backhaul columns) once its SQL has been run,
+  // otherwise the plain Export Everything report.
+  "report-rows": function () {
+    return rpc("api_report_rows", {}).catch(function () { return rpc("api_report", { p_name: "dump", p_from: null, p_to: null }); });
+  },
+  "saved-report/list": viaRpc("api_saved_report_list"),
+  "saved-report": viaRpc("api_saved_report_save"),
+  "saved-report/delete": viaRpc("api_saved_report_delete"),
   "motive/sync-miles": function (d, route) { return edgeFunction("motive-sync", d, histHeaders(route, d)); },
   // Publish Schedule: builds what drivers and the bag plant see (the same data the
   // old Google push built, now read-only) and saves it as the latest published copy.

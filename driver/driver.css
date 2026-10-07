@@ -78,9 +78,6 @@ body.drv-signed-out .header-row{display:none}
 .dv .off-cell{grid-column:1/-1;height:64px;padding:0!important}
 .dv>div.off-hatch,.drv-card.off-hatch{background:var(--off-stripes)}
 .dv .mono{font-family:var(--mono);font-size:var(--fs-label);font-variant-numeric:tabular-nums}
-.drv-map{display:inline-flex;align-items:center;gap:5px;text-decoration:none}
-.drv-map .gmaps{flex:none;display:block}
-.dv .drv-map{color:var(--ink)}
 .pod-btns{display:flex;gap:4px;flex-wrap:wrap}
 
 /* Driver notes: what the driver told dispatch about this load. */

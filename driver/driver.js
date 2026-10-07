@@ -71,11 +71,6 @@ function textOn(hex) {
 }
 function fillStyle(hex) { return hex ? "background:" + esc(hex) + ";color:" + textOn(hex) + ";" : ""; }
 
-var MAPS_ICON = '<svg class="gmaps" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><defs><clipPath id="gm-pin">' +
-  '<path d="M12 1.5a7.5 7.5 0 0 0-7.5 7.5c0 5.6 7.5 13.5 7.5 13.5s7.5-7.9 7.5-13.5A7.5 7.5 0 0 0 12 1.5z"/></clipPath></defs>' +
-  '<g clip-path="url(#gm-pin)"><rect width="24" height="24" fill="#34A853"/><rect x="0" y="0" width="12" height="15" fill="#FBBC04"/>' +
-  '<rect x="0" y="0" width="12" height="8" fill="#4285F4"/><rect x="12" y="0" width="12" height="11" fill="#EA4335"/>' +
-  '<rect x="12" y="11" width="12" height="4" fill="#4285F4"/></g><circle cx="12" cy="9" r="2.7" fill="#fff"/></svg>';
 var SUN_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1 1M12 12l1 1M3 13l1-1M12 4l1-1"/></svg>';
 var MOON_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M13.5 10A6 6 0 0 1 6 2.5a6 6 0 1 0 7.5 7.5z"/></svg>';
 var SCAN_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 2h6l3 3v9H4z"/><path d="M10 2v3h3M6.5 9l1.5 1.5L11 7.5"/></svg>';
@@ -409,7 +404,7 @@ function vCurrentWeek() {
         // flags), big for bag orders and quieter for everything else.
         if (ord && (isBagPlant() || (ord.kind !== "internal" && !ord.is_transfer))) {
           var kindCls = !isBagPlant() ? "" : S.loadKind[key] === "bag" ? "bp-bag" : ord.kind !== "internal" && !ord.is_transfer ? "bp-ext" : "bp-other";
-          h += '<td><div class="cell">' + dashChipHtml(ord, r, go, kindCls) + "</div></td>"; return;
+          h += '<td><div class="cell">' + dashChipHtml(ord, r, go, kindCls, isBagPlant() ? "" : t.driver_color) + "</div></td>"; return;
         }
         if (isBagPlant()) { h += bagPlantCell(lines, r, S.loadKind[key]); return; }
         h += '<td><div class="cell"><div class="chip' + (r.color ? " filled" : "") + '"' +
@@ -439,7 +434,9 @@ function bagFlags(o) {
 function flagsHtml(flags) {
   return flags.length ? '<div class="flags">' + flags.map(function (x) { return '<span class="flag">' + esc(x) + "</span>"; }).join("") + "</div>" : "";
 }
-function dashChipHtml(o, r, attrs, cls) {
+// dcolor (drivers' page only): the truck's driver color as set on the dashboard. The published row color is
+// that color already washed out for the old sheet, so tinting it again made these chips almost white.
+function dashChipHtml(o, r, attrs, cls, dcolor) {
   var ext = o.kind !== "internal" && !o.is_transfer, flags = [], title, meta;
   if (o.is_transfer) {
     title = o.notes || o.driver_note || "(no load info)";
@@ -460,10 +457,11 @@ function dashChipHtml(o, r, attrs, cls) {
   if (ext) {
     // Every load a driver sees has been pushed, so it wears the pushed look:
     // a soft tint of the driver's color with the solid color as the edge.
-    var edge = r.color || "var(--ext)";
+    var tint = dcolor || r.color;
+    var edge = tint || "var(--ext)";
     var appt = o.pick_appt || o.drop_appt;
-    return '<div class="chip xchip' + (r.color ? " tinted" : "") + (appt ? " has-appt" : "") + (cls ? " " + cls : "") + '" style="--edge:' + edge +
-      (r.color ? ";background:color-mix(in srgb," + esc(r.color) + " 17%,var(--panel))" : "") + '"' + (attrs || "") + ">" +
+    return '<div class="chip xchip' + (tint ? " tinted" : "") + (appt ? " has-appt" : "") + (cls ? " " + cls : "") + '" style="--edge:' + edge +
+      (tint ? ";background:color-mix(in srgb," + esc(tint) + " 17%,var(--panel))" : "") + '"' + (attrs || "") + ">" +
       (appt ? '<span class="appt-ind">APPT</span>' : "") + '<div class="who">' + esc(title) + "</div>" + meta + note + "</div>";
   }
   var edge2 = r.color || (o.cust_timing === "early" ? "var(--early)" : "var(--anytime)");
@@ -495,9 +493,6 @@ function bagPlantCell(lines, r, kind) {
 }
 
 /* ── One driver's tab ─────────────────────────────────────────────────── */
-function linkHtml(url, label, maps) {
-  return url ? '<a class="btn sm drv-map" href="' + esc(url) + '" target="_blank" rel="noopener">' + (maps ? MAPS_ICON : "") + esc(label) + "</a>" : "";
-}
 /* Driver notes on a load, keyed by order id. Prototype: kept in this
    browser's storage, which the dashboard on the same address also reads
    (order drawer → Driver notes). The real version saves to Supabase. */
@@ -675,12 +670,9 @@ function vDriverCards(d) {
       S.chipTitle[key] = String(r.chip || "").split("\n")[0];
       var fields = [["Rexius Order #", rexiusOrderNo(key)], ["Dispatch Notes", r.notes], ["PO / PU #", r.po_number],
         ["Delivery #", r.delivery_number], ["Load #", loadNo(key)]].filter(function (f) { return f[1]; });
-      var links = [];   // store map / pickup / drop buttons are off until the design is settled
       h += '<div class="drv-card"><div class="load-txt' + (r.color ? "" : " unfilled") + '" style="' + fillStyle(r.color) + '">' + tabChipHtml(key, r) + "</div>" +
         (fields.length ? "<dl>" + fields.map(function (f) { return "<dt>" + f[0] + "</dt><dd>" + esc(f[1]) + "</dd>"; }).join("") + "</dl>" : "") +
-        (links.length || isLoad ? '<div class="links">' + links.map(function (l) {
-          return '<a class="btn drv-map" href="' + esc(l[0]) + '" target="_blank" rel="noopener">' + (l[2] ? MAPS_ICON : "") + l[1] + "</a>"; }).join("") +
-          (isLoad ? '<span class="sp"></span>' + noteButtons(key, true) : "") + "</div>" : "") +
+        (isLoad ? '<div class="links"><span class="sp"></span>' + noteButtons(key, true) + "</div>" : "") +
         (isLoad ? '<div class="drv-card-notes">' + (scanInfo(key) ? '<div class="scan-row">' + scanHtml(key) + "</div>" : "") + notesHtml(key) + "</div>" : "") + "</div>";
     });
     if (!any) h += '<div class="drv-empty">Nothing scheduled</div>';
