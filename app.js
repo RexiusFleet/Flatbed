@@ -4829,11 +4829,107 @@ function internalFreightRateHtml() {
    as a `secondary` block, ahead of that tracker's own bulk-action buttons.
    D205 moved Internal Rate into the global formatting toolbar's far-right
    edge on Orders pages, leaving this page toolbar focused on sync/actions.
-   #motive-sync/#sync-btn remain click-delegated by id (07-events.js). */
+   #sync-all is click-delegated by id (07-events.js): it runs both syncs and shows the results window. */
 function ordersToolbarExtras() {
-  return '<button class="btn sm" id="motive-sync">' + icon("sync") + 'Sync Mileage</button>' +
-    '<button class="btn sm" id="sync-btn">' + icon("calendar") + 'Sync Delivery Dates</button>';
+  return '<button class="btn sm" id="sync-all" title="Pull delivery dates from the schedule and mileage from Motive, then review the changes">' +
+    icon("sync") + 'Sync Mileage &amp; Dates</button>';
 }
+/* ── Sync Mileage & Dates: one button, then a review window ───────────────
+   Runs "sync delivery dates" and the Motive mileage pull together, fills any blank Transfer $ from the
+   miles, then lists every order that changed so it can be corrected right there. Edits in the window
+   save like the same boxes in the order trackers (the $ follows the miles every time). */
+var SYNC_FIELDS = ["delivered_at", "truck_id", "truck_number", "miles", "motive_miles", "miles_adjusted", "internal_freight_amount", "motive_synced_at"];
+function syncSnapshot() {
+  var snap = {};
+  orders().forEach(function (o) {
+    var x = {}; SYNC_FIELDS.forEach(function (k) { x[k] = o[k]; }); snap[o.id] = x;
+  });
+  return snap;
+}
+function runSyncAll(btn) {
+  if (btn.disabled) return;
+  btn.disabled = true; toast("Syncing delivery dates and mileage…");
+  var before = syncSnapshot(), notes = [], unmatched = [];
+  api("sync-delivery-dates", {}).catch(function (err) { notes.push("Delivery dates: " + err.message); })
+    .then(function () { return api("motive/sync-miles", {}); })
+    .then(function (r) { unmatched = (r && r.unmatched) || []; if (r && r.message) notes.push(r.message); },
+      function (err) { notes.push("Motive mileage: " + err.message); })
+    .then(function () {
+      var rate = DB.internal_freight_rate && DB.internal_freight_rate.rate_per_mile;
+      return rate ? api("internal-freight-rate/calculate", {}).catch(function () {}) : null;
+    })
+    .then(reload)
+    .then(function () { btn.disabled = false; syncResultsModal(before, notes, unmatched); })
+    .catch(function (err) { btn.disabled = false; toast(err.message, true); });
+}
+function syncOrderLabel(o) {
+  if (o.is_transfer) return [o.notes || "Internal freight", o.transfer_department_name || ""];
+  if (o.kind === "internal") return [o.solomon_order_no || "Bag order", o.customer_name || (o.customer_party_id && party(o.customer_party_id) ? party(o.customer_party_id).name : "")];
+  var who = o.broker_name || o.customer_name || "";
+  return [o.solomon_order_no || o.broker_load_no || "External order", who];
+}
+function syncResultsModal(before, notes, unmatched) {
+  var rows = [];
+  orders().forEach(function (o) {
+    var b = before[o.id]; if (!b) return;
+    var dateChg = String(b.delivered_at || "").slice(0, 10) !== String(o.delivered_at || "").slice(0, 10);
+    var milesChg = b.miles !== o.miles || b.motive_miles !== o.motive_miles;
+    var frChg = b.internal_freight_amount !== o.internal_freight_amount;
+    var noData = !!o.motive_synced_at && !b.motive_synced_at && o.motive_miles == null;
+    if (!(dateChg || milesChg || frChg || noData)) return;
+    var tags = [];
+    if (dateChg) tags.push(b.delivered_at ? "Date was " + isoToMdy(String(b.delivered_at).slice(0, 10)) : "Date filled in");
+    if (o.motive_miles != null && b.motive_miles !== o.motive_miles) tags.push(o.miles_adjusted ? "Motive " + o.motive_miles + " (kept your typed miles)" : "Miles from Motive");
+    if (noData) tags.push("No Motive data for truck " + (o.truck_number || "?"));
+    if (frChg && !milesChg) tags.push("$ calculated");
+    rows.push({ o: o, tags: tags, miles: o.is_transfer || o.kind === "internal" });
+  });
+  var h = '<div class="modal-hd"><h2>Sync results</h2></div><div class="modal-body sync-results">';
+  if (notes.length) h += '<div class="note-bar">' + notes.map(esc).join(" · ") + "</div>";
+  if (unmatched.length) h += '<div class="note-bar">No Motive data for truck ' + unmatched.map(esc).join(", ") +
+    ". Check the truck number matches the vehicle number in Motive.</div>";
+  if (!rows.length) h += "<p>Nothing needed updating.</p>";
+  else {
+    h += "<p>" + rows.length + " order" + (rows.length === 1 ? "" : "s") + " updated. Fix anything that looks wrong; changes save as you leave each box, and the $ follows the miles.</p>" +
+      '<div class="sync-scroll"><table class="data sync-table"><thead><tr><th>Order</th><th style="width:60px">Truck</th>' +
+      '<th style="width:118px">Delivered</th><th style="width:84px">Miles</th><th style="width:92px">Transfer $</th><th>What changed</th></tr></thead><tbody>';
+    rows.forEach(function (r) {
+      var o = r.o, lab = syncOrderLabel(o), id = esc(o.id);
+      h += '<tr data-syncrow="' + id + '"><td><div class="cell"><b>' + esc(lab[0]) + "</b>" + (lab[1] ? "<br><small>" + esc(lab[1]) + "</small>" : "") + "</div></td>" +
+        '<td><div class="cell n">' + esc(o.truck_number || "") + "</div></td>" +
+        '<td><div class="cell"><input class="cell-i n" type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-syncedit="' + id + '|delivered_at" data-last-iso="' +
+          esc(String(o.delivered_at || "").slice(0, 10)) + '" value="' + esc(isoToMdy(String(o.delivered_at || "").slice(0, 10))) + '"></div></td>' +
+        (r.miles
+          ? '<td><div class="cell"><input class="cell-i n" type="number" step="0.1" data-syncedit="' + id + '|miles" value="' + (o.miles == null ? "" : o.miles) + '"></div></td>' +
+            '<td><div class="cell"><input class="cell-i n" data-syncedit="' + id + '|freight_amount" value="' + (o.internal_freight_amount == null ? "" : o.internal_freight_amount) + '"></div></td>'
+          : '<td><div class="cell">—</div></td><td><div class="cell">—</div></td>') +
+        '<td><div class="cell"><small>' + esc(r.tags.join(" · ")) + "</small></div></td></tr>";
+    });
+    h += "</tbody></table></div>";
+  }
+  h += '</div><div class="modal-ft"><button class="btn pri" id="modal-cancel">Done</button></div>';
+  openModal(h);
+  $("#modal").classList.add("wide-modal", "sync-modal");
+}
+document.addEventListener("change", function (e) {
+  var el = e.target.closest && e.target.closest("[data-syncedit]");
+  if (!el) return;
+  var p = el.dataset.syncedit.split("|"), oid = p[0], field = p[1], o = order(oid);
+  if (!o) return;
+  var req, val;
+  if (field === "delivered_at") { val = el.dataset.lastIso || ""; req = api("order/update", { id: oid, delivered_at: val || null }); }
+  else { val = el.value; var body = { order_id: oid }; body[field] = val; req = api("freight", body); }
+  req.then(function (row) {
+    if (row) for (var k in row) o[k] = row[k];
+    var tr = el.closest("tr");
+    // the $ follows the miles: show what the server worked out
+    if (field === "miles" && tr) {
+      var fr = tr.querySelector('[data-syncedit$="|freight_amount"]');
+      if (fr) fr.value = o.internal_freight_amount == null ? "" : o.internal_freight_amount;
+    }
+    render();
+  }).catch(function (err) { toast(err.message, true); });
+});
 function render() {
   if ((SUB === "cw" || SUB === "driver") && needsHistory(CW_START) && !HISTORY_FETCH)
     ensureHistory().then(function (got) { if (got) render(); });
@@ -5089,7 +5185,7 @@ function gsActivate(i) {
 function openModal(html) {
   var m = $("#modal");
   if (!m) { m = document.createElement("div"); m.id = "modal"; document.body.appendChild(m); }
-  delete m.dataset.keyConfirming; m.classList.remove("route-modal", "wide-modal");
+  delete m.dataset.keyConfirming; m.classList.remove("route-modal", "wide-modal", "sync-modal");
   m.innerHTML = '<div class="modal-card">' + html + "</div>";
   m.classList.add("on"); $("#scrim").classList.add("on");
 }
@@ -6691,9 +6787,9 @@ document.addEventListener("click", function (e) {
     "[data-addrow],[data-delrows],[data-archiverows],[data-archiveview],[data-orderdelrows],[data-ordercancelrows],[data-delete-doc],[data-frreset],[data-catadd],[data-catdel],[data-sortsave],[data-sortclear]," +
     "[data-addsheet],[data-sheet-addrow],[data-sheet-addcol],[data-sheet-rename]," +
     "[data-managecols],[data-colup],[data-coldown],[data-adddb]," +
-    "#theme,#sync-btn,#jump-btn,#today-jump,#logo-home,#add-truck," +
+    "#theme,#sync-all,#jump-btn,#today-jump,#logo-home,#add-truck," +
     "#add-pickdrop,#add-department,#new-order,#xfer-add,#xfer-bulk,#xfer-save-bulk,#dw-close,#group-btn,#scrim,#nav-scrim,#int-add,#int-bulk,#int-save-bulk,#push-driver-tabs," +
-    "#modal-cancel,#modal-save,#modal-save-loc,#modal-save-dept,#modal-save-truck,#col-save,#col-delete,#condfmt-save,#field-save,#field-options-save,#db-save,#motive-sync,#confirm-del,#confirm-customer-archive,#ifr-toggle," +
+    "#modal-cancel,#modal-save,#modal-save-loc,#modal-save-dept,#modal-save-truck,#col-save,#col-delete,#condfmt-save,#field-save,#field-options-save,#db-save,#confirm-del,#confirm-customer-archive,#ifr-toggle," +
     "#profile-btn,[data-profile],[data-setpref],[data-showsched],[data-screc],[data-screset],[data-scresetall]," +
     "[data-cw-step],[data-schedsize-step],[data-schedsize-reset],[data-accent-pick],[data-accent-save],[data-accent-forget],[data-custom-accent-toggle],[data-numbering-save]," +
     "#navtoggle,[data-navto],[data-navsec],[data-navcycle],[data-bill-done],[data-bill-dl],[data-reopen-bill]," +
@@ -7221,27 +7317,7 @@ document.addEventListener("click", function (e) {
     BASE_SHORTCUTS.forEach(function (x) { KEYMAP[x.id] = x.def; }); saveKeymap(); render();
     toast("Shortcuts reset to defaults"); return;
   }
-  if (t.id === "sync-btn") {
-    api("sync-delivery-dates", {}).then(function (r) { toast("Synced " + r.synced + " delivery date(s)"); return reload(); });
-    return;
-  }
-  if (t.id === "motive-sync") {
-    toast("Pulling mileage from Motive…");
-    api("motive/sync-miles", {}).then(function (r) {
-      var msg = r.filled + " day(s) filled from Motive" +
-        (r.unmatched && r.unmatched.length ? " · no data for truck " + r.unmatched.join(", ") : "");
-      // D170: newly-synced miles feed straight into the rate calc, same run —
-      // Nate: "it should auto run the freight when you hit sync mileage."
-      // Skipped quietly (not an error) when no rate is set yet.
-      var rate = DB.internal_freight_rate && DB.internal_freight_rate.rate_per_mile;
-      var calc = rate ? api("internal-freight-rate/calculate", {}) : Promise.resolve(null);
-      return calc.then(function (cr) {
-        toast((r.message || msg) + (cr ? " · " + cr.filled + " freight charge(s) calculated" : ""));
-        return reload();
-      });
-    }).catch(function (err) { toast(err.message, true); });
-    return;
-  }
+  if (t.id === "sync-all") { runSyncAll(t); return; }
   if (t.id === "ifr-toggle") {
     IFR_OPEN = !IFR_OPEN; localStorage.setItem("ifrOpen", IFR_OPEN ? "1" : "0"); render();
     return;

@@ -1452,3 +1452,9 @@ body.nav-collapsed .nav-footer-btn>span:last-child{display:none}
 th.tsortable{cursor:pointer;user-select:none}
 th.tsortable:hover{color:var(--ink);background:var(--panel)}
 .tsort-arrow{margin-left:5px;font-size:var(--fs-caption);color:var(--ink-2)}
+
+/* Sync results window */
+#modal.sync-modal .modal-card{max-width:900px}
+.sync-scroll{max-height:60vh;overflow:auto;border:1px solid var(--rule);border-radius:var(--r-lg)}
+.sync-table{width:100%}
+.sync-table td small{color:var(--ink-3)}
