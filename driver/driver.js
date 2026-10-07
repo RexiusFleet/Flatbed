@@ -258,8 +258,7 @@ function tabChipHtml(key, r) {
   var fl = o && o.kind === "internal" && !o.is_transfer ? flagsHtml(bagFlags(o)) : "";
   return loadTextHtml(r.chip) + (fl ? '<div style="margin-top:6px">' + fl + "</div>" : "");
 }
-// The published schedule carries the order number as rexius_order_no; schedules published before the rename say solomon_order_no.
-function ordNo(o) { return o && (o.rexius_order_no || o.solomon_order_no) || ""; }
+function ordNo(o) { return o && o.rexius_order_no || ""; }
 function rexiusOrderNo(key) { return ordNo(orderForKey(key)); }
 function loadNo(key) { var o = orderForKey(key); return o && o.broker_load_no || ""; }
 function fleet() { return (S.payload && S.payload.drivers || []).filter(function (d) { return d.driver; }); }

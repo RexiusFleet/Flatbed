@@ -4472,9 +4472,9 @@ var RPT_AGG = { count: "Count", countd: "Count distinct", sum: "Sum", avg: "Aver
 var RPT_OPS = { eq: "is", ne: "is not", contains: "contains", gt: ">", gte: ">=", lt: "<", lte: "<=", blank: "is blank", notblank: "is not blank" };
 var RPT_PER = [["all", "All time"], ["dash", "Dashboard period"], ["month", "This Month"], ["3m", "Last 3 Months"], ["ytd", "Year to Date"], ["custom", "Custom"]];
 var RPT_MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// Friendlier names for the date columns in reports only (the database columns keep their names).
-var RPT_ALIAS = { solomon_order_no: "rexius_order_no", ordered_at: "order_date", released_at: "release_date", delivered_at: "delivery_date", billed_at: "billed_date" };
-function rptFixName(f) { return RPT_ALIAS[f] || f; }
+// Reports saved while the old column names were still in use: point them at the new names.
+var RPT_OLD_NAMES = { solomon_order_no: "rexius_order_no", ordered_at: "order_date", released_at: "release_date", delivered_at: "delivery_date", billed_at: "billed_date" };
+function rptFixName(f) { return RPT_OLD_NAMES[f] || f; }
 function rptFixCfg(c) {
   (c.rows || []).forEach(function (f, i) { c.rows[i] = rptFixName(f); });
   if (c.cols) c.cols = rptFixName(c.cols);
@@ -4520,7 +4520,6 @@ function rptEnrich(r) {
   var mi = rptNum(r.order_miles != null ? r.order_miles : r.miles);
   r.internal_miles = internal ? (rptNum(r.miles) || 0) : 0;
   var rate = rptNum(r.external_rate);   // the order's own rate once it exists, else the invoice amount on its load
-  Object.keys(RPT_ALIAS).forEach(function (k) { if (k in r) { r[RPT_ALIAS[k]] = r[k]; delete r[k]; } });
   r.revenue = internal ? (rptNum(r.internal_freight_amount) || 0) : (rate != null ? rate : (rptNum(r.external_revenue_share) || 0));
   return r;
 }

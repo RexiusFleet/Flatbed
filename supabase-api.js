@@ -112,56 +112,17 @@ function sbFetch(path, opts, retried) {
 function jsonOf(r) {
   return r.text().then(function (t) { return t ? JSON.parse(t) : null; });
 }
-/* ── Column-name bridge ────────────────────────────────────────────────────
-   The order columns were renamed (ordered_at -> order_date, released_at -> release_date, delivered_at ->
-   delivery_date, billed_at -> billed_date, solomon_order_no -> rexius_order_no). This app uses the NEW names.
-   Until the database rename SQL has been run, the database still answers to the OLD names, so every request
-   and answer is translated here. After the SQL runs the check below finds the new names, the bridge turns
-   itself off, and nothing is translated. Once the SQL has been run it can be deleted. */
-var NAME_PAIRS = { ordered_at: "order_date", released_at: "release_date", delivered_at: "delivery_date", billed_at: "billed_date", solomon_order_no: "rexius_order_no" };
-var NAME_OLD = {}, NAME_NEW = {};
-Object.keys(NAME_PAIRS).forEach(function (o) { NAME_NEW[o] = NAME_PAIRS[o]; NAME_OLD[NAME_PAIRS[o]] = o; });
-var NAME_ARRAY_KEYS = { c: 1, numeric_columns: 1 };   // lists of column names (packed tables, report headers)
-var NAME_RE_NEW = new RegExp("\\b(" + Object.keys(NAME_OLD).join("|") + ")\\b", "g");
-var NAMES_PROBE = null;   // promise: true = database still has the old names (translate), false = renamed
-function namesNeedBridge() {
-  if (NAMES_PROBE) return NAMES_PROBE;
-  NAMES_PROBE = sbFetch("/rest/v1/orders?select=delivery_date&limit=1").then(function () { return false; }, function (e) {
-    if (e && (e.status === 400 || e.status === 404)) return true;   // no such column: not renamed yet
-    NAMES_PROBE = null; return false;                               // unknown (offline, signed out): try again next time
-  });
-  return NAMES_PROBE;
-}
-function renameKeys(v, map, arrKeys) {
-  if (Array.isArray(v)) return v.map(function (x) { return renameKeys(x, map, arrKeys); });
-  if (v && typeof v === "object") {
-    var out = {};
-    Object.keys(v).forEach(function (k) {
-      var nk = map[k] || k, x = v[k];
-      out[nk] = arrKeys[k] && Array.isArray(x) ? x.map(function (n) { return typeof n === "string" && map[n] ? map[n] : n; }) : renameKeys(x, map, arrKeys);
-    });
-    return out;
-  }
-  return v;
-}
-function bridgeOut(on, args) { return on ? renameKeys(args, NAME_OLD, {}) : args; }          // request: new names -> old names
-function bridgeIn(on, data) { return on ? renameKeys(data, NAME_NEW, NAME_ARRAY_KEYS) : data; }  // answer: old names -> new names
 function rpc(name, args, hist) {
-  return namesNeedBridge().then(function (on) {
-    return sbFetch("/rest/v1/rpc/" + name, {
-      method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, hist || {}),
-      body: JSON.stringify(bridgeOut(on, args || {}))
-    }).then(jsonOf).then(function (r) { return bridgeIn(on, r); });
-  });
+  return sbFetch("/rest/v1/rpc/" + name, {
+    method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, hist || {}),
+    body: JSON.stringify(args || {})
+  }).then(jsonOf);
 }
 function rest(method, tableQuery, body, hist, prefer) {
-  return namesNeedBridge().then(function (on) {
-    var h = Object.assign({ "Content-Type": "application/json", "Prefer": prefer || "return=representation" }, hist || {});
-    var q = on ? tableQuery.replace(NAME_RE_NEW, function (m) { return NAME_OLD[m]; }) : tableQuery;
-    return sbFetch("/rest/v1/" + q, {
-      method: method, headers: h, body: body === undefined ? undefined : JSON.stringify(bridgeOut(on, body))
-    }).then(jsonOf).then(function (r) { return bridgeIn(on, r); });
-  });
+  var h = Object.assign({ "Content-Type": "application/json", "Prefer": prefer || "return=representation" }, hist || {});
+  return sbFetch("/rest/v1/" + tableQuery, {
+    method: method, headers: h, body: body === undefined ? undefined : JSON.stringify(body)
+  }).then(jsonOf);
 }
 function edgeFunction(name, body, hist) {
   return sbFetch("/functions/v1/" + name, {
