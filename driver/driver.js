@@ -151,7 +151,10 @@ function load() {
     // Which truck/day/slot holds a real load (vs. a plain schedule note) —
     // only real loads get POD/BOL buttons.
     if (raw) {
-      S.loadKeys = {}; S.loadOrder = {}; S.loadKind = {}; S.orders = {};
+      S.loadKeys = {}; S.loadOrder = {}; S.loadKind = {}; S.orders = {}; S.stopsByKey = {}; S.stopsByOrder = {};
+      var byLoad = {};
+      (raw.stops || []).forEach(function (st) { (byLoad[st.load_id] = byLoad[st.load_id] || []).push(st); });
+      Object.keys(byLoad).forEach(function (id) { byLoad[id].sort(function (a, b) { return a.sequence - b.sequence; }); });
       (raw.orders || []).forEach(function (o) { S.orders[o.id] = o; });
       var kinds = {};
       (raw.orders || []).forEach(function (o) { kinds[o.id] = o.is_transfer ? "xfer" : o.kind === "internal" ? "bag" : "ext"; });
@@ -159,6 +162,7 @@ function load() {
         if (!(l.order_ids || []).length) return;
         var k = l.truck_id + "|" + String(l.scheduled_date).slice(0, 10) + "|" + l.slot;
         S.loadKeys[k] = true; S.loadOrder[k] = l.order_ids[0]; S.loadKind[k] = kinds[l.order_ids[0]] || "ext";
+        if (byLoad[l.id]) { S.stopsByKey[k] = byLoad[l.id]; S.stopsByOrder[l.order_ids[0]] = byLoad[l.id]; }
       });
     }
     S.loading = false;
@@ -238,8 +242,21 @@ function apptText(a, loadDay) {
   if (from && to) t = from.slice(-2) === to.slice(-2) ? from.slice(0, -3) + "–" + to : from + "–" + to;
   return [day, t].filter(Boolean).join(" · ");
 }
-function apptTag(a, day) {
-  return a && (a.from || a.to || a.date) ? ' <span class="appt">APPT ' + esc(apptText(a, day)) + "</span>" : "";
+// Appointments are typed text. Loads published before that stored a date and times instead; show those the old way.
+function apptLabel(o, which, day) {
+  var t = o && o[which + "_appt_text"];
+  if (t) return String(t);
+  var a = o && o[which + "_appt"];
+  return a && (a.from || a.to || a.date) ? apptText(a, day) : "";
+}
+function apptTag(text) { return text ? ' <span class="appt">APPT ' + esc(text) + "</span>" : ""; }
+// The extra picks and drops of a multi-stop route (published with the load); null for a normal pick and drop.
+function routeStops(o, key) { return o && o.route_mode === "custom" && S.stopsByKey && S.stopsByKey[key] && S.stopsByKey[key].length ? S.stopsByKey[key] : null; }
+function hasAppt(o) {
+  if (!o) return false;
+  if (o.pick_appt_text || o.drop_appt_text || o.pick_appt || o.drop_appt) return true;
+  var st = o.route_mode === "custom" && S.stopsByOrder && S.stopsByOrder[o.id];
+  return !!(st && st.some(function (x) { return x.notes; }));
 }
 function orderForKey(key) { return S.orders && S.orders[S.loadOrder[key]] || null; }
 function tabChipHtml(key, r) {
@@ -247,12 +264,20 @@ function tabChipHtml(key, r) {
   if (o && o.kind !== "internal" && !o.is_transfer) {
     // The PICK: and DROP: labels always print, even when empty, so the layout
     // reads the same on every load.
+    var day = key.split("|")[1], stops = routeStops(o, key), lines = ["<b>Broker/Customer:</b> " + esc(o.broker_name || "—")];
+    if (stops) {
+      // A multi-stop route: every pick and drop in order, each with its appointment text.
+      var nP = stops.filter(function (x) { return x.stop_type === "pickup"; }).length, nD = stops.length - nP, cp = 0, cd = 0;
+      stops.forEach(function (x) {
+        var isP = x.stop_type === "pickup", n = isP ? ++cp : ++cd, tot = isP ? nP : nD;
+        lines.push("", "<b>" + (isP ? "PICK" : "DROP") + (tot > 1 ? " " + n : "") + ":</b> " + esc(stopLine(x.name, x.address, x.city, x.state)) + apptTag(x.notes));
+      });
+      return lines.join("\n");
+    }
     var pick = stopLine(o.pickup_name, o.pickup_address, o.pickup_city, o.pickup_state);
     var drop = stopLine(o.delivery_name, o.delivery_address, o.delivery_city, o.delivery_state);
-    return ["<b>Broker/Customer:</b> " + esc(o.broker_name || "—"), "",
-      "<b>PICK:</b> " + esc(pick) + apptTag(o.pick_appt, key.split("|")[1]),
-      "",
-      "<b>DROP:</b> " + esc(drop) + apptTag(o.drop_appt, key.split("|")[1])].join("\n");
+    return lines.concat(["", "<b>PICK:</b> " + esc(pick) + apptTag(apptLabel(o, "pick", day)),
+      "", "<b>DROP:</b> " + esc(drop) + apptTag(apptLabel(o, "drop", day))]).join("\n");
   }
   // Bag orders: the same EARLY / ANYTIME and FORKLIFT boxes as Current Week.
   var fl = o && o.kind === "internal" && !o.is_transfer ? flagsHtml(bagFlags(o)) : "";
@@ -446,8 +471,12 @@ function dashChipHtml(o, r, attrs, cls, dcolor) {
     // Broker and City → City only: the order and load numbers are on the
     // driver's own tab, and too much here is confusing.
     title = o.broker_name || "(no customer)";
-    meta = '<div class="meta meta-2line meta-route"><span class="route-line">' +
-      esc(cityState(o.pickup_city, o.pickup_state) + " → " + cityState(o.delivery_city, o.delivery_state)) + "</span></div>";
+    var cst = o.route_mode === "custom" && S.stopsByOrder && S.stopsByOrder[o.id], routeTxt;
+    if (cst && cst.length) {
+      var lastD = cst.slice().reverse().filter(function (x) { return x.stop_type === "delivery"; })[0] || cst[cst.length - 1];
+      routeTxt = cityState(cst[0].city, cst[0].state) + " → " + cityState(lastD.city, lastD.state) + " · " + cst.length + " stops";
+    } else routeTxt = cityState(o.pickup_city, o.pickup_state) + " → " + cityState(o.delivery_city, o.delivery_state);
+    meta = '<div class="meta meta-2line meta-route"><span class="route-line">' + esc(routeTxt) + "</span></div>";
   } else {
     title = o.customer_name || "(no customer)";
     meta = '<div class="meta meta-2line">' + (o.pallet_count ? "<span>" + esc(o.pallet_count) + " PAL</span>" : "") +
@@ -460,7 +489,7 @@ function dashChipHtml(o, r, attrs, cls, dcolor) {
     // a soft tint of the driver's color with the solid color as the edge.
     var tint = dcolor || r.color;
     var edge = tint || "var(--ext)";
-    var appt = o.pick_appt || o.drop_appt;
+    var appt = hasAppt(o);
     return '<div class="chip xchip' + (tint ? " tinted" : "") + (appt ? " has-appt" : "") + (cls ? " " + cls : "") + '" style="--edge:' + edge +
       (tint ? ";background:color-mix(in srgb," + esc(tint) + " 17%,var(--panel))" : "") + '"' + (attrs || "") + ">" +
       (appt ? '<span class="appt-ind">APPT</span>' : "") + '<div class="who">' + esc(title) + "</div>" + meta + note + "</div>";
@@ -884,8 +913,9 @@ function sampleData(dates) {
     if (o.id === "o2") o.customer_map_url = "https://raw.githubusercontent.com/NateTooNice/storeimages/main/BM%20657.png";
   });
   orders.forEach(function (o) {
-    if (o.id === "o3") { o.pick_appt = { date: "", from: "07:00", to: "09:00" }; o.drop_appt = { date: "", from: "13:00", to: "" }; }
-    if (o.id === "o8") { o.drop_appt = { date: "", from: "10:30", to: "11:30" }; }
+    if (o.id === "o3") { o.pick_appt_text = "Thu 10/8 between 7 and 9 AM"; o.drop_appt_text = "1:00 PM sharp"; }
+    if (o.id === "o8") { o.drop_appt_text = "10:30-11:30 AM, call 30 min out"; }
+    if (o.id === "o20") o.route_mode = "custom";
   });
   var loads = plan.filter(function (x) { return dates[x[1]]; }).map(function (x, i) {
     return { id: "l" + i, truck_id: x[0], scheduled_date: dates[x[1]], slot: x[2], order_ids: [x[3]] };
@@ -898,7 +928,13 @@ function sampleData(dates) {
     .map(function (x) { return { truck_id: x[0], scheduled_date: dates[x[1]], slot: x[2], body: x[3], fmt: x[4] ? { fill: x[4] } : {}, cat_color: null }; });
   var off = [["t2", 3], ["t3", 4], ["t5", 3], ["t5", 4]].filter(function (x) { return dates[x[1]]; })
     .map(function (x) { return { truck_id: x[0], off_date: dates[x[1]] }; });
-  return { trucks: trucks, loads: loads, notes: notes, off_days: off, orders: orders, stops: [] };
+  // A multi-stop demo load (o20): one pick and two drops, each with typed appointment text.
+  var l20 = loads.filter(function (l) { return l.order_ids[0] === "o20"; })[0], stops = [];
+  if (l20) stops = [
+    { load_id: l20.id, sequence: 1, stop_type: "pickup", name: plant3.name, address: plant3.address, city: plant3.city, state: plant3.state, notes: "Mon 6:30 AM" },
+    { load_id: l20.id, sequence: 2, stop_type: "delivery", name: "Cascade Pavers Lot", address: "1800 SE 3rd St", city: "Bend", state: "OR", notes: "FCFS, ask for Dave" },
+    { load_id: l20.id, sequence: 3, stop_type: "delivery", name: "Mountain View Rock Co", address: "2200 NE 4th St", city: "Redmond", state: "OR", notes: "After 1 PM" }];
+  return { trucks: trucks, loads: loads, notes: notes, off_days: off, orders: orders, stops: stops };
 }
 
 render();

@@ -782,7 +782,7 @@ select.cell-i{cursor:pointer}
 .auto-tag{margin-left:6px;font-family:var(--mono);font-size:var(--fs-caption);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
 .stop-rows{display:flex;flex-direction:column;gap:8px}
 .stop-row{display:grid;grid-template-columns:120px minmax(0,1fr);gap:10px;align-items:center}
-.stop-rows.has-actions .stop-row{grid-template-columns:120px minmax(0,1fr) 76px}
+.stop-rows.has-actions .stop-row{grid-template-columns:96px minmax(0,1fr) auto}
 .stop-row .btn{width:100%;justify-content:center;text-align:center}
 .stop-lbl{font-family:var(--mono);font-size:var(--fs-caption);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
 .stop-new .loc-in{border-color:var(--focus)}
@@ -938,7 +938,8 @@ tr.selrow td{background:var(--focus-soft)}
 .loc-opt{padding:7px 10px;font-size:var(--fs-body-sm);cursor:pointer;border-bottom:1px solid var(--rule)}
 .loc-opt:last-child{border-bottom:none}
 .loc-opt:hover,.loc-opt.on{background:var(--panel-2)}
-.loc-opt .c{color:var(--ink-3);font-size:var(--fs-label)}
+.loc-opt .c{display:block;color:var(--ink-3);font-size:var(--fs-label);line-height:1.35;margin-top:1px}
+.loc-opt b{font-weight:650}
 .loc-opt.create{color:var(--brand);font-weight:600}
 tr.row-dead{opacity:.45}
 tr.row-dead .cell-i{color:var(--ink-3)}
@@ -1427,10 +1428,7 @@ body.nav-collapsed .nav-footer-btn>span:last-child{display:none}
 .appt-ind{position:absolute;top:3px;right:3px;font-family:var(--mono);font-size:8.5px;font-weight:700;letter-spacing:.06em;line-height:1.35;
   padding:0 4px;background:var(--panel);color:var(--ink);border:1.5px solid var(--ink);border-radius:0;white-space:nowrap}
 .chip.has-appt .who{padding-right:34px}
-.appt-fields{display:flex;gap:8px;flex-wrap:wrap}
-.appt-fields label{display:flex;flex-direction:column;gap:2px;font-size:var(--fs-caption);color:var(--ink-3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em}
-.appt-fields input{width:118px;font-family:var(--font);font-size:var(--fs-body-sm);letter-spacing:0;text-transform:none;color:var(--ink)}
-.appt-row .stop-lbl{align-self:end;padding-bottom:6px}
+.appt-row .stop-lbl{align-self:center}
 
 /* Every load chip: square corners and a hard outline in the text color
    (black in the light theme). The colored accent is a strip INSIDE that
@@ -1520,3 +1518,42 @@ th.tsortable:hover{color:var(--ink);background:var(--panel)}
 .rpt-meta{font-family:var(--mono);font-size:var(--fs-caption);color:var(--ink-3);margin:8px 0 4px}
 .rpt-tbl td.strong{font-weight:650}
 #modal.rpt-modal .modal-card{max-width:960px}
+
+/* Pickup / Drop rows in the side window */
+.stop-type{font:inherit;font-size:var(--fs-body-sm);padding:6px 8px;border:1px solid var(--rule-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);width:100%}
+.stop-acts{display:flex;gap:3px}
+.stop-acts .btn{width:auto;min-width:26px;padding:3px 7px}
+.appt-in{font:inherit;font-size:var(--fs-body-sm);padding:5px 9px;border:1px solid var(--rule);border-radius:var(--r-md);background:var(--panel);color:var(--ink);width:100%;min-width:0}
+.appt-in:focus{outline:none;border-color:var(--focus)}
+.appt-in::placeholder{color:var(--ink-3)}
+.stop-row.appt-row{margin-top:-4px;margin-bottom:4px}
+.stop-add{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+
+/* Pickup / Drop table in the side window */
+.route-wrap{border:1px solid var(--rule-2);border-radius:var(--r-md);overflow:visible}
+.route-tbl{table-layout:fixed;width:100%;border-collapse:separate}
+.route-tbl th{position:static;font-family:var(--mono);font-size:var(--fs-caption);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);font-weight:500}
+.route-tbl td{padding:0;vertical-align:top;border-bottom:1px solid var(--rule);border-right:1px solid var(--rule)}
+.route-tbl tr:last-child td{border-bottom:0}
+.route-tbl td:last-child,.route-tbl th:last-child{border-right:0}
+.route-tbl td.rowgut{vertical-align:top;padding-top:8px;font-family:var(--mono);font-size:var(--fs-label);color:var(--ink-3)}
+.route-tbl tr.rt-sel td{background:var(--brand-soft)}
+.route-tbl tr.rt-sel td.rowgut{background:var(--focus);color:var(--brand-ink)}
+.rt-type{padding:5px 6px!important}
+.rt-seg{display:flex;border:1px solid var(--rule-2);border-radius:var(--r-sm);overflow:hidden;background:var(--panel)}
+.rt-seg button{flex:1;border:0;background:none;color:var(--ink-2);font:inherit;font-size:var(--fs-label);padding:4px 0;cursor:pointer}
+.rt-seg button+button{border-left:1px solid var(--rule-2)}
+.rt-seg button.on{background:var(--brand-soft);color:var(--brand);font-weight:650}
+.rt-seg button:disabled{cursor:default}
+.rt-seg button:disabled:not(.on){opacity:.45}
+.route-tbl .loccombo .loc-in{border:0;border-radius:0;background:transparent;padding:7px 8px 2px;font-weight:600}
+.route-tbl .loccombo .loc-in:focus{outline:none;box-shadow:inset 0 0 0 2px var(--focus)}
+.route-tbl .loccombo .loc-in[data-suggested]{border:0;font-style:italic;font-weight:400}
+.rt-addr{padding:0 8px 7px;font-size:var(--fs-caption);color:var(--ink-3);line-height:1.35;overflow-wrap:anywhere}
+.route-tbl td.rt-appt .cell-i{border:0;border-radius:0;background:transparent;padding:7px 8px;width:100%;font-size:var(--fs-body-sm)}
+.route-tbl td.rt-appt .cell-i:focus{outline:none;box-shadow:inset 0 0 0 2px var(--focus)}
+.rt-tools{display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap}
+.rt-hint{font-size:var(--fs-label);color:var(--ink-3)}
+.route-tbl td.rt-drag{cursor:grab}
+.route-tbl tr.rt-dragging{opacity:.45}
+.route-tbl tr.rt-over td{box-shadow:inset 0 2px 0 var(--focus)}

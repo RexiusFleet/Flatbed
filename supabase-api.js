@@ -523,7 +523,19 @@ function pick(d, keys) {
 // Safety net: if the app's main data load doesn't include the appointment columns
 // (it lists orders' columns on the server), fetch just the orders that have an
 // appointment and merge them in.
-var APPT_FIELDS = ["pick_appt_date", "pick_appt_from", "pick_appt_to", "drop_appt_date", "drop_appt_from", "drop_appt_to"];
+// Same safety net for the external rate and backhaul columns: add them to the orders when the main load leaves them out.
+var RATE_FIELDS = ["backhaul", "external_rate", "external_rate_source", "external_rate_original"];
+function addRateColumns(d) {
+  var orders = d && d.orders;
+  if (!orders || !orders.length || RATE_FIELDS[0] in orders[0]) return d;
+  var q = "orders?select=id," + RATE_FIELDS.join(",") + "&or=(backhaul.eq.true,external_rate.not.is.null)";
+  return rest("GET", q).then(function (rows) {
+    var byId = {}; (rows || []).forEach(function (r) { byId[r.id] = r; });
+    orders.forEach(function (o) { var r = byId[o.id]; RATE_FIELDS.forEach(function (f) { o[f] = r ? r[f] : (f === "backhaul" ? false : null); }); });
+    return d;
+  }).catch(function () { return d; });
+}
+var APPT_FIELDS = ["pick_appt_text", "drop_appt_text"];
 function addApptColumns(d) {
   var orders = d && d.orders;
   if (!orders || !orders.length || APPT_FIELDS[0] in orders[0]) return d;
@@ -535,7 +547,7 @@ function addApptColumns(d) {
   }).catch(function () { return d; });
 }
 var ROUTES = {
-  "bootstrap": function () { return loadBootstrap().then(addApptColumns); },
+  "bootstrap": function () { return loadBootstrap().then(addApptColumns).then(addRateColumns); },
   "order": viaRpc("api_order_create"),
   "order/ingest": viaRpc("api_order_ingest"),
   "internal-order": viaRpc("api_internal_order_add"),
@@ -676,7 +688,7 @@ var ROUTES = {
   "truck/driver": viaRpc("api_truck_driver"),
   "location": function (d, route) {
     return rest("POST", "locations",
-      pick(d, ["name", "address", "city", "state", "phone", "appointment_note", "notes"]),
+      pick(d, ["name", "address", "city", "state", "postal_code", "phone", "appointment_note", "notes"]),
       histHeaders(route, d)).then(one);
   },
   "department": function (d, route) {

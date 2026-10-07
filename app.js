@@ -193,7 +193,6 @@ var ROWDRAG = null, ROWDRAG_MOVED = false, ROWSEL_SUPPRESS_CLICK = false;
    (not persisted, doesn't touch sort_order). {fieldId, dir} keyed by grid
    key; a grid with no entry renders in its stored/manual order. */
 var GRIDSORT = {};
-var ROUTE_DRAFT = null, ROUTE_DRAG = null;
 /* Set by addLocationModal(name, target) when it's opened from a loccombo's
    "+Create" instead of Pick/Drop List's own toolbar — {oid, field} to also
    assign onto once the location is saved, or null for a bare add. */
@@ -850,6 +849,8 @@ function gotoSec(sec, sub) { SEC = sec; SUB = sub; SEL = null; render(); }
    activates them. A selected spreadsheet range keeps Sheets behavior and is
    cleared through the undoable deleteSelection() path. */
 function contextualDelete() {
+  // A highlighted row in the side window's Pickup / Drop table.
+  if (typeof ROUTE_SEL !== "undefined" && ROUTE_SEL && DRAWER_OID && ROUTE_SEL.oid === DRAWER_OID) { routeDeleteSelected(); return true; }
   var focused = document.activeElement && document.activeElement.closest &&
     document.activeElement.closest("[data-delete-doc],[data-delrows],[data-orderdelrows]");
   if (focused && !focused.disabled) { focused.click(); return true; }
@@ -1279,39 +1280,27 @@ var CELLS = {};
    drop target that gets replaced. */
 function cellHasLoad(key) { return !!(CELLS[key] && CELLS[key].oid); }
 
-/* Appointment times: a date, a start time and an optional end time for each
-   pick and drop, saved on the order (pick_appt_* / drop_appt_*). They reach
-   drivers through Publish Schedule. */
-var APPT_COLS = { pick: ["pick_appt_date", "pick_appt_from", "pick_appt_to"], drop: ["drop_appt_date", "drop_appt_from", "drop_appt_to"] };
+/* Appointments are plain text now: whatever is typed under a pick or drop goes to the driver tab as typed.
+   A normal (one pick, one drop) order keeps them on the order (pick_appt_text / drop_appt_text); stops of a
+   multi-stop route keep theirs in the stop's own note. */
+var APPT_TEXT = { pick: "pick_appt_text", drop: "drop_appt_text" };
 function apptGet(oid, which) {
-  var o = order(oid); if (!o) return null;
-  var c = APPT_COLS[which];
-  var a = { date: o[c[0]] ? String(o[c[0]]).slice(0, 10) : "", from: o[c[1]] ? String(o[c[1]]).slice(0, 5) : "",
-            to: o[c[2]] ? String(o[c[2]]).slice(0, 5) : "" };
-  return a.date || a.from || a.to ? a : null;
+  var o = order(oid); if (!o) return "";
+  var t = o[APPT_TEXT[which]];
+  return t ? String(t) : "";
 }
-function apptSet(oid, which, val) {
-  var c = APPT_COLS[which], body = { id: oid };
-  body[c[0]] = (val && val.date) || ""; body[c[1]] = (val && val.from) || ""; body[c[2]] = (val && val.to) || "";
+function apptSet(oid, which, text) {
+  var body = { id: oid }; body[APPT_TEXT[which]] = text || "";
   return api("order/update", body).then(function (row) {
     var o = order(oid); if (o && row) for (var k in row) o[k] = row[k];
     return row;
   });
 }
-function apptHas(oid) { return !!(apptGet(oid, "pick") || apptGet(oid, "drop")); }
-function apptTime12(t) {
-  var m = /^(\d{1,2}):(\d{2})/.exec(t || "");
-  if (!m) return "";
-  var h = +m[1];
-  return (h % 12 || 12) + ":" + m[2] + " " + (h >= 12 ? "PM" : "AM");
-}
-// "MON 10/6 · 7:00–9:00 AM" (window) or "TUE 10/7 · 1:00 PM"; the date falls back to the load's day.
-function apptText(a, loadDay) {
-  var d = a.date || loadDay || "", day = "";
-  if (d) { var dt = new Date(d + "T12:00:00Z"); day = DOW[dt.getUTCDay()] + " " + (dt.getUTCMonth() + 1) + "/" + dt.getUTCDate(); }
-  var from = apptTime12(a.from), to = apptTime12(a.to), t = from || to;
-  if (from && to) t = from.slice(-2) === to.slice(-2) ? from.slice(0, -3) + "–" + to : from + "–" + to;
-  return [day, t].filter(Boolean).join(" · ");
+// Any appointment on this load, on the order or on one of its stops.
+function apptHas(oid) {
+  var o = order(oid);
+  if (apptGet(oid, "pick") || apptGet(oid, "drop")) return true;
+  return !!(o && o.route_mode === "custom" && orderStops(oid).some(function (s) { return s.notes; }));
 }
 /* Little notepad for the note line on external chips. */
 var NOTEPAD_ICON = '<svg class="notepad" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2h9v12h-9zM6 5.5h4M6 8h4M6 10.5h2.5"/></svg> ';
@@ -1346,6 +1335,7 @@ function buildChip(o) {
     nums = (o.broker_load_no || "no load #") + " / " + (o.rexius_order_no || "no order #");
     line = route + " · " + nums;
     if (o.tarp) flags.push("TARP");
+    if (o.backhaul) flags.push("BACKHAUL");   // dispatcher-only: never published to drivers or the bag plant
     if (o.notes) notes.push(o.notes);
   } else {
     title = o.customer_name || "(no customer)";
@@ -1999,31 +1989,6 @@ function schedBar(oid) {
     '<span style="font-size:var(--fs-label);color:var(--ink-3)">In the staging rail — not on the board yet.</span></div>';
   return '<div class="dw-sched">' + controls + "</div>";
 }
-/* Appointment fields under a pick or drop: date (blank = the load's day),
-   start time, optional end time for a window. */
-function apptRowHtml(oid, which, acts) {
-  var a = apptGet(oid, which) || {}, id = oid + "|" + which;
-  return '<div class="stop-row appt-row"><span class="stop-lbl">Appt</span><div class="appt-fields">' +
-    '<label><span>Date</span><input type="text" inputmode="numeric" data-smartdate data-appt="' + id + '|date" data-last-iso="' + esc(a.date || "") +
-      '" placeholder="Load day" value="' + esc(a.date ? isoToMdy(a.date) : "") + '"></label>' +
-    '<label><span>From</span><input type="time" step="300" data-appt="' + id + '|from" value="' + esc(a.from || "") + '"></label>' +
-    '<label><span>To (optional)</span><input type="time" step="300" data-appt="' + id + '|to" value="' + esc(a.to || "") + '"></label>' +
-    "</div>" + (acts ? "<span></span>" : "") + "</div>";
-}
-document.addEventListener("change", function (e) {
-  var el = e.target.closest && e.target.closest("[data-appt]");
-  if (!el) return;
-  var p = el.dataset.appt.split("|"), oid = p[0], which = p[1], field = p[2];
-  var cur = Object.assign({ date: "", from: "", to: "" }, apptGet(oid, which) || {});
-  var val = field === "date" ? (el.dataset.lastIso || "") : el.value;
-  if (cur[field] === val) return;
-  cur[field] = val;
-  apptSet(oid, which, cur).then(function () {
-    var found = schedValueForOrder(oid);
-    if (found) repaintCell(found.key);
-    refreshDrawerChipPreview();
-  }).catch(function (err) { toast(err.message, true); });
-});
 function openInternalOrder(o) {
   var ch = buildChip(o), ds = docsFor(o.id);
   var have = {}; ds.forEach(function (d) { have[d.doc_type] = 1; });
@@ -2210,13 +2175,13 @@ function renderLocSuggest(inp, force) {
       .filter(Boolean).join(" ").toLowerCase().indexOf(qv) >= 0;
   }).slice(0, 8);
   var html = matches.map(function (l) {
-    var sub = [l.address, [l.city, l.state].filter(Boolean).join(", ")].filter(Boolean).join(" · ");
-    return '<div class="loc-opt" data-locpick="' + l.id + '">' + esc(l.name) +
-      (sub ? ' <span class="c">' + esc(sub) + "</span>" : "") + "</div>";
+    var sub = routeAddr(l);
+    return '<div class="loc-opt" data-locpick="' + l.id + '"><b>' + esc(l.name) + "</b>" +
+      (sub ? '<span class="c">' + esc(sub) + "</span>" : "") + "</div>";
   }).join("");
   var exact = matches.some(function (l) { return (l.name || "").toLowerCase() === qv; });
   if (qv && !exact)
-    html += '<div class="loc-opt create" data-loccreate="' + esc(inp.value.trim()) + '">+ Create &ldquo;' +
+    html += '<div class="loc-opt create" data-loccreate="' + esc(inp.value.trim()) + '">+ Add New Location: &ldquo;' +
       esc(inp.value.trim()) + "&rdquo;</div>";
   panel.innerHTML = html;
   panel.style.display = html ? "block" : "none";
@@ -2241,13 +2206,13 @@ function handleLocPick(opt) {
     inp.value = l ? l.name : ""; inp.dataset.locid = opt.dataset.locpick;
     if (/^stop:/.test(field)) { drawerStopPick(oid, field, opt.dataset.locpick); return; }
     body[field] = opt.dataset.locpick;
-    api("order/update", body).then(reload).catch(function (e) { toast(e.message, true); });
+    api("order/update", body).then(reload).then(function () { if (DRAWER_OID === oid) routeReopen(oid); }).catch(function (e) { toast(e.message, true); });
   } else {
     // A real fill-out form, not a guessed comma-split (Nate: "add locations
     // to my pick and drop list right then and there") — same popup the
     // Pick/Drop List's own "+ Add Location" uses, just pre-named and wired
     // to finish this pick once saved.
-    addLocationModal(opt.dataset.loccreate.split(",")[0].trim(), { oid: oid, field: field });
+    addLocationModal(opt.dataset.loccreate, { oid: oid, field: field });
   }
 }
 
@@ -2389,12 +2354,17 @@ function openOrder(oid) {
     fld("broker_load_no", "Load #", o.broker_load_no, "") +
     fld("po_number", "PU / PO", o.po_number, "") +
     fld("delivery_number", "Delivery #", o.delivery_number, "") +
+    "<label>Rate</label>" + rateInputHtml(o, "") +
     fld("order_date", "Ordered", o.order_date && String(o.order_date).slice(0, 10), "", "date") +
     fld("delivery_date", "Delivered", o.delivery_date && String(o.delivery_date).slice(0, 10), "", "date") +
     fld("notes", "Private notes", o.notes, "Only you see this. It never goes to drivers.") +
-    "</div><label style=\"display:flex;align-items:center;gap:6px;font-size:var(--fs-body-sm);color:var(--ink-2);margin-top:8px\">" +
+    "</div><div style=\"display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:8px\">" +
+    "<label style=\"display:flex;align-items:center;gap:6px;font-size:var(--fs-body-sm);color:var(--ink-2)\">" +
     '<input type="checkbox" data-oedit="' + oid + '" data-field="tarp"' + (o.tarp ? " checked" : "") +
-    "> Tarp load</label></div>";
+    "> Tarp load</label>" +
+    "<label title=\"Only you see this. It never goes to drivers or the bag plant.\" style=\"display:flex;align-items:center;gap:6px;font-size:var(--fs-body-sm);color:var(--ink-2)\">" +
+    '<input type="checkbox" data-oedit="' + oid + '" data-field="backhaul"' + (o.backhaul ? " checked" : "") +
+    "> Backhaul</label></div></div>";
 
   /* Two notes, every order kind (D140): Notes above is dispatcher-private,
      never pushed. Driver tab note is the one thing that reaches the
@@ -2407,51 +2377,8 @@ function openOrder(oid) {
   /* Pickup / Delivery (D42) — type-ahead against the Pick/Drop List, pre-filled
      from the rate con when it extracted something. */
   var sug = rateConSuggest(oid);
-  var prefilled = (!o.pickup_location_id && sug.pickup) || (!o.delivery_location_id && sug.delivery);
-  h += '<div><div class="sec-h">Pickup / Drop</div>';
   var routeLocked = !!(o.delivery_date || o.billed_date);
-  if (o.route_mode === "custom" && routeLocked) {
-    h += '<div class="route-summary"><b>' + esc(routeCompactLabel(o)) + '</b>' +
-      orderStops(oid).map(function (s) { return '<span><strong>' + s.sequence + ' ' +
-        (s.stop_type === "pickup" ? "PICK" : "DROP") + '</strong> ' + esc(routeStopLabel(s)) + '</span>'; }).join("") +
-      '</div><button class="btn" data-route-edit="' + oid + '" style="margin-top:8px">Stop Details…</button>';
-  } else {
-    /* Every stop is its own Pick/Drop search box. A normal load is one pick
-       and one drop saved straight onto the order; + Add Pick / + Add Drop
-       turns it into a multi-stop route the moment the new stop gets a
-       location, and removing back down to one of each makes it normal again. */
-    var drafting = !!(STOP_DRAFT && STOP_DRAFT.oid === oid), acts = o.route_mode === "custom" || drafting;
-    h += '<div class="stop-rows' + (acts ? " has-actions" : "") + '">';
-    if (o.route_mode === "custom") {
-      var cnt = { pickup: 0, delivery: 0 }, tot = routeCounts(oid);
-      orderStops(oid).forEach(function (st, i) {
-        cnt[st.stop_type]++;
-        var last = tot[st.stop_type] <= 1;
-        h += '<div class="stop-row"><span class="stop-lbl">' + (st.stop_type === "pickup" ? "Pick " : "Drop ") + cnt[st.stop_type] + "</span>" +
-          locCombo(oid, "stop:" + i, st.location_id, null) +
-          '<button class="btn" data-stop-remove="' + i + '"' + (last ? ' disabled title="A route needs at least one pick and one drop"' : "") + ">Remove</button></div>";
-      });
-    } else {
-      var pad = acts ? "<span></span>" : "";
-      h += '<div class="stop-row"><span class="stop-lbl">Pickup</span>' + locCombo(oid, "pickup_location_id", o.pickup_location_id, sug.pickup) + pad + "</div>" +
-        apptRowHtml(oid, "pick", acts) +
-        '<div class="stop-row"><span class="stop-lbl">Drop</span>' + locCombo(oid, "delivery_location_id", o.delivery_location_id, sug.delivery) + pad + "</div>" +
-        apptRowHtml(oid, "drop", acts);
-    }
-    if (drafting) {
-      var n = (o.route_mode === "custom" ? routeCounts(oid)[STOP_DRAFT.type] : 1) + 1;
-      h += '<div class="stop-row stop-new"><span class="stop-lbl">' + (STOP_DRAFT.type === "pickup" ? "Pick " : "Drop ") + n + "</span>" +
-        locCombo(oid, "stop:new", null, null) + '<button class="btn" data-stop-cancel>Cancel</button></div>';
-    }
-    h += "</div>" +
-      (prefilled ? '<div class="note-bar" style="margin-top:7px">Prefilled from the rate con — confirm each or pick from the list.</div>' : "") +
-      ((sug.stops || []).filter(function (s) { return s.stop_type === "pickup"; }).length > 1 ||
-       (sug.stops || []).filter(function (s) { return s.stop_type === "delivery"; }).length > 1
-        ? '<div class="note-bar" style="margin-top:7px"><b>Possible multi-stop route detected.</b> Add the extra picks or drops below.</div>' : "") +
-      '<div class="stop-add">' + (routeLocked ? "" : '<button class="btn" data-stop-add="pickup">+ Add Pick</button><button class="btn" data-stop-add="delivery">+ Add Drop</button>') +
-      '<span style="flex:1"></span><button class="btn" data-route-edit="' + oid + '">Stop Details…</button></div>';
-  }
-  h += "</div>";
+  h += '<div><div class="sec-h">Pickup / Drop</div>' + routeSectionHtml(o, sug, routeLocked) + "</div>";
 
   // What the driver sent in (notes, POD/BOL scans), right above Documents.
   h += driverNotesHtml(o.id) + driverScansHtml(o.id);
@@ -2505,6 +2432,33 @@ function driverNotesHtml(oid) {
       d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) + "</span></div>" + esc(n.text) + "</div>";
   }).join("") + "</div></div>";
 }
+/* External rate: what the broker pays for the order. Typed as dollars ("1850", "$1,850.50"); saves as typed
+   (source "typed"). The rate con's own number, when it has been read, stays in external_rate_original. */
+function rateText(v) {
+  var n = v === null || v === undefined || v === "" ? null : Number(v);
+  return n === null || isNaN(n) ? "" : "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function rateInputHtml(o, cls) {
+  var orig = o.external_rate_original != null && o.external_rate_original !== "" && Number(o.external_rate_original) !== Number(o.external_rate);
+  return '<input' + (cls ? ' class="' + cls + '"' : "") + ' type="text" inputmode="decimal" data-rate="' + o.id + '" placeholder="$0.00" value="' + esc(rateText(o.external_rate)) + '"' +
+    (orig ? ' title="Rate con said ' + esc(rateText(o.external_rate_original)) + '"' : "") + ">";
+}
+document.addEventListener("change", function (e) {
+  var el = e.target.closest && e.target.closest("[data-rate]"); if (!el) return;
+  var oid = el.dataset.rate, o = order(oid); if (!o) return;
+  var t = String(el.value || "").replace(/[$,\s]/g, ""), n = t === "" ? null : Number(t);
+  if (n !== null && (isNaN(n) || n < 0)) { toast("Rate must be a dollar amount, like 1850 or $1,850.50", true); el.value = rateText(o.external_rate); return; }
+  if (n !== null) n = Math.round(n * 100) / 100;
+  var prev = o.external_rate === null || o.external_rate === undefined || o.external_rate === "" ? null : Number(o.external_rate);
+  if (prev === n) { el.value = rateText(n); return; }
+  api("order/update", { id: oid, external_rate: n === null ? "" : n, external_rate_source: n === null ? "" : "typed" }).then(function (row) {
+    if (row) for (var k in row) o[k] = row[k];
+    [].forEach.call(document.querySelectorAll('[data-rate="' + oid + '"]'), function (x) { x.value = rateText(o.external_rate); });
+    histPush("edit rate",
+      function () { return api("order/update", { id: oid, external_rate: prev === null ? "" : prev, external_rate_source: prev === null ? "" : "typed" }).then(function (r2) { if (r2) for (var k2 in r2) o[k2] = r2[k2]; render(); }); },
+      function () { return api("order/update", { id: oid, external_rate: n === null ? "" : n, external_rate_source: n === null ? "" : "typed" }).then(function (r3) { if (r3) for (var k3 in r3) o[k3] = r3[k3]; render(); }); });
+  }).catch(function (err) { toast(err.message, true); el.value = rateText(o.external_rate); });
+});
 function fld(name, label, val, ph, type) {
   // Every date field in the app is a smart date input now (D152) — same
   // typing behavior everywhere, not just Reports/Current Week.
@@ -2532,7 +2486,7 @@ function setDrawerHtml(h) {
 }
 function closeDrawer() {
   $("#drawer").classList.remove("on"); $("#scrim").classList.remove("on");
-  $("#drawer").setAttribute("aria-hidden", "true"); DRAWER_OID = null; DRAWER_SHOWN = null;
+  $("#drawer").setAttribute("aria-hidden", "true"); DRAWER_OID = null; DRAWER_SHOWN = null; ROUTE_SEL = null;
 }
 function packageDocs(oid) {
   var o = order(oid), ds = docsFor(oid);
@@ -3162,11 +3116,20 @@ function dvChip(o, v, truck, day) {
              color: dept && dept.color && dept.color.charAt(0) === "#" ? dept.color : null };
   }
   if (isExt(o)) {
-    var pick = dvPlace(locById(o.pickup_location_id)), drop = dvPlace(locById(o.delivery_location_id));
-    var pa = apptGet(o.id, "pick"), da = apptGet(o.id, "drop");
-    var tag = function (a) { return a && (a.from || a.to || a.date) ? ' <span class="appt">APPT ' + esc(apptText(a, day)) + "</span>" : ""; };
-    return { html: ["<b>Broker/Customer:</b> " + esc(o.broker_name || "—"), "",
-        "<b>PICK:</b> " + esc(pick) + tag(pa), "", "<b>DROP:</b> " + esc(drop) + tag(da)].join("\n"),
+    var tag = function (t) { return t ? ' <span class="appt">APPT ' + esc(t) + "</span>" : ""; };
+    var lines = ["<b>Broker/Customer:</b> " + esc(o.broker_name || "—")];
+    var cs = o.route_mode === "custom" ? orderStops(o.id) : null;
+    if (cs && cs.length) {
+      var nPick = cs.filter(function (s) { return s.stop_type === "pickup"; }).length, nDrop = cs.length - nPick, cp = 0, cd = 0;
+      cs.forEach(function (s) {
+        var isP = s.stop_type === "pickup", n = isP ? ++cp : ++cd, tot = isP ? nPick : nDrop;
+        lines.push("", "<b>" + (isP ? "PICK" : "DROP") + (tot > 1 ? " " + n : "") + ":</b> " + esc(dvPlace(locById(s.location_id))) + tag(s.notes));
+      });
+    } else {
+      lines.push("", "<b>PICK:</b> " + esc(dvPlace(locById(o.pickup_location_id))) + tag(apptGet(o.id, "pick")),
+        "", "<b>DROP:</b> " + esc(dvPlace(locById(o.delivery_location_id))) + tag(apptGet(o.id, "drop")));
+    }
+    return { html: lines.join("\n"),
       color: truck && truck.driver_color ? dvLighten(truck.driver_color) : null };
   }
   var loc = o.customer_party_id ? locFor(o.customer_party_id) : null;
@@ -3393,7 +3356,13 @@ function canStageOrder(o, on) {
 function canCancelOrder(o) {
   return o.stage !== "cancelled" && !o.delivery_date && !o.billed_date;
 }
-function canDeleteOrder(o) { return !o.delivery_date && !o.billed_date; }
+/* What can be deleted: internal freight, always. A bag order, unless it has an order number and is delivered.
+   An external order, unless it is billed. Those that cannot be deleted stay on file under Delivered / Billed. */
+function canDeleteOrder(o) {
+  if (o.is_transfer) return true;
+  if (o.kind === "internal") return !(o.rexius_order_no && o.delivery_date);
+  return !o.billed_date;
+}
 function trackerOpenTh() {
   return '<th class="tracker-open-col"><span class="tracker-open-head" role="img" aria-label="Open order panel" title="Open order panel">' +
     icon("orderPanel") + "</span></th>";
@@ -3466,6 +3435,7 @@ function tsortValue(o, key) {
     case "broker": return o.broker_name || (o.broker_party_id && party(o.broker_party_id) ? party(o.broker_party_id).name : "") || "";
     case "po": return o.po_number || "";
     case "delnum": return o.delivery_number || "";
+    case "rate": return o.external_rate == null || o.external_rate === "" ? null : Number(o.external_rate);
     case "notes": return o.notes || "";
     case "tarp": return o.tarp ? 1 : 0;
     case "pickup": return loc(o.pickup_location_id);
@@ -3556,6 +3526,7 @@ function extOrderRowHtml(o, i, pm) {
       '<input class="cell-i n" data-oedit="' + o.id + '" data-field="po_number" value="' + esc(o.po_number || "") + '">') + '</div></td>' +
     '<td><div class="cell">' + (customRoute ? '<span class="n">' + esc((lastDrop && lastDrop.reference_number) || "") + '</span>' :
       '<input class="cell-i n" data-oedit="' + o.id + '" data-field="delivery_number" value="' + esc(o.delivery_number || "") + '">') + '</div></td>' +
+    '<td><div class="cell">' + rateInputHtml(o, "cell-i n") + '</div></td>' +
     '<td><div class="cell"><input class="cell-i" data-oedit="' + o.id + '" data-field="notes" value="' +
       esc(o.notes || "") + '"></div></td>' +
     '<td><div class="cell" style="text-align:center"><input type="checkbox" data-oedit="' + o.id +
@@ -3570,7 +3541,7 @@ function extOrderRowHtml(o, i, pm) {
     dateOeditCell(o.id, "delivery_date", o.delivery_date && String(o.delivery_date).slice(0, 10)) +
     '<td><div class="cell n">' + nd + "</div></td></tr>";
 }
-var EXT_TRACKER_COLS = 15;  // keep in sync with vOrders' <thead> — colspan for the Billed toggle row
+var EXT_TRACKER_COLS = 16;  // keep in sync with vOrders' <thead> — colspan for the Billed toggle row
 function vOrders(kind) {
   var pm = placement();
   var rows = orders().filter(function (o) {
@@ -3584,13 +3555,13 @@ function vOrders(kind) {
     primary: '<button class="btn pri sm orders-primary-btn" id="new-order">+ New Order</button>'
   });
   h += '<div class="drop" id="rc-drop" style="margin-bottom:10px"><b>Drop a rate con here</b></div>';
-  h += '<div class="grid-wrap tracker-scroll"><table class="data order-tracker external-tracker" style="width:1948px"><thead><tr>' +
+  h += '<div class="grid-wrap tracker-scroll"><table class="data order-tracker external-tracker" style="width:2048px"><thead><tr>' +
     trackerSelTh("ext") +
     trackerOpenTh() +
     '<th class="order-actions-col" style="width:220px">Status / Stage</th>' +
     tsortTh("ext", "order", "Order #", 120) + tsortTh("ext", "load", "Load #", 96) +
     tsortTh("ext", "broker", "Broker/Customer", 190) + tsortTh("ext", "po", "PU/PO", 100) +
-    tsortTh("ext", "delnum", "Delivery #", 100) + tsortTh("ext", "notes", "Notes / Appointment info", 200) +
+    tsortTh("ext", "delnum", "Delivery #", 100) + tsortTh("ext", "rate", "Rate", 100) + tsortTh("ext", "notes", "Private notes", 200) +
     tsortTh("ext", "tarp", "Tarp", 56) +
     tsortTh("ext", "pickup", "Pickup Address", 180) + tsortTh("ext", "drop", "Drop Address", 180) +
     tsortTh("ext", "ordered", "Ordered", 112) + tsortTh("ext", "delivered", "Delivered", 112) +
@@ -5523,175 +5494,187 @@ function openModal(html) {
   m.innerHTML = '<div class="modal-card">' + html + "</div>";
   m.classList.add("on"); $("#scrim").classList.add("on");
 }
-function captureRouteDraft() {
-  if (!ROUTE_DRAFT) return;
-  $$("#modal [data-route-index]").forEach(function (row) {
-    var s = ROUTE_DRAFT.stops[+row.dataset.routeIndex]; if (!s) return;
-    var get = function (key) { var el = row.querySelector('[data-route-field="' + key + '"]'); return el; };
-    s.stop_type = get("stop_type").value;
-    s.location_id = get("location_id").value || null;
-    s.reference_number = get("reference_number").value.trim();
-    s.scheduled_at = get("scheduled_at").value || null;
-    s.appointment_required = get("appointment_required").checked;
-    s.pallet_count = get("pallet_count").value;
-    s.notes = get("notes").value.trim();
-  });
-}
-/* Drawer Pickup / Drop: add or remove picks/drops inline (no Full Route
-   popup needed). STOP_DRAFT is a stop row added in the drawer that's still
-   waiting for its location; nothing saves until a location is picked. */
-var STOP_DRAFT = null;
+/* ── Pickup / Drop in the side window ─────────────────────────────────────
+   A small spreadsheet: one numbered row per stop. Column 1 is the number (click it to select the row, then
+   press Delete), column 2 a Pick | Drop toggle, column 3 the Pick/Drop List search (name, with the full
+   address under it), column 4 a free-text appointment. Every order opens with a Pick on top (locked) and a
+   Drop under it; "+ Add Stop" adds a Drop row that can be flipped to a Pick. Every edit saves right away. */
+var ROUTE_SEL = null;   // { oid, i }: the highlighted row
 function drawerRouteStops(o) {
-  return o.route_mode === "custom" ? orderStops(o.id).map(function (s) { return Object.assign({}, s); }) : [
-    { stop_type: "pickup", location_id: o.pickup_location_id, reference_number: o.po_number },
-    { stop_type: "delivery", location_id: o.delivery_location_id, reference_number: o.delivery_number }
+  if (o.route_mode === "custom") return orderStops(o.id).map(function (s) {
+    return { stop_type: s.stop_type, location_id: s.location_id, reference_number: s.reference_number || "", appt: s.notes || "",
+      scheduled_at: s.scheduled_at, appointment_required: s.appointment_required, pallet_count: s.pallet_count };
+  });
+  return [
+    { stop_type: "pickup", location_id: o.pickup_location_id, reference_number: o.po_number || "", appt: o.pick_appt_text || "" },
+    { stop_type: "delivery", location_id: o.delivery_location_id, reference_number: o.delivery_number || "", appt: o.drop_appt_text || "" }
   ];
 }
-function saveDrawerRoute(oid, stops) {
+function routeValid(stops) {
+  return stops.length >= 2 && stops[0].stop_type === "pickup" && stops.some(function (s) { return s.stop_type === "delivery"; });
+}
+// Full address on one line: street, city, state and ZIP.
+function routeAddr(l) {
+  if (!l) return "";
+  var cs = [l.city, l.state].filter(Boolean).join(", ");
+  return [l.address, [cs, l.postal_code].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+}
+function routeSectionHtml(o, sug, locked) {
+  var oid = o.id, stops = drawerRouteStops(o), custom = o.route_mode === "custom";
+  // Delivered/billed multi-stop routes are read-only (the database protects history). A normal order stays editable.
+  if (locked && custom) {
+    return '<div class="route-summary">' + stops.map(function (s, i) {
+      var l = s.location_id ? locById(s.location_id) : null;
+      return '<span><strong>' + (i + 1) + " " + (s.stop_type === "pickup" ? "PICK" : "DROP") + "</strong> " + esc(l ? l.name : "— location needed —") +
+        (l && routeAddr(l) ? ", " + esc(routeAddr(l)) : "") + (s.appt ? ' · <i>' + esc(s.appt) + "</i>" : "") + "</span>"; }).join("") + "</div>";
+  }
+  var sel = ROUTE_SEL && ROUTE_SEL.oid === oid && ROUTE_SEL.i < stops.length ? ROUTE_SEL.i : null;
+  var prefilled = !custom && ((!o.pickup_location_id && sug.pickup) || (!o.delivery_location_id && sug.delivery));
+  var h = '<div class="grid-wrap route-wrap"><table class="data route-tbl"><thead><tr><th class="rowgut-h" style="width:34px">#</th>' +
+    '<th style="width:104px">Type</th><th>Pick / Drop</th><th style="width:30%">Appointment</th></tr></thead><tbody>';
+  stops.forEach(function (st, i) {
+    var l = st.location_id ? locById(st.location_id) : null, isP = st.stop_type === "pickup", lockType = i === 0 || locked;
+    var field = custom ? "stop:" + i : (i === 0 ? "pickup_location_id" : "delivery_location_id");
+    var suggest = custom ? null : (i === 0 ? sug.pickup : sug.delivery);
+    var canDrag = i >= 1 && !locked;
+    h += '<tr class="rt-row' + (sel === i ? " rt-sel" : "") + '" data-rtrow="' + i + '"><td class="rowgut' + (sel === i ? " on" : "") + (canDrag ? " rt-drag" : "") + '" data-rtsel="' + i + '"' +
+      (canDrag ? ' draggable="true" title="Click to select this row, drag to reorder"' : ' title="Click to select this row"') + ">" + (i + 1) + "</td>" +
+      '<td class="rt-type"><div class="rt-seg" role="group" aria-label="Stop ' + (i + 1) + ' type">' +
+        '<button type="button" class="' + (isP ? "on" : "") + '" data-routetype="' + i + '|pickup"' + (lockType ? " disabled" : "") + ">Pick</button>" +
+        '<button type="button" class="' + (!isP ? "on" : "") + '" data-routetype="' + i + '|delivery"' + (lockType ? " disabled" : "") + ">Drop</button></div></td>" +
+      '<td class="rt-loc">' + locCombo(oid, field, st.location_id, suggest) + (l && routeAddr(l) ? '<div class="rt-addr">' + esc(routeAddr(l)) + "</div>" : "") + "</td>" +
+      '<td class="rt-appt"><input class="cell-i" type="text" maxlength="120" data-stopappt="' + i + '" placeholder="e.g. 10/8 7-9 AM" value="' + esc(st.appt || "") + '"></td></tr>';
+  });
+  h += "</tbody></table></div>";
+  if (!locked) {
+    h += '<div class="rt-tools"><button class="btn sm" data-stop-add="1">+ Add Stop</button>' +
+      '<span class="rt-hint">' + (sel != null ? "Row " + (sel + 1) + " selected: press Delete to remove it" : "Drag a row number to reorder, or click it and press Delete") + "</span></div>";
+  } else {
+    h += '<div class="note-bar" style="margin-top:7px">This order is delivered or billed, so its route is locked: no extra stops. Open an order that is not delivered yet to add stops.</div>';
+  }
+  if (prefilled) h += '<div class="note-bar" style="margin-top:7px">Prefilled from the rate con — confirm each or pick from the list.</div>';
+  return h;
+}
+// Re-open the side window without losing the scroll position or where the cursor was (Tab after picking a
+// location lands in that row's Appt box and stays there, with anything already typed).
+function routeReopen(oid, focusSel) {
+  var body = document.querySelector("#drawer .dw-body"), top = body ? body.scrollTop : 0, keep = null;
+  var ae = document.activeElement;
+  if (ae && ae.closest && ae.closest("#drawer")) {
+    if (ae.getAttribute("data-stopappt") != null) keep = { sel: '[data-stopappt="' + ae.getAttribute("data-stopappt") + '"]', val: ae.value, pos: ae.selectionStart };
+    else if (ae.getAttribute("data-loccombo") != null) {
+      var m = /^stop:(\d+)$/.exec(ae.getAttribute("data-loccombo")), ri = m ? m[1] : (ae.getAttribute("data-loccombo") === "pickup_location_id" ? "0" : ae.getAttribute("data-loccombo") === "delivery_location_id" ? "1" : null);
+      if (ri != null) keep = { sel: '[data-stopappt="' + ri + '"]' };   // still in the location box: carry on to this row's Appt
+    }
+  }
+  openOrder(oid);
+  var nb = document.querySelector("#drawer .dw-body"); if (nb) nb.scrollTop = top;
+  var target = focusSel || (keep && keep.sel);
+  if (target) {
+    var el = document.querySelector(target);
+    if (el) {
+      el.focus({ preventScroll: true });
+      if (keep && keep.val != null && !focusSel) { el.value = keep.val; try { el.setSelectionRange(keep.pos, keep.pos); } catch (x) {} }
+    }
+  }
+}
+// Save a changed list of stops right away (every edit saves). sel = the row to keep highlighted afterwards.
+function routeApply(oid, stops, sel, focusSel) {
+  stops[0].stop_type = "pickup";
+  if (!routeValid(stops)) { toast("A route needs a Pick first and at least one Drop.", true); routeReopen(oid); return; }
+  ROUTE_SEL = sel == null ? null : { oid: oid, i: sel };
+  saveDrawerRoute(oid, stops, focusSel);
+}
+function saveDrawerRoute(oid, stops, focusSel) {
   var simple = stops.length === 2 && stops[0].stop_type === "pickup" && stops[1].stop_type === "delivery";
   var clean = stops.map(function (s) {
     return { stop_type: s.stop_type, location_id: s.location_id || null, reference_number: s.reference_number || "",
       scheduled_at: s.scheduled_at || null, appointment_required: !!s.appointment_required,
-      pallet_count: s.pallet_count == null ? "" : s.pallet_count, notes: s.notes || "" };
+      pallet_count: s.pallet_count == null ? "" : s.pallet_count, notes: simple ? "" : (s.appt || "") };
   });
-  var go = function () {
-    api("order/route", { order_id: oid, stops: clean, route_mode: simple ? "simple" : "custom" })
-      .then(function () { STOP_DRAFT = null; return reload(); })
-      .then(function () { openOrder(oid); toast(simple ? "Back to one pick and one drop" : "Route saved · " + routeCompactLabel(order(oid))); })
-      .catch(function (err) { toast(err.message, true); openOrder(oid); });
-  };
-  if (placement()[oid]) confirmModal("This order is already scheduled. Save the route and update the scheduled truck run too?", go, "Update Route");
-  else go();
+  api("order/route", { order_id: oid, stops: clean, route_mode: simple ? "simple" : "custom" })
+    .then(function () { return simple ? api("order/update", { id: oid, pick_appt_text: stops[0].appt || "", drop_appt_text: stops[1].appt || "" }) : null; })
+    .then(reload)
+    .then(function () { routeReopen(oid, focusSel); })
+    .catch(function (err) { toast(err.message, true); routeReopen(oid); });
 }
-// A location picked in one of the drawer's stop boxes ("stop:<index>" or the
-// new row, "stop:new").
+// A location picked in one of the stop boxes ("stop:<index>").
 function drawerStopPick(oid, field, locId) {
   var o = order(oid); if (!o) return;
-  var stops = drawerRouteStops(o);
-  if (field === "stop:new") {
-    if (!STOP_DRAFT) return;
-    var ns = { stop_type: STOP_DRAFT.type, location_id: locId };
-    if (ns.stop_type === "pickup") {
-      var at = 0; stops.forEach(function (s, i) { if (s.stop_type === "pickup") at = i + 1; });
-      stops.splice(at, 0, ns);                   // new picks go after the last pick
-    } else stops.push(ns);                       // new drops go last
-  } else {
-    var i = +field.split(":")[1]; if (!stops[i]) return;
-    stops[i].location_id = locId;
-  }
-  saveDrawerRoute(oid, stops);
+  var i = +field.split(":")[1], w = drawerRouteStops(o); if (!w[i]) return;
+  w[i].location_id = locId;
+  routeApply(oid, w, ROUTE_SEL && ROUTE_SEL.oid === oid ? ROUTE_SEL.i : null);
+}
+function routeDeleteSelected() {
+  var o = DRAWER_OID && order(DRAWER_OID); if (!o || !ROUTE_SEL || ROUTE_SEL.oid !== o.id) return;
+  var w = drawerRouteStops(o), i = ROUTE_SEL.i;
+  if (i < 1) { toast("The first row is always the Pick.", true); return; }
+  if (w.length <= 2) { toast("A route needs a Pick and a Drop, so the last two rows stay.", true); return; }
+  w.splice(i, 1); routeApply(o.id, w, null);
 }
 document.addEventListener("click", function (e) {
+  if (!DRAWER_OID) return;
+  var o = order(DRAWER_OID); if (!o) return;
+  var g = e.target.closest && e.target.closest("[data-rtsel]");
+  if (g) { var gi = +g.getAttribute("data-rtsel"); ROUTE_SEL = ROUTE_SEL && ROUTE_SEL.oid === o.id && ROUTE_SEL.i === gi ? null : { oid: o.id, i: gi }; routeReopen(o.id); return; }
   var add = e.target.closest && e.target.closest("[data-stop-add]");
-  if (add && DRAWER_OID) {
-    STOP_DRAFT = { oid: DRAWER_OID, type: add.getAttribute("data-stop-add") }; openOrder(DRAWER_OID);
-    var ni = document.querySelector('[data-loccombo="stop:new"]'); if (ni) ni.focus();
+  if (add) {
+    var w = drawerRouteStops(o); w.push({ stop_type: "delivery", location_id: null, reference_number: "", appt: "" });
+    routeApply(o.id, w, null, '[data-loccombo="stop:' + (w.length - 1) + '"]');
     return;
   }
-  if (e.target.closest && e.target.closest("[data-stop-cancel]")) { STOP_DRAFT = null; if (DRAWER_OID) openOrder(DRAWER_OID); return; }
-  var rm = e.target.closest && e.target.closest("[data-stop-remove]");
-  if (rm && DRAWER_OID && !rm.disabled) {
-    var o = order(DRAWER_OID), stops = drawerRouteStops(o);
-    stops.splice(+rm.getAttribute("data-stop-remove"), 1);
-    saveDrawerRoute(DRAWER_OID, stops);
+  var ty = e.target.closest && e.target.closest("[data-routetype]");
+  if (ty && !ty.disabled) {
+    var pr = ty.getAttribute("data-routetype").split("|"), w2 = drawerRouteStops(o);
+    if (w2[+pr[0]] && w2[+pr[0]].stop_type !== pr[1]) { w2[+pr[0]].stop_type = pr[1]; routeApply(o.id, w2, ROUTE_SEL && ROUTE_SEL.oid === o.id ? ROUTE_SEL.i : null); }
+    return;
   }
 });
-function routeEditorModal(oid, suppliedStops) {
-  var o = order(oid); if (!o) return;
-  if ((o.delivery_date || o.billed_date) && !suppliedStops) {
-    var lockedStops = orderStops(oid);
-    if (!lockedStops.length) lockedStops = [
-      { sequence: 1, stop_type: "pickup", location_id: o.pickup_location_id, reference_number: o.po_number },
-      { sequence: 2, stop_type: "delivery", location_id: o.delivery_location_id, reference_number: o.delivery_number }
-    ];
-    openModal('<div class="modal-hd"><h2>Route · ' + esc(o.rexius_order_no || o.broker_load_no || "order") + '</h2></div>' +
-      '<div class="modal-body"><div class="note-bar">Delivered and billed routes are read-only to protect history.</div>' +
-      '<div class="route-summary">' + lockedStops.map(function (s, i) {
-        return '<span><strong>' + (s.sequence || i + 1) + ' ' + (s.stop_type === "pickup" ? "PICK" : "DROP") + '</strong> ' +
-          esc(routeStopLabel(s)) + (s.reference_number ? ' · ' + esc(s.reference_number) : '') + '</span>';
-      }).join("") + '</div></div><div class="modal-ft"><button class="btn" id="modal-cancel">Close</button></div>');
-    $("#modal").classList.add("route-modal"); return;
+/* Drag a row number to move that stop (never above the first Pick). */
+var RT_DRAG = null;
+document.addEventListener("dragstart", function (e) {
+  var g = e.target.closest && e.target.closest("td.rt-drag[data-rtsel]"); if (!g || !DRAWER_OID) return;
+  RT_DRAG = { oid: DRAWER_OID, i: +g.getAttribute("data-rtsel") };
+  e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", "route-row"); } catch (x) {}
+  g.closest("tr").classList.add("rt-dragging");
+});
+document.addEventListener("dragover", function (e) {
+  if (!RT_DRAG) return;
+  var tr = e.target.closest && e.target.closest("tr[data-rtrow]"); if (!tr || +tr.getAttribute("data-rtrow") < 1) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = "move";
+  [].forEach.call(document.querySelectorAll(".rt-over"), function (x) { x.classList.remove("rt-over"); });
+  tr.classList.add("rt-over");
+});
+document.addEventListener("drop", function (e) {
+  if (!RT_DRAG) return;
+  var tr = e.target.closest && e.target.closest("tr[data-rtrow]"), d = RT_DRAG; RT_DRAG = null;
+  [].forEach.call(document.querySelectorAll(".rt-over,.rt-dragging"), function (x) { x.classList.remove("rt-over", "rt-dragging"); });
+  var o = order(d.oid); if (!tr || !o || d.oid !== DRAWER_OID) return;
+  var j = +tr.getAttribute("data-rtrow"), w = drawerRouteStops(o);
+  if (j < 1 || j === d.i || !w[d.i]) return;
+  e.preventDefault();
+  var moved = w.splice(d.i, 1)[0]; w.splice(j, 0, moved);
+  routeApply(d.oid, w, j);
+});
+document.addEventListener("dragend", function () {
+  RT_DRAG = null; [].forEach.call(document.querySelectorAll(".rt-over,.rt-dragging"), function (x) { x.classList.remove("rt-over", "rt-dragging"); });
+});
+document.addEventListener("change", function (e) {
+  if (!DRAWER_OID) return;
+  var o = order(DRAWER_OID); if (!o) return;
+  var ap = e.target.closest && e.target.closest("[data-stopappt]");
+  if (!ap) return;
+  var i = +ap.getAttribute("data-stopappt"), text = ap.value.trim();
+  if (o.route_mode !== "custom") {
+    apptSet(o.id, i === 0 ? "pick" : "drop", text).then(function () {
+      var found = schedValueForOrder(o.id); if (found) repaintCell(found.key);
+      refreshDrawerChipPreview();
+    }).catch(function (err) { toast(err.message, true); });
+    return;
   }
-  if (!suppliedStops) {
-    var current = o.route_mode === "custom" ? orderStops(oid) : [
-      { stop_type: "pickup", location_id: o.pickup_location_id, reference_number: o.po_number },
-      { stop_type: "delivery", location_id: o.delivery_location_id, reference_number: o.delivery_number }
-    ];
-    ROUTE_DRAFT = { orderId: oid, stops: current.map(function (s) { return Object.assign({}, s); }) };
-  }
-  var locations = (DB.locations || []).slice().sort(function (a, b) {
-    return String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
-  });
-  function locationOptions(selected) {
-    return '<option value="">— choose from Pick/Drop List —</option>' + locations.map(function (l) {
-      var label = [l.name, l.address, l.city, l.state].filter(Boolean).join(" · ");
-      return '<option value="' + l.id + '"' + (l.id === selected ? " selected" : "") + '>' + esc(label) + '</option>';
-    }).join("");
-  }
-  var cards = ROUTE_DRAFT.stops.map(function (s, i) {
-    var dt = s.scheduled_at ? String(s.scheduled_at).slice(0, 16) : "";
-    return '<section class="route-stop" data-route-index="' + i + '">' +
-      '<div class="route-stop-head"><span class="route-grip" draggable="true" title="Drag to reorder">⋮⋮</span>' +
-      '<b>Stop ' + (i + 1) + '</b><span style="flex:1"></span>' +
-      '<button class="btn sm bad" data-route-remove="' + i + '"' + (ROUTE_DRAFT.stops.length <= 2 ? " disabled" : "") + '>Remove</button></div>' +
-      '<div class="route-fields"><label class="mf"><span>Type</span><select data-route-field="stop_type">' +
-        '<option value="pickup"' + (s.stop_type === "pickup" ? " selected" : "") + '>Pickup</option>' +
-        '<option value="delivery"' + (s.stop_type === "delivery" ? " selected" : "") + '>Delivery</option></select></label>' +
-      '<label class="mf route-location"><span>Location</span><select data-route-field="location_id">' +
-        locationOptions(s.location_id) + '</select></label>' +
-      '<label class="mf"><span>PU/PO or Delivery #</span><input data-route-field="reference_number" value="' + esc(s.reference_number || "") + '"></label>' +
-      '<label class="mf"><span>Appointment</span><input type="datetime-local" data-route-field="scheduled_at" value="' + esc(dt) + '"></label>' +
-      '<label class="mf"><span>Pallets</span><input type="number" min="0" data-route-field="pallet_count" value="' + esc(s.pallet_count == null ? "" : s.pallet_count) + '"></label>' +
-      '<label class="mf route-notes"><span>Stop notes</span><input data-route-field="notes" value="' + esc(s.notes || "") + '"></label>' +
-      '<label class="mf chk"><input type="checkbox" data-route-field="appointment_required"' + (s.appointment_required ? " checked" : "") + '> <span>Appointment required</span></label>' +
-      '</div></section>';
-  }).join("");
-  openModal('<div class="modal-hd"><h2>Stop Details · ' + esc(o.rexius_order_no || o.broker_load_no || "new order") + '</h2></div>' +
-    '<div class="modal-body route-editor"><p class="route-help">Normal orders stay one pickup and one delivery. Add stops only for the exception.</p>' +
-    cards + '<div class="route-add"><button class="btn" data-route-add="pickup">+ Pickup</button>' +
-    '<button class="btn" data-route-add="delivery">+ Delivery</button></div></div>' +
-    '<div class="modal-ft">' + (o.route_mode === "custom" && ROUTE_DRAFT.stops.length === 2 &&
-      ROUTE_DRAFT.stops[0].stop_type === "pickup" && ROUTE_DRAFT.stops[1].stop_type === "delivery"
-      ? '<button class="btn" id="route-simple" style="margin-right:auto">Return To Simple Route</button>' : '') +
-      '<button class="btn" id="modal-cancel">Cancel</button><button class="btn pri" id="route-save">Save Route</button></div>');
-  $("#modal").classList.add("route-modal");
-  $$('[data-route-add]').forEach(function (b) { b.addEventListener("click", function () {
-    captureRouteDraft(); ROUTE_DRAFT.stops.push({ stop_type: b.dataset.routeAdd, location_id: null,
-      reference_number: "", scheduled_at: null, appointment_required: false, pallet_count: "", notes: "" });
-    routeEditorModal(oid, ROUTE_DRAFT.stops);
-  }); });
-  $$('[data-route-remove]').forEach(function (b) { b.addEventListener("click", function () {
-    captureRouteDraft(); ROUTE_DRAFT.stops.splice(+b.dataset.routeRemove, 1); routeEditorModal(oid, ROUTE_DRAFT.stops);
-  }); });
-  $$("#modal .route-grip").forEach(function (grip) {
-    grip.addEventListener("dragstart", function () { ROUTE_DRAG = +grip.closest("[data-route-index]").dataset.routeIndex; });
-  });
-  $$("#modal .route-stop").forEach(function (card) {
-    card.addEventListener("dragover", function (e) { if (ROUTE_DRAG != null) { e.preventDefault(); card.classList.add("over"); } });
-    card.addEventListener("dragleave", function () { card.classList.remove("over"); });
-    card.addEventListener("drop", function (e) {
-      e.preventDefault(); card.classList.remove("over"); captureRouteDraft();
-      var to = +card.dataset.routeIndex, moved = ROUTE_DRAFT.stops.splice(ROUTE_DRAG, 1)[0];
-      ROUTE_DRAFT.stops.splice(to, 0, moved); ROUTE_DRAG = null; routeEditorModal(oid, ROUTE_DRAFT.stops);
-    });
-  });
-  function saveRoute(mode) {
-    captureRouteDraft();
-    var save = function () {
-      api("order/route", { order_id: oid, stops: ROUTE_DRAFT.stops, route_mode: mode }).then(function () {
-        ROUTE_DRAFT = null; closeModal(); return reload();
-      }).then(function () { openOrder(oid); toast(mode === "simple" ? "Returned to simple route" : "Route saved"); })
-        .catch(function (err) {
-          toast(err.message, true);
-          if (!document.querySelector("#modal.on .route-editor")) routeEditorModal(oid, ROUTE_DRAFT.stops);
-        });
-    };
-    if (placement()[oid]) confirmModal("This order is already scheduled. Save the route and update the scheduled truck run too?", save, "Update route");
-    else save();
-  }
-  $("#route-save").addEventListener("click", function () { saveRoute("custom"); });
-  var simpleBtn = $("#route-simple"); if (simpleBtn) simpleBtn.addEventListener("click", function () { saveRoute("simple"); });
-}
+  var w4 = drawerRouteStops(o); if (!w4[i]) return; w4[i].appt = text;
+  routeApply(o.id, w4, ROUTE_SEL && ROUTE_SEL.oid === o.id ? ROUTE_SEL.i : null);
+});
 function closeModal() { var m = $("#modal"); if (m) m.classList.remove("on"); $("#scrim").classList.remove("on"); }
 /* Database sorting has two modes: clicking a column name sorts this browser's view only; Save Order
    (shown while a sort is active) makes that order the default for everyone who opens this database. */
@@ -5917,11 +5900,57 @@ function addCustomerModal(kind) {
    from the typed text). `target`, when given, is `{oid, field}` — after the
    location is created, `#modal-save-loc`'s handler also assigns it straight
    onto that order/field, so confirming the popup finishes the pick too. */
-function addLocationModal(prefillName, target) {
+/* Sorts whatever was typed into the right boxes of the Add Location form: the company name, the street
+   (anything that starts with a number), the city, the state and the ZIP. It reads from the right: a 5-digit
+   number is the ZIP, a state abbreviation just before it is the state, and the city is whatever follows the
+   street (the street ends at its street word: St, Ave, Rd, Hwy and so on, plus a highway number). It only
+   fills the boxes; everything stays editable. */
+var US_STATES = "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC".split(" ");
+var STREET_WORD = /^(st|street|ave|avenue|av|rd|road|hwy|highway|blvd|boulevard|way|dr|drive|ln|lane|ct|court|pkwy|parkway|pl|place|cir|circle|loop|trl|trail|sq|square|ter|terrace|rte|route|fwy|freeway|expy)\.?,?$/i;
+function parseLocationText(text) {
+  var out = { name: "", address: "", city: "", state: "", zip: "" };
+  var rest = String(text || "").replace(/\s+/g, " ").trim();
+  if (!rest) return out;
+  var m = /(?:^|[\s,])(\d{5})(?:-\d{4})?$/.exec(rest);
+  if (m) { out.zip = m[1]; rest = rest.slice(0, m.index).replace(/[\s,]+$/, ""); }
+  m = /(?:^|[\s,])([A-Za-z]{2})$/.exec(rest);
+  if (m && US_STATES.indexOf(m[1].toUpperCase()) >= 0 && (out.zip || /,/.test(rest) || /\d/.test(rest) || (m[1] === m[1].toUpperCase() && /\s/.test(rest)))) {
+    out.state = m[1].toUpperCase(); rest = rest.slice(0, m.index).replace(/[\s,]+$/, "");
+  }
+  var hasTail = !!(out.zip || out.state);
+  if (/,/.test(rest)) {
+    var parts = rest.split(",").map(function (x) { return x.trim(); }).filter(Boolean);
+    var ai = -1; parts.forEach(function (x, i) { if (ai < 0 && /^\d/.test(x)) ai = i; });
+    if (ai >= 0) {
+      out.name = parts.slice(0, ai).join(", "); out.address = parts[ai];
+      var after = parts.slice(ai + 1); if (after.length) out.city = after.join(", ");
+    } else if (hasTail && parts.length >= 2) { out.city = parts.pop(); out.name = parts.join(", "); }
+    else out.name = parts.join(", ");
+    return out;
+  }
+  var tok = rest.split(" "), ni = -1;
+  tok.forEach(function (x, i) { if (ni < 0 && /^\d+[A-Za-z]?$/.test(x) && i + 1 < tok.length + 1) ni = i; });
+  if (ni < 0) { if (hasTail && tok.length >= 2) { out.city = tok.pop(); } out.name = tok.join(" "); return out; }
+  var street = tok.slice(ni), end = -1;
+  for (var k = 1; k < street.length; k++) if (STREET_WORD.test(street[k])) { end = k; break; }
+  // A number in the middle of a name ("Rexius Plant 3") is not an address unless a street word or a ZIP/state follows.
+  if (ni > 0 && end < 0 && !hasTail) { out.name = tok.join(" "); return out; }
+  out.name = tok.slice(0, ni).join(" ");
+  if (end >= 0) {
+    var e2 = end;
+    if (street[e2 + 1] && /^(\d+|#\w+)$/.test(street[e2 + 1])) e2++;          // "Hwy 97"
+    out.address = street.slice(0, e2 + 1).join(" ");
+    if (street.length > e2 + 1) out.city = street.slice(e2 + 1).join(" ");
+  } else out.address = street.join(" ");
+  return out;
+}
+function addLocationModal(typedText, target) {
   MODAL_LOC_TARGET = target || null;
-  var body = mfield("name", "Company name", "text", { value: prefillName || "" }) +
-    mfield("address", "Address", "text") +
-    mfield("city", "City", "text") + mfield("state", "State", "text") +
+  var f = parseLocationText(typedText);
+  var body = mfield("name", "Company name", "text", { value: f.name }) +
+    mfield("address", "Address", "text", { value: f.address }) +
+    mfield("city", "City", "text", { value: f.city }) + mfield("state", "State", "text", { value: f.state }) +
+    mfield("postal_code", "ZIP", "text", { value: f.zip }) +
     mfield("phone", "Phone", "text") +
     mfield("appointment_note", "Appointment / dock hours", "text") +
     mfield("notes", "Notes", "text") + customFieldsHtml("pickdrop");
@@ -5929,6 +5958,9 @@ function addLocationModal(prefillName, target) {
     '<div class="modal-body">' + body + "</div>" +
     '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
     '<button class="btn pri" id="modal-save-loc">Add Location</button></div>');
+  // Put the cursor on the first box still empty so you can just keep typing.
+  var first = ["name", "address", "city", "state", "postal_code"].filter(function (k) { return !f[k === "postal_code" ? "zip" : k]; })[0] || "name";
+  setTimeout(function () { var el = document.querySelector('#modal [data-cf="' + first + '"]'); if (el) el.focus(); }, 0);
 }
 
 /* Add-truck popup (D57) — a fill-out window like the other Database grids,
@@ -6716,7 +6748,7 @@ function ingestRateCon(file) {
       } else {
         var multiDetected = (r.p.stops || []).filter(function (s) { return s.stop_type === "pickup"; }).length > 1 ||
           (r.p.stops || []).filter(function (s) { return s.stop_type === "delivery"; }).length > 1;
-        toast(multiDetected ? "Possible multi-stop route detected — use Edit full route to review it."
+        toast(multiDetected ? "Possible multi-stop route detected — open the order and use Add Multiple Drops."
           : r.ocrUsed
           ? "OCR read the scanned rate con (" + (r.p.source.join(", ") || "check the fields") + ")"
           : r.scanned
@@ -7131,7 +7163,7 @@ document.addEventListener("click", function (e) {
   if (!t) return;
   if (t.id === "scrim") { closeDrawer(); closeModal(); return; }
   if (t.id === "nav-scrim") { closeMobileNav(); return; }
-  if (t.dataset.routeEdit) { routeEditorModal(t.dataset.routeEdit); return; }
+  if (t.dataset.routeEdit) { openOrder(t.dataset.routeEdit); return; }   // the route is edited in the side window
   if (t.id === "dw-close") { closeDrawer(); return; }
   if (t.dataset.cwStep) {
     CW_DAYS = Math.max(1, Math.min(14, CW_DAYS + parseInt(t.dataset.cwStep, 10)));
@@ -7327,10 +7359,12 @@ document.addEventListener("click", function (e) {
     var odIds = odSel.filter(function (id) { var o = order(id); return o && canDeleteOrder(o); });
     var odSkipped = odSel.length - odIds.length;
     if (!odSel.length) { toast("Select rows first — click the numbers on the left", true); return; }
-    if (!odIds.length) { toast("Selected orders are locked (delivered/billed) and can't be deleted", true); return; }
+    if (!odIds.length) { toast("Those stay on file: billed external orders and delivered bag orders with an order number can't be deleted", true); return; }
+    var odDelivered = odIds.filter(function (id) { var o = order(id); return o && o.delivery_date; }).length;
     confirmModal("Permanently delete " + odIds.length + " order" + (odIds.length > 1 ? "s" : "") +
       "? Scheduler placement and attached documents are also deleted. This cannot be undone." +
-      (odSkipped ? " (" + odSkipped + " selected order" + (odSkipped > 1 ? "s are" : " is") + " locked and will be skipped.)" : ""),
+      (odDelivered ? " " + odDelivered + (odDelivered > 1 ? " of them are" : " of them is") + " already delivered." : "") +
+      (odSkipped ? " (" + odSkipped + " selected order" + (odSkipped > 1 ? "s stay" : " stays") + " on file because billed external orders and delivered bag orders with an order number can't be deleted.)" : ""),
       function () {
         Promise.all(odIds.map(function (id) {
           return api("order/delete", { id: id }).catch(function (err) { toast(err.message, true); });
