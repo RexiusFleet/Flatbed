@@ -786,6 +786,17 @@ document.addEventListener("click", function (e) {
     else $("#login-err").textContent = "That name isn't on the schedule. Pick it from the list.";
   }
 });
+// A tablet keeps a page alive for days. If it opened before anything was published (or hit an error),
+// look again when the page is brought back, but never replace a schedule that is already showing.
+// It also refreshes itself every 45 minutes (skipped while a driver is typing a note).
+var REFRESH_MS = 45 * 60 * 1000;
+function retryIfEmpty() {
+  if (DEMO || S.loading || S.noteKey) return;
+  if (!S.payload || !S.refreshedAt || Date.now() - S.refreshedAt.getTime() >= REFRESH_MS) { S.keepScroll = true; load(); }
+}
+document.addEventListener("visibilitychange", function () { if (!document.hidden) retryIfEmpty(); });
+window.addEventListener("pageshow", retryIfEmpty);
+setInterval(retryIfEmpty, 60000);
 document.addEventListener("input", function (e) {
   if (e.target.id === "login-driver") { $("#login-go").disabled = !e.target.value.trim(); $("#login-err").textContent = ""; }
 });
