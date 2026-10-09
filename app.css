@@ -1575,3 +1575,19 @@ th.tsortable:hover{color:var(--ink);background:var(--panel)}
 .route-tbl td.rt-drag{cursor:grab}
 .route-tbl tr.rt-dragging{opacity:.45}
 .route-tbl tr.rt-over td{box-shadow:inset 0 2px 0 var(--focus)}
+
+/* Rate con autofill tags (see afBadge in app.js): Auto = read from a labeled spot, Check = the reader guessed,
+   Not Found = the rate con did not have it. Clicking one means "I checked it". */
+.af{display:inline-flex;align-items:center;height:15px;margin-left:6px;padding:0 6px;border:1px solid;border-radius:8px;background:transparent;
+  font:700 var(--fs-caption)/1 var(--mono);letter-spacing:.04em;text-transform:uppercase;cursor:pointer;vertical-align:middle}
+.af:hover{background:var(--panel-2)}
+.af-ok{color:var(--good);border-color:color-mix(in srgb,var(--good) 55%,transparent)}
+.af-check{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 60%,transparent);background:color-mix(in srgb,var(--warn) 14%,transparent)}
+.af-missing{color:var(--ink-3);border-color:var(--rule-2);border-style:dashed}
+.rt-appt .af{display:flex;width:max-content;margin:3px 0 0}
+.rt-addr .af{margin:0 6px 0 0}
+
+/* Busy indicator in the header (busyStart in app.js) */
+.busy{display:inline-flex;align-items:center;gap:8px;margin-right:12px;font-size:var(--fs-label);color:var(--ink-2)}
+.spin{width:14px;height:14px;border:2px solid var(--rule-2);border-top-color:var(--brand);border-radius:50%;animation:spin .8s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}

@@ -536,6 +536,16 @@ function addRateColumns(d) {
     return d;
   }).catch(function () { return d; });
 }
+// ...and the rate con autofill markers.
+function addAutofillColumn(d) {
+  var orders = d && d.orders;
+  if (!orders || !orders.length || "autofill" in orders[0]) return d;
+  return rest("GET", "orders?select=id,autofill&autofill=not.is.null").then(function (rows) {
+    var byId = {}; (rows || []).forEach(function (r) { byId[r.id] = r.autofill; });
+    orders.forEach(function (o) { o.autofill = byId[o.id] || null; });
+    return d;
+  }).catch(function () { return d; });
+}
 var APPT_FIELDS = ["pick_appt_text", "drop_appt_text"];
 function addApptColumns(d) {
   var orders = d && d.orders;
@@ -548,7 +558,7 @@ function addApptColumns(d) {
   }).catch(function () { return d; });
 }
 var ROUTES = {
-  "bootstrap": function () { return loadBootstrap().then(addApptColumns).then(addRateColumns); },
+  "bootstrap": function () { return loadBootstrap().then(addApptColumns).then(addRateColumns).then(addAutofillColumn); },
   "order": viaRpc("api_order_create"),
   "order/ingest": viaRpc("api_order_ingest"),
   "internal-order": viaRpc("api_internal_order_add"),

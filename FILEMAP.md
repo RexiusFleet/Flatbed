@@ -71,6 +71,7 @@ and with their Refresh button.
 | `supabase-api.js` | Sign-in (shared login), the Supabase request helpers, the route table that turns `api("…")` calls into Supabase calls, document storage helpers, report CSV builder, History labels. | Adding a new kind of save/load, or changing how login works. |
 | `app.js` | The whole dashboard UI — about 10,700 lines, split into 13 labeled sections (see §3). | Almost any change to screens, buttons, behavior. |
 | `publish-schedule.js` | Builds the week (each driver tab + Current Week) that **Publish Schedule** saves for the driver and bag plant pages. Global `Dept12BuildSchedule`. Keep it matching `vDriverView`. | Changing the driver-tab layout. |
+| `ratecon-parser.js` | The rate con reader: `Dept12RateCon.parse(text, opts)` turns OCR text, a PDF text layer, or a pasted email into load #, PO, rate, broker, pickup, delivery (with appointment text), each marked `ok` or `check`. One handler per broker layout (Tradewinds, Nationwide, Aaron Wilson / Smokey Mountain, OpenRoad, Iosco, the ITS dispatch family, Oasis, Vanport, Inland, labeled-form brokers) plus a generic and an email reader. Runs in the browser and in node, so it can be tested on its own. | A new broker's rate cons read wrong: add or fix its handler. |
 | `app.css` | All styling (colors, spacing, fonts). Design tokens at the top (`--brand`, `--fs-…`). Also used by the driver and bag plant pages. | Anything visual. |
 | `driver/index.html`, `driver/driver.js`, `driver/driver.css`, `driver/scanner.js` | The driver page (`/driver/`): pick a name, Current Week + own tab, notes, POD/BOL scanner (`scanner.js`), "Seen by". Reads only the published schedule. Also try `/driver/?demo` for sample data. `driver.js` has its own copy of the chip rendering (`dvChip`/`dvPlace` in `app.js` is the dashboard's copy of the same view; keep both in step). | Anything drivers see. |
 | `bagplant/index.html` | The bag plant page (`/bagplant/`). Same `driver/driver.js`, switched to bag plant mode by `FLATBED_MODE`. Backhaul flags are hidden from it. | Rarely; look changes go in `driver.js`/`driver.css`. |
@@ -99,7 +100,7 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | Banner (search this) | What lives there | Key functions |
 |---|---|---|
 | `═══ 01-core` | Global state, helpers, preferences (theme, accent, font), sidebar navigation, keyboard shortcuts, order-number formatting. | `NAV` list (in 05), `renderSideNav`, `runShortcut`, `formatOrderNumber`, `canView`/`canEdit`, `toast` |
-| `═══ 02-chips-extract` | Lookups (`order()`, `party()`), what a **chip** says and what color it is, date helpers, **PDF text + OCR + rate-con parsing**, broker matching. | `buildChip`, `chipHtml`, `pushColorFor`, `cellHasLoad`, `parseRateCon`, `extractInvoiceInfo`, `ocrPdf`, `mergePdfs` |
+| `═══ 02-chips-extract` | Lookups (`order()`, `party()`), what a **chip** says and what color it is, date helpers, **PDF text + OCR + rate-con parsing** (`parseRateCon` wraps `ratecon-parser.js`), broker matching, and the **autofill tags** (`afApply`, `afBadge`, `afMatchLocation`). | `buildChip`, `chipHtml`, `pushColorFor`, `cellHasLoad`, `parseRateCon`, `extractInvoiceInfo`, `ocrPdf`, `mergePdfs` |
 | `═══ 03-drawer-billing` | The **order drawer** (the panel that slides in when you click a chip or row), pickup/delivery pickers, billing packages. | `openOrder` (external), `openInternalOrder` (bag), `openTransferOrder` (internal freight), `routeSectionHtml` (the Pickup/Drop table with Add Stop and drag reorder), `rateInputHtml` (External Rate), `locCombo`, `partyCombo`, `doPackage`, `billDone` |
 | `═══ 04-views` | **Every screen's layout**: Scheduler, Current Week, Driver Tabs, the three order trackers (sortable column headers via `tsortTh`), Billing, Database grids, custom sheets, Reports (dashboard tiles, pivot builder, saved/pinned reports: `RPT_SYSTEM`, `rptRun`, `rptDashHtml`, `rptWinOpen`). | `vScheduler`, `vCurrentWeek`, `vDriverView`, `vInternal`, `vInternalFreight`, `vOrders`, `vBilling`, `vDatabase`, `vSheet`, `vReports`, `toolbarHtml` |
 | `═══ 05-settings-nav-search` | Settings pages, the Staging rail, the **`render()` dispatcher** (decides which screen to draw), `reload()`, global search box, **Sync Mileage & Dates** and its review window. | `render`, `reload`, `vSettings`, `renderRail`, `renderSearch`, `NAV`, `runSyncAll`, `syncResultsModal` |
@@ -172,7 +173,10 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | A rule (numbering, locks, what can be moved) | Supabase → the matching `api_…` function (§4 lists which) |
 | A popup / form | `app.js` → `═══ 06-modals-grids` → `…Modal` |
 | Colors, spacing, fonts | `app.css` (tokens at the top) |
-| Rate-con / invoice reading | `app.js` → `═══ 02-chips-extract` → `parseRateCon`, `extractInvoiceInfo` |
+| Rate-con reading (what it fills, what it misses) | `ratecon-parser.js` (per-broker handlers), then `app.js` → `ingestRateCon`, `ingestParsed`, `afApply` |
+| The Auto / Check / Not Found tags in the side window | `app.js` → `afBadge`, `afGet`; saved in `orders.autofill` |
+| Paste Load Info | `app.js` → `pasteLoadModal`, `runPasteLoad` |
+| Invoice reading | `app.js` → `extractInvoiceInfo` |
 | Keyboard shortcuts | `app.js` → `═══ 01-core` → `BASE_SHORTCUTS`, `runShortcut` |
 | Sidebar menu items | `app.js` → `═══ 05-settings-nav-search` → `var NAV` |
 | What drivers and the bag plant see | `publish-schedule.js` (the data) and `driver/driver.js` (the look); keep `vDriverView` in `app.js` matching |

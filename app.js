@@ -1535,16 +1535,24 @@ function pdfPageImage(pdf, pageNum) {
       .then(function () { return canvas.toDataURL("image/png"); });
   });
 }
-function ocrPdf(b64, onProgress) {
+function ocrPdf(b64, onProgress, opts) {
+  opts = opts || {};
   if (!window.Tesseract || !window.pdfjsLib) return Promise.resolve("");
   return pdfjsLib.getDocument({ data: bytesFromB64(b64) }).promise.then(function (pdf) {
     return getOcrWorker().then(function (worker) {
-      var pages = []; for (var i = 1; i <= pdf.numPages; i++) pages.push(i);
+      var last = opts.maxPages ? Math.min(pdf.numPages, opts.maxPages) : pdf.numPages;
+      var pages = []; for (var i = 1; i <= last; i++) pages.push(i);
+      var finished = false;
       return pages.reduce(function (chain, n) {
         return chain.then(function (acc) {
-          if (onProgress) onProgress(n, pdf.numPages);
+          if (finished) return acc;
+          if (onProgress) onProgress(n, last);
           return pdfPageImage(pdf, n).then(function (dataUrl) {
-            return worker.recognize(dataUrl).then(function (r) { return acc + "\n" + (r.data.text || ""); });
+            return worker.recognize(dataUrl).then(function (r) {
+              var all = acc + "\n" + (r.data.text || "");
+              if (opts.enough && opts.enough(all)) finished = true;   // everything we need is already on the pages read
+              return all;
+            });
           });
         });
       }, Promise.resolve(""));
@@ -1623,163 +1631,38 @@ function matchBrokerForFile(text) {              // token coverage, threshold 0.
   });
   return best && bestScore >= 0.4 ? { broker: best, score: bestScore } : null;
 }
-/* parseRateCon — legacy :2404. Tightened against a set of 11 real broker
-   rate cons plus the existing Rosboro scan (D104-adjacent, 2026-08-17): a
-   strict label match is tried first for every term; "pro" gets a second,
-   looser colon-only pattern because carriers routinely render "Pro: 702229"
-   with no "#"/"No." marker for OCR to lose in the first place. "trip" was
-   entirely missing. Every captured token must contain at least one digit
-   (NUMTOK) — without that, a stray "Order Number" table header or "PO
-   Number:" label with no value on the same line gets captured as if IT were
-   the identifier (confirmed on two real fixtures). Numbers may carry a
-   comma (a real Trip # rendered "206,775") — stripped after capture so
-   load_no matching stays comma-free and consistent with the filename-digit
-   fallback below.
-   Tightened again (2026-09-18) against the 133 real rate cons already
-   matched by the D225 scanned-batch pipeline (the answer key: which order
-   each one really belongs to is already known) — two more label families
-   confirmed live and added ahead of "trip"/"order" so they win when a
-   document prints more than one number: Tradewinds' template always shows
-   "Trip #: 206,775" directly above "Freight Bill #: B179452" — Trip # is
-   the carrier's own scratch number, Freight Bill # is what actually gets
-   filed under broker_load_no, so it must win when both are present.
-   Nationwide's template splits "Our Billing #" from its value across a
-   flattened two-column table — OCR reads "Our Billing # :" then the
-   unrelated "Company :" label, THEN the real number — every one of ~26
-   real Nationwide fixtures showed this exact interleaving. */
-var NUMTOK = "(?=[A-Z0-9,\\-]*[0-9])([A-Z0-9][A-Z0-9,\\-]{2,})";
-var LOAD_PATS = [
-  new RegExp("freight\\s*bill\\s*(?:#|num(?:ber)?|no\\.?)\\s*:?\\s*" + NUMTOK, "i"),
-  new RegExp("our\\s*billing\\s*#?\\s*:?\\s*(?:company\\s*:?\\s*)?" + NUMTOK, "i"),
-  new RegExp("load\\s*(?:#|num(?:ber)?|no\\.?)\\s*:?\\s*" + NUMTOK, "i"),
-  new RegExp("trip\\s*(?:#|num(?:ber)?|no\\.?)\\s*:?\\s*" + NUMTOK, "i"),
-  new RegExp("order\\s*(?:#|num(?:ber)?|no\\.?)\\s*:?\\s*" + NUMTOK, "i"),
-  new RegExp("pro\\s*(?:#|num(?:ber)?|no\\.?)\\s*:?\\s*" + NUMTOK, "i"),
-  new RegExp("\\bpro\\s*:\\s*" + NUMTOK, "i"),
-  new RegExp("confirmation\\s*(?:#|num(?:ber)?|no\\.?)\\s*:?\\s*" + NUMTOK, "i"),
-  new RegExp("dispatch\\s*(?:#|num(?:ber)?|no\\.?)\\s*:?\\s*" + NUMTOK, "i"),
-  new RegExp("shipment\\s*(?:#|num(?:ber)?|no\\.?)\\s*:?\\s*" + NUMTOK, "i"),
-  new RegExp("ref(?:erence)?\\s*(?:#|num(?:ber)?|no\\.?)\\s*:?\\s*" + NUMTOK, "i")
-];
 var SOLOMON = /\d{2}-\d{4}-\d{4}/;              /* legacy tms Code.js:517, :876 */
 
-/* Tiered so dense boilerplate (rate-adjustment clauses, non-compete
-   penalties, weight/volume totals) can't out-rank the real total: a
-   confirmed real-fixture bug had "decrease the Agreed Rate by $100.00" beat
-   the actual $1,000.00 total because both matched a single generic
-   "rate...$" pattern and the first hit in the text always won. Each tier
-   here requires a "$" or "USD" marker except the final catch-all (which
-   keeps the original loose behavior as a last resort) — that's what keeps
-   "Total Weight 61,206" (no currency marker) from ever being mistaken for a
-   dollar amount, confirmed against the real Rosboro fixture. */
-var CUR = "(?:\\$|USD)\\s*";
-var RATE_PATS = [
-  new RegExp("\\btotal\\s*pay\\b\\D{0,15}" + CUR + "([0-9][0-9,]*\\.?[0-9]{0,2})", "i"),
-  new RegExp("\\bgrand\\s*total\\b\\D{0,15}" + CUR + "([0-9][0-9,]*\\.?[0-9]{0,2})", "i"),
-  new RegExp("\\bnet\\s*pay\\b\\D{0,15}" + CUR + "([0-9][0-9,]*\\.?[0-9]{0,2})", "i"),
-  new RegExp("\\btotal\\s*(?:cost|charges?|freight)\\b\\D{0,15}" + CUR + "([0-9][0-9,]*\\.?[0-9]{0,2})", "i"),
-  new RegExp("\\bagreed\\s*(?:rate|amount)\\D{0,15}" + CUR + "([0-9][0-9,]*\\.?[0-9]{0,2})", "i"),
-  new RegExp("\\btotal\\b\\D{0,15}" + CUR + "([0-9][0-9,]*\\.?[0-9]{0,2})", "i"),
-  /\b(?:rate|amount|linehaul|pay|flat)\D{0,12}\$?\s*([0-9][0-9,]*\.?[0-9]{0,2})/i
-];
-
+/* parseRateCon — reads a rate con (OCR text, a PDF text layer, or a pasted email) with the reader in
+   ratecon-parser.js, which knows each broker's layout, and returns the shape the rest of the app uses.
+     broker / broker_id   the matched customer or broker (only when it matches one on file)
+     load_no, solomon, po, rate
+     pickup, delivery     { name, address, city, state, zip, appt, conf }, conf "ok" or "check"
+     rc                   the reader's full answer: .family, .conf (per field), .missing, .stops */
 function parseRateCon(text, filename) {
-  var out = { broker: "", load_no: "", solomon: "", po: "", rate: null, source: [] };
-  for (var i = 0; i < LOAD_PATS.length; i++) {
-    var m = text.match(LOAD_PATS[i]);
-    if (m) { out.load_no = m[1].replace(/,/g, ""); out.source.push("load# from text"); break; }
+  var RC = window.Dept12RateCon;
+  var rc = RC.parse(text, { filename: filename, brokers: brokerList().map(function (b) { return b.name; }) });
+  var f = rc.fields;
+  var out = { broker: "", load_no: f.load_no || "", solomon: f.rexius_order_no || "", po: f.po || "",
+              rate: f.rate == null ? null : f.rate, source: [], rc: rc, family: rc.family };
+  if (f.broker) {
+    var exact = brokerList().filter(function (b) { return b.name === f.broker; })[0];
+    var hit = exact ? { broker: exact } : findBroker(f.broker);
+    if (hit && hit.broker) { out.broker = hit.broker.name; out.broker_id = hit.broker.id; out.broker_conf = exact ? rc.conf.broker : "check"; }
+    else out.broker_guess = f.broker;
   }
-  var sm = text.match(SOLOMON);
-  if (sm) { out.solomon = sm[0]; out.source.push("solomon# from text"); }
-  /* "Purchase Order" is a common spelled-out alias for "PO" across the ITS
-     Dispatch rate-con family (Bob Murray/Jenks/Witham) — missing it meant
-     the PO field silently stayed blank on real fixtures that never use the
-     literal letters "PO". (?![A-Za-z]) keeps bare "PO" from matching as a
-     prefix of an unrelated word — a confirmed real false-positive: an
-     address line reading "...PORTLAND OR, 97217" was being read as "PO" +
-     "RTLAND" and captured "RTLAND" as the PO number. The negative lookahead
-     separately skips "PO Box 872" (a mailing address, not a PO #) — the
-     original confirmed false-positive (D27); the engine just keeps scanning
-     for a genuine PO mention elsewhere in either case. */
-  var pm = text.match(/\b(?:PO|P\.O\.|Purchase\s*Order)(?![A-Za-z])\s*#?\s*[:\-]?\s*(?!BOX\b)(?=[A-Z0-9\-]*[0-9])([A-Z0-9\-]{3,})/i);
-  if (pm) { out.po = pm[1]; out.source.push("PO from text"); }
-  for (var r = 0; r < RATE_PATS.length; r++) {
-    var rm = text.match(RATE_PATS[r]);
-    if (rm) { out.rate = parseFloat(rm[1].replace(/,/g, "")); out.source.push("rate from text"); break; }
-  }
+  function shape(s) { return s ? { name: s.name, address: s.address, city: s.city, state: s.state, zip: s.zip, appt: s.appt, conf: s.conf } : null; }
+  out.pickup = shape(rc.pickup); out.delivery = shape(rc.delivery);
+  out.stops = rc.stops.map(function (s) { var x = shape(s); x.stop_type = s.type; return x; });
+  if (out.load_no) out.source.push("load #");
+  if (out.po) out.source.push("PO");
+  if (out.rate != null) out.source.push("rate");
+  if (out.broker) out.source.push("broker");
+  if (out.pickup) out.source.push("pickup");
+  if (out.delivery) out.source.push("delivery");
+  return out;
+}
 
-  /* Rank literal-name hits by where they occur, not by party-table array
-     order (found live, 2026-09-18, on a real fixture): a rate con almost
-     always mentions more than one real party by name — the broker's own
-     letterhead up top, then the actual pickup/delivery location further
-     down (e.g. a real "Clarkes Sheet Metal" pickup stop on a real Inland
-     Transport rate con) — and the old first-array-match logic picked
-     whichever party happened to sit earlier in DB.parties, ignoring which
-     one the document was actually FROM. The broker/sender name is reliably
-     the earliest such match in practice, so the earliest index wins. */
-  var hit = null, hitIdx = Infinity, lower = (text || "").toLowerCase();
-  brokerList().forEach(function (b) {
-    if (!b.name) return;
-    var idx = lower.indexOf(b.name.toLowerCase());
-    if (idx !== -1 && idx < hitIdx) { hitIdx = idx; hit = { broker: b, score: 1 }; }
-  });
-  if (hit) out.source.push("broker by name in text");
-  /* Scanned rate cons have no text layer at all — the filename is the only
-     signal left, and it measured better than text on the real fixture (D7). */
-  if (!hit && filename) { hit = matchBrokerForFile(filename); if (hit) out.source.push("broker from filename"); }
-  if (!hit && text) { hit = findBroker(text.slice(0, 400)); if (hit) out.source.push("broker fuzzy from text"); }
-  if (hit) out.broker = hit.broker.name;
-  if (!out.load_no && filename) {
-    var fm = filename.match(/\b(\d{5,9})\b/);
-    if (fm) { out.load_no = fm[1]; out.source.push("load# from filename"); }
-  }
-  /* Best-effort pickup/delivery from the body (D42). Rate cons vary wildly
-     and scanned ones are OCR-noisy, so this only pre-fills the confirm combo
-     — Nate always confirms/overrides. Anchors on the usual labels, grabs a
-     name-ish line and a "City, ST" near it. */
-  out.pickup = extractStop(text, ["shipper", "pick\\s*up", "pickup", "origin", "\\bPU\\b"]);
-  out.delivery = extractStop(text, ["consignee", "deliver(?:y|ery)?", "receiver", "drop", "destination", "\\bDEL\\b"]);
-  out.stops = extractAllStops(text);
-  if (out.pickup && (out.pickup.city || out.pickup.name)) out.source.push("pickup from text");
-  if (out.delivery && (out.delivery.city || out.delivery.name)) out.source.push("delivery from text");
-  return out;
-}
-/* Conservative multi-stop detector. It never changes an order automatically;
-   it only records possible repeated stop blocks so the drawer can tell Nate to
-   review the advanced route. That keeps noisy broker PDFs out of the normal
-   workflow while still surfacing the rare exception. */
-function extractAllStops(text) {
-  if (!text) return [];
-  var re = /\b(pick\s*up|pickup|shipper|origin|consignee|deliver(?:y|ery)?|receiver|drop(?:\s*off)?|destination)\b/ig;
-  var hits = [], m;
-  while ((m = re.exec(text)) && hits.length < 20) hits.push({ index: m.index, label: m[0] });
-  var out = [], seen = {};
-  hits.forEach(function (hit, i) {
-    var chunk = text.slice(hit.index, hits[i + 1] ? hits[i + 1].index : hit.index + 220);
-    var pickup = /^(pick\s*up|pickup|shipper|origin)$/i.test(hit.label.trim());
-    var parsed = extractStop(chunk, [pickup ? "pick\\s*up|pickup|shipper|origin" : "consignee|deliver(?:y|ery)?|receiver|drop(?:\\s*off)?|destination"]);
-    if (!parsed) return;
-    var key = (pickup ? "pickup" : "delivery") + "|" + (parsed.name || "").toLowerCase() + "|" + (parsed.city || "").toLowerCase();
-    if (seen[key]) return; seen[key] = true;
-    parsed.stop_type = pickup ? "pickup" : "delivery"; out.push(parsed);
-  });
-  return out;
-}
-function extractStop(text, labels) {
-  if (!text) return null;
-  var re = new RegExp("(?:" + labels.join("|") + ")", "i");
-  var m = re.exec(text);
-  if (!m) return null;
-  var chunk = text.slice(m.index, m.index + 180);
-  var cs = chunk.match(/([A-Za-z][A-Za-z .'\-]{2,30}),\s*([A-Z]{2})\b/); // "City, ST"
-  var after = chunk.slice(m[0].length).replace(/^[\s:;,\-]+/, "");
-  var nm = after.match(/([A-Z][A-Za-z0-9 &.'\-]{2,40})/);
-  var name = nm ? nm[1].replace(/\s+/g, " ").trim() : "";
-  var city = cs ? cs[1].replace(/\s+/g, " ").trim() : "";
-  var state = cs ? cs[2] : "";
-  if (!name && !city) return null;
-  return { name: name, city: city, state: state };
-}
 /* extractInvoiceInfo — legacy :1738, position-aware then regex fallback.
    Real invoice batches (D225's 326 already-matched fixtures, tested
    2026-09-18) are scanned/faxed pages with NO embedded text layer at
@@ -2124,6 +2007,126 @@ function resolveStopToLocationId(stop) {
   return api("location", { name: stop.name, city: stop.city || null, state: stop.state || null })
     .then(function (loc) { return loc.id; });
 }
+
+/* ── Rate con autofill markers ────────────────────────────────────────────
+   When a rate con (or pasted load info) fills an order, orders.autofill remembers each box it touched:
+     { broker_load_no: { s: "ok", v: "164792" }, external_rate: { s: "check", v: 500 }, po_number: { s: "missing" } }
+   s: ok = read from a labeled spot, check = a guess, missing = nothing found. v = what it filled in.
+   The side window puts a small tag on those boxes. A tag shows only while the box still holds v (or is still
+   empty, for "missing"), so changing the box removes it by itself; clicking the tag says "I checked it". */
+var AF_LABEL = { ok: "Auto", check: "Check", missing: "Not Found" };
+var AF_TIP = { ok: "Filled from the rate con. Click when you have checked it.",
+               check: "Filled from the rate con, but the reader was not sure. Check it, then click.",
+               missing: "The rate con did not have this. Click to dismiss." };
+function afNorm(x) {
+  if (x == null || x === "") return "";
+  var t = String(x).trim();
+  return t !== "" && !isNaN(Number(t)) ? String(Number(t)) : t;
+}
+function afGet(o, key) {
+  var a = o && o.autofill && o.autofill[key];
+  if (!a) return null;
+  if (a.s === "missing") return afNorm(o[key]) === "" ? a : null;
+  return afNorm(o[key]) === afNorm(a.v) ? a : null;
+}
+function afBadge(o, key) {
+  var a = afGet(o, key);
+  return a ? '<button type="button" class="af af-' + a.s + '" data-afdone="' + o.id + '|' + key + '" title="' + esc(AF_TIP[a.s]) + '">' + AF_LABEL[a.s] + "</button>" : "";
+}
+function afDone(oid, key) {
+  var o = order(oid); if (!o || !o.autofill) return;
+  var next = Object.assign({}, o.autofill); delete next[key];
+  var body = { id: oid, autofill: Object.keys(next).length ? next : null };
+  o.autofill = body.autofill;
+  api("order/update", body).catch(function () { /* the tag is cosmetic: keep going */ });
+  var d = DRAWER_OID === oid ? order(oid) : null;
+  if (d) openOrder(oid);
+}
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("[data-afdone]"); if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  var parts = b.getAttribute("data-afdone").split("|");
+  afDone(parts[0], parts[1]);
+}, true);
+
+// Street number + first street word, so "4227 W 6TH AVE" and "4227 West 6th Avenue" agree.
+function afStreetKey(a) {
+  var m = /^(\d{1,6})(?:-\d+)?\s+(?:(?:N|S|E|W|NE|NW|SE|SW|NORTH|SOUTH|EAST|WEST)\.?\s+)?([A-Za-z0-9]+)/i.exec(String(a || "").trim());
+  return m ? m[1] + "|" + m[2].toLowerCase() : "";
+}
+function afNameTokens(n) {
+  return String(n || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(function (w) {
+    return w && !/^(inc|llc|co|corp|company|the|of|and|ltd)$/.test(w);
+  });
+}
+// An existing Pick/Drop List entry for a parsed stop: same street address first, then same name in the same city.
+function afMatchLocation(s) {
+  var locs = DB.locations || [], key = afStreetKey(s.address), city = String(s.city || "").toLowerCase(), hit;
+  if (key) {
+    hit = locs.filter(function (l) { return afStreetKey(l.address) === key && (!city || !l.city || String(l.city).toLowerCase() === city); })[0];
+    if (hit) return { id: hit.id, by: "address" };
+  }
+  var t = afNameTokens(s.name);
+  if (!t.length) return null;
+  hit = locs.filter(function (l) {
+    var lt = afNameTokens(l.name); if (!lt.length) return false;
+    if (city && l.city && String(l.city).toLowerCase() !== city) return false;
+    var inter = t.filter(function (w) { return lt.indexOf(w) !== -1; }).length;
+    return inter === t.length || inter === lt.length;
+  })[0];
+  return hit ? { id: hit.id, by: "name" } : null;
+}
+// -> { id, conf } for a parsed stop: an existing location, or a new one when the reader was sure of it; else null.
+function afResolveStop(s) {
+  if (!s || !(s.name || s.address)) return Promise.resolve(null);
+  var m = afMatchLocation(s);
+  if (m) return Promise.resolve({ id: m.id, conf: s.conf === "ok" || m.by === "address" ? "ok" : "check" });
+  if (s.conf !== "ok" || !s.name || !s.city) return Promise.resolve(null);
+  return api("location", { name: s.name, address: s.address || null, city: s.city, state: s.state || null, postal_code: s.zip || null })
+    .then(function (loc) { return { id: loc.id, conf: "check" }; });
+}
+/* Fill the blank boxes of an order from a parsed rate con and remember what was touched. Boxes that already
+   hold something are never changed. Returns the updated order and counts for the toast. */
+function afApply(o, p) {
+  var rc = p.rc, c = rc.conf, body = {}, flags = Object.assign({}, o.autofill || {}), n = { ok: 0, check: 0, missing: 0 };
+  function mark(key, state, v) { flags[key] = state === "missing" ? { s: "missing" } : { s: state, v: v }; n[state]++; }
+  var created = o._match === "created";
+  function simple(key, val, conf, quiet) {
+    if (o[key] != null && o[key] !== "") {
+      // the new order was just created from these very values: tag them too
+      if (created && val != null && val !== "" && afNorm(o[key]) === afNorm(val)) mark(key, conf || "ok", val);
+      return;
+    }
+    if (val == null || val === "") { if (!quiet) mark(key, "missing"); return; }
+    body[key] = val; mark(key, conf || "ok", val);
+  }
+  simple("broker_load_no", p.load_no, c.load_no);
+  simple("po_number", p.po, c.po);
+  simple("rexius_order_no", p.solomon, "ok", true);   // rate cons never carry it, so no "not found" tag
+  if (created && o.broker_party_id && p.broker_id && o.broker_party_id === p.broker_id) mark("broker_party_id", p.broker_conf || "check", p.broker_id);
+  else if (!(o.broker_party_id)) { if (p.broker_id) { body.broker_party_id = p.broker_id; mark("broker_party_id", p.broker_conf || "check", p.broker_id); } else mark("broker_party_id", "missing"); }
+  if (o.external_rate == null || o.external_rate === "") {
+    if (p.rate == null) mark("external_rate", "missing");
+    else {
+      body.external_rate = p.rate; body.external_rate_source = "rate_con"; body.external_rate_original = p.rate;
+      mark("external_rate", p.rate > 3000 || p.rate < 150 ? "check" : (c.rate || "ok"), p.rate);
+    }
+  }
+  var work = [];
+  [["pickup", "pickup_location_id", "pick_appt_text"], ["delivery", "delivery_location_id", "drop_appt_text"]].forEach(function (k) {
+    var stop = p[k[0]];
+    if (!o[k[1]]) {
+      work.push(afResolveStop(stop).then(function (r) {
+        if (r) { body[k[1]] = r.id; mark(k[1], r.conf, r.id); } else mark(k[1], "missing");
+      }).catch(function () { mark(k[1], "missing"); }));
+    }
+    if (stop && stop.appt && !o[k[2]]) { body[k[2]] = stop.appt; mark(k[2], "check", stop.appt); }
+  });
+  return Promise.all(work).then(function () {
+    body.id = o.id; body.autofill = flags;
+    return api("order/update", body);
+  }).then(function (row) { return { o: Object.assign(o, row || {}), n: n }; });
+}
 function locCombo(oid, field, currentId, suggest) {
   var cur = currentId ? locById(currentId) : null;
   var val = cur ? cur.name : (suggest ? [suggest.name, suggest.city].filter(Boolean).join(", ") : "");
@@ -2356,12 +2359,12 @@ function openOrder(oid) {
     h += '<div class="note-bar"><b>Needs a Rexius order number</b> — can\'t bill out without it.</div>';
 
   h += '<div><div class="sec-h">Order</div><div class="fields">' +
-    "<label>Broker</label>" + partyCombo(oid, "broker_party_id", o.broker_party_id, "Search brokers") +
+    "<label>Broker" + afBadge(o, "broker_party_id") + "</label>" + partyCombo(oid, "broker_party_id", o.broker_party_id, "Search brokers") +
     fld("rexius_order_no", "Order #", o.rexius_order_no, externalOrderPlaceholder()) +
     fld("broker_load_no", "Load #", o.broker_load_no, "") +
     fld("po_number", "PU / PO", o.po_number, "") +
     fld("delivery_number", "Delivery #", o.delivery_number, "") +
-    "<label>Rate</label>" + rateInputHtml(o, "") +
+    "<label>Rate" + afBadge(o, "external_rate") + "</label>" + rateInputHtml(o, "") +
     fld("order_date", "Ordered", o.order_date && String(o.order_date).slice(0, 10), "", "date") +
     fld("delivery_date", "Delivered", o.delivery_date && String(o.delivery_date).slice(0, 10), "", "date") +
     fld("notes", "Private notes", o.notes, "Only you see this. It never goes to drivers.") +
@@ -2474,7 +2477,8 @@ function fld(name, label, val, ph, type) {
       '" type="text" inputmode="numeric" data-smartdate data-last-iso="' + esc(val || "") +
       '" value="' + esc(isoToMdy(val)) + '" placeholder="MM/DD/YYYY">';
   }
-  return "<label>" + esc(label) + '</label><input data-of="' + name + '" type="' + (type || "text") +
+  var o = DRAWER_OID ? order(DRAWER_OID) : null;
+  return "<label>" + esc(label) + (o ? afBadge(o, name) : "") + '</label><input data-of="' + name + '" type="' + (type || "text") +
     '" value="' + esc(val == null ? "" : val) + '" placeholder="' + esc(ph || "") + '">';
 }
 /* Like fld() but saves via /api/freight (D38/D103) instead of /api/order. */
@@ -3593,12 +3597,13 @@ function vOrders(kind) {
   }).sort(externalOrderCompare);
   var liveRows = rows.filter(function (o) { return !o.billed_date; });
   var billedRows = rows.filter(function (o) { return o.billed_date; });
+  if (!OCR_WORKER && window.Tesseract) setTimeout(function () { getOcrWorker().catch(function () {}); }, 1500);   // load the OCR engine now so the first rate con doesn't wait for it
   var h = toolbarHtml("External Orders", {
     className: "orders-toolbar", context: yearPicker(),
     secondary: ordersToolbarExtras() + trackerBulkButtonsHtml("ext"),
     primary: '<button class="btn pri sm orders-primary-btn" id="new-order">+ New Order</button>'
   });
-  h += '<div class="drop" id="rc-drop" style="margin-bottom:10px"><b>Drop a rate con here</b></div>';
+  h += '<div class="drop" id="rc-drop" style="margin-bottom:10px"><b>Drop a rate con here</b> or click to upload or paste</div>';
   h += '<div class="grid-wrap tracker-scroll"><table class="data order-tracker external-tracker" style="width:2048px"><thead><tr>' +
     trackerSelTh("ext") +
     trackerOpenTh() +
@@ -5586,8 +5591,11 @@ function routeSectionHtml(o, sug, locked) {
       '<td class="rt-type"><div class="rt-seg" role="group" aria-label="Stop ' + (i + 1) + ' type">' +
         '<button type="button" class="' + (isP ? "on" : "") + '" data-routetype="' + i + '|pickup"' + (lockType ? " disabled" : "") + ">Pick</button>" +
         '<button type="button" class="' + (!isP ? "on" : "") + '" data-routetype="' + i + '|delivery"' + (lockType ? " disabled" : "") + ">Drop</button></div></td>" +
-      '<td class="rt-loc">' + locCombo(oid, field, st.location_id, suggest) + (l && routeAddr(l) ? '<div class="rt-addr">' + esc(routeAddr(l)) + "</div>" : "") + "</td>" +
-      '<td class="rt-appt"><input class="cell-i" type="text" maxlength="120" data-stopappt="' + i + '" placeholder="e.g. 10/8 7-9 AM" value="' + esc(st.appt || "") + '"></td></tr>';
+      '<td class="rt-loc">' + locCombo(oid, field, st.location_id, suggest) +
+        (function () { var b = custom ? "" : afBadge(o, i === 0 ? "pickup_location_id" : "delivery_location_id");
+          return l && routeAddr(l) || b ? '<div class="rt-addr">' + b + (l && routeAddr(l) ? esc(routeAddr(l)) : "") + "</div>" : ""; })() + "</td>" +
+      '<td class="rt-appt"><input class="cell-i" type="text" maxlength="120" data-stopappt="' + i + '" placeholder="e.g. 10/8 7-9 AM" value="' + esc(st.appt || "") + '">' +
+        (custom ? "" : afBadge(o, i === 0 ? "pick_appt_text" : "drop_appt_text")) + "</td></tr>";
   });
   h += "</tbody></table></div>";
   if (!locked) {
@@ -6744,64 +6752,109 @@ document.addEventListener("keydown", function (e) {
 
 /* ── Rate con → order ────────────────────────────────────────────────────── */
 function ingestRateCon(file) {
-  toast("Reading rate con…");
+  busyStart("Reading rate con…");
   return fileB64(file).then(function (b64) {
     return pdfText(b64).then(function (text) {
       var thin = text.replace(/\s/g, "").length < 40;
       var ocrUsed = false;
       var textReady = !thin ? Promise.resolve(text) : ocrPdf(b64, function (n, total) {
-        toast("OCR page " + n + " of " + total + "…");
-      }).then(function (ocrText) {
+        busyStart("Reading rate con, page " + n + " of " + total + "…");
+      }, { maxPages: 3, enough: rateConComplete }).then(function (ocrText) {
         if (ocrText.replace(/\s/g, "").length >= 20) { ocrUsed = true; return ocrText; }
         return text; // OCR found nothing usable — fall through to filename matching
       });
       return textReady.then(function (finalText) {
         var p = parseRateCon(finalText, file.name);
         var scanned = finalText.replace(/\s/g, "").length < 40;
-        return api("order/ingest", {
-          kind: "external", broker_name: p.broker, broker_load_no: p.load_no,
-          rexius_order_no: p.solomon, po_number: p.po, filename: file.name,
-          notes: p.rate ? "Rate con rate: $" + p.rate.toFixed(2) : ""
-        }).then(function (o) {
+        return ingestParsed(p, file.name).then(function (r) {
           return api("document", {
-            order_id: o.id, doc_type: "rate_con", filename: file.name, b64: b64,
+            order_id: r.o.id, doc_type: "rate_con", filename: file.name, b64: b64,
             extracted_fields: p, matched_by: scanned ? "filename" : "document_text"
-          }).then(function () { return { o: o, p: p, scanned: scanned, ocrUsed: ocrUsed }; });
+          }).then(function () { return { o: r.o, p: p, n: r.n, scanned: scanned, ocrUsed: ocrUsed }; });
         });
       });
     });
   }).then(function (r) {
-    // Fill in a genuinely BLANK pickup/delivery from what the rate con
-    // extracted, adding it to the Pick/Drop List along the way — never
-    // touches a field the order already has real data in.
-    return Promise.all([
-      !r.o.pickup_location_id ? resolveStopToLocationId(r.p.pickup) : Promise.resolve(null),
-      !r.o.delivery_location_id ? resolveStopToLocationId(r.p.delivery) : Promise.resolve(null)
-    ]).then(function (ids) {
-      var body = {};
-      if (ids[0]) body.pickup_location_id = ids[0];
-      if (ids[1]) body.delivery_location_id = ids[1];
-      return Object.keys(body).length ? api("order/update", Object.assign({ id: r.o.id }, body)) : null;
-    }).then(function () { return r; });
-  }).then(function (r) {
+    busyStart("Saving order…");
     return reload().then(function () {
+      busyEnd();
       openOrder(r.o.id);
       if (r.o._match && r.o._match !== "created") {
         toast("Matched to existing order " + (r.o.rexius_order_no || r.o.broker_load_no || "") +
-          " (" + r.o._match.replace("_", " ") + ") — rate con attached.");
+          " (" + r.o._match.replace("_", " ") + ") — rate con attached. " + afSummary(r.n));
       } else {
-        var multiDetected = (r.p.stops || []).filter(function (s) { return s.stop_type === "pickup"; }).length > 1 ||
-          (r.p.stops || []).filter(function (s) { return s.stop_type === "delivery"; }).length > 1;
-        toast(multiDetected ? "Possible multi-stop route detected — open the order and use Add Multiple Drops."
-          : r.ocrUsed
-          ? "OCR read the scanned rate con (" + (r.p.source.join(", ") || "check the fields") + ")"
-          : r.scanned
-            ? "Scanned rate con — OCR found nothing usable, matched on filename. Check the fields."
-            : "Order created from rate con (" + (r.p.source.join(", ") || "nothing matched") + ")");
+        toast((r.scanned ? "Scanned rate con — OCR found nothing usable. " : r.ocrUsed ? "OCR read the scanned rate con. " : "Order created from rate con. ") + afSummary(r.n));
       }
     });
-  }).catch(function (e) { toast("Rate con failed: " + e.message, true); });
+  }).catch(function (e) { busyEnd(); toast("Rate con failed: " + e.message, true); });
 }
+/* A spinner with a label in the header while something slow runs, so a long read never looks like it silently failed. */
+function busyStart(label) {
+  var b = $("#busy");
+  if (!b) { var r = $(".hdr-right"); if (!r) return; b = document.createElement("span"); b.id = "busy"; b.className = "busy"; r.insertBefore(b, r.firstChild); }
+  b.innerHTML = '<span class="spin" aria-hidden="true"></span><span class="busy-t">' + esc(label) + "</span>";
+  b.setAttribute("role", "status"); b.style.display = "";
+}
+function busyEnd() { var b = $("#busy"); if (b) b.style.display = "none"; }
+// The reader has what an order needs (a load number or PO, the rate, and both stops): no need to read more pages.
+function rateConComplete(text) {
+  var r = window.Dept12RateCon.parse(text, {}), f = r.fields;
+  return !!((f.load_no || f.po) && f.rate != null && r.pickup && r.delivery && r.pickup.city && r.delivery.city);
+}
+// One line for the toast: how many boxes were filled with confidence, how many need a look, how many were not found.
+function afSummary(n) {
+  var bits = [];
+  if (n.ok) bits.push(n.ok + " filled");
+  if (n.check) bits.push(n.check + " to check");
+  if (n.missing) bits.push(n.missing + " not found");
+  return bits.length ? bits.join(", ") + " — tags are on the boxes." : "";
+}
+// Create (or match) the order for a parsed rate con / pasted load info, then fill what it can.
+function ingestParsed(p, filename) {
+  return api("order/ingest", {
+    kind: "external", broker_name: p.broker, broker_load_no: p.load_no,
+    rexius_order_no: p.solomon, po_number: p.po, filename: filename || ""
+  }).then(function (o) { return afApply(o, p).then(function (r) { r.o._match = o._match; return r; }); });
+}
+
+/* Paste Load Info — most loads arrive as an email, not a PDF. Paste the email (or any text with the load on it);
+   it goes through the same reader and fills an order the same way, with the same tags. */
+function pasteLoadModal() {
+  openModal('<div class="modal-hd"><h2>Paste Load Info</h2></div><div class="modal-body">' +
+    '<p style="font-size:var(--fs-label);color:var(--ink-3);margin-bottom:8px">Paste the email or text for the load. It fills a new order, and every box it fills gets a tag so you can check it.</p>' +
+    '<textarea id="paste-load-text" rows="12" style="width:100%" placeholder="Paste here"></textarea></div>' +
+    '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
+    '<button class="btn pri" id="paste-load-go">Read It</button></div>');
+  setTimeout(function () { var t = $("#paste-load-text"); if (t) t.focus(); }, 0);
+}
+function runPasteLoad() {
+  var ta = $("#paste-load-text"), text = ta ? ta.value : "";
+  if (text.replace(/\s/g, "").length < 20) { toast("Paste the load info first.", true); return; }
+  var p = parseRateCon(text, "");
+  if (!p.load_no && !p.po && p.rate == null && !p.pickup && !p.delivery) { toast("Could not find any load info in that text.", true); return; }
+  closeModal();
+  busyStart("Reading load info…");
+  ingestParsed(p, "").then(function (r) {
+    return reload().then(function () {
+      busyEnd();
+      openOrder(r.o.id);
+      toast((r.o._match && r.o._match !== "created" ? "Matched to existing order " + (r.o.rexius_order_no || r.o.broker_load_no || "") + ". " : "Order created from pasted text. ") + afSummary(r.n));
+    });
+  }).catch(function (e) { busyEnd(); toast("Paste failed: " + e.message, true); });
+}
+// Clicking the rate con box asks how: upload a file or paste text.
+function rateConChooseModal() {
+  openModal('<div class="modal-hd"><h2>Add a Rate Con</h2></div><div class="modal-body">' +
+    '<div style="display:flex;gap:10px"><button class="btn pri" id="rc-choose-upload" style="flex:1;padding:16px 10px">Upload a File</button>' +
+    '<button class="btn" id="rc-choose-paste" style="flex:1;padding:16px 10px">Paste Text</button></div>' +
+    '<p style="font-size:var(--fs-label);color:var(--ink-3);margin-top:10px">Upload reads a PDF rate con. Paste reads an email or any text with the load on it. You can also drop a PDF on the box.</p></div>' +
+    '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button></div>');
+}
+document.addEventListener("click", function (e) {
+  if (e.target.closest("#rc-choose-upload")) { closeModal(); $("#file-ratecon").click(); return; }
+  if (e.target.closest("#rc-choose-paste")) { closeModal(); pasteLoadModal(); return; }
+  if (e.target.closest("#paste-load-go")) runPasteLoad();
+});
 
 /* A loose document (POD, BOL, single invoice, etc.) — extract just enough to
    match it to an existing order (D7), else it lands in the unmatched queue
@@ -10352,7 +10405,7 @@ document.addEventListener("keydown", function (e) {
 document.addEventListener("click", function (e) {
   var z = e.target.closest("#rc-drop,#batch-drop,#dw-drop,#loose-drop");
   if (!z) return;
-  if (z.id === "rc-drop") $("#file-ratecon").click();
+  if (z.id === "rc-drop") rateConChooseModal();
   else if (z.id === "batch-drop") $("#file-batch").click();
   else if (z.id === "loose-drop") $("#file-loose").click();
   else $("#file-doc").click();
