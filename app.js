@@ -15,6 +15,7 @@ var $$ = function (s) { return [].slice.call(document.querySelectorAll(s)); };
    separate hover/disabled styling needed). Kept to the handful actually
    used in compact app controls; not a general-purpose icon system. */
 var NAV_ICONS = {
+  person: '<svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="3.3" r="1.9"/><path d="M4.2 7.6c.4-1.3 1.7-1.9 3.8-1.9s3.4.6 3.8 1.9"/><circle cx="8" cy="11.2" r="4"/><circle cx="8" cy="11.2" r=".9"/><path d="M4.1 10.4l2.9.6M11.9 10.4L9 11M8 12.1v3.1"/></svg>',
   sync: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 8a6 6 0 0 1 10.2-4.2M14 8a6 6 0 0 1-10.2 4.2M12 2v3h-3M4 14v-3h3"/></svg>',
   calendar: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5 1.5v3M11 1.5v3"/></svg>',
   copy: '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="5" y="5" width="8" height="8" rx="1"/><path d="M3 11H2.5A1.5 1.5 0 0 1 1 9.5v-7A1.5 1.5 0 0 1 2.5 1h7A1.5 1.5 0 0 1 11 2.5V3"/></svg>',
@@ -1113,6 +1114,12 @@ function loadDriverActivity() {
     LAST_PUBLISH_MS = res.last_publish ? Date.parse(res.last_publish) || 0 : 0;
     DRIVER_SCAN_IDS = {};
     scans.forEach(function (x) { DRIVER_SCAN_IDS[x.id] = true; });
+    ACT_ITEMS = notes.map(function (n) {
+      return { id: n.id, k: "note", at: n.created_at, driver: n.driver_name, truck: n.truck_number, oid: n.order_id, text: n.body };
+    }).concat(scans.filter(function (x) { return x.order_id; }).map(function (x) {
+      return { id: x.id, k: "scan", at: x.created_at, driver: x.driver, truck: x.truck, oid: x.order_id, pages: x.pages || 1 };
+    })).sort(function (a, b) { return a.at < b.at ? 1 : -1; });
+    (res.read || []).forEach(function (id) { ACT_READ[id] = true; });
     PROTO_SCAN_RECS = scans.filter(function (x) { return x.order_id; }).map(function (x) {
       return { id: x.id, order_id: x.order_id, at: x.created_at, pages: x.pages || 1, driver: x.driver, truck: x.truck,
                storage_path: "driver-scan:" + x.storage_path,
@@ -2970,49 +2977,86 @@ function seenWhen(ms) {
 function seenState(truck, kind, push) {
   var v = driverViews()[String(truck.number)] || {}, at = v[kind] ? Date.parse(v[kind]) : 0;
   if (!at) return { cls: "none", txt: "Not opened" };
-  if (push && at < push) return { cls: "stale", txt: "Before update · " + seenWhen(at) };
+  if (push && at < push) return { cls: "stale", txt: "Old · " + seenWhen(at) };
   return { cls: "ok", txt: "Seen " + seenWhen(at) };
 }
-function seenHtml(mode) {
-  var push = lastPushMs(), drivers = DB.trucks.filter(function (t) { return t.driver_name; }), label, cls;
-  if (mode === "dv") {
-    var t = truckById(DRIVER_VIEW), st = t ? seenState(t, "own", push) : { cls: "none", txt: "" };
-    label = (t && t.driver_name ? t.driver_name + " · " : "") + st.txt; cls = st.cls;
-  } else {
-    var n = drivers.filter(function (t) { return seenState(t, "cw", push).cls === "ok"; }).length;
-    label = "Seen by " + n + " of " + drivers.length; cls = n === drivers.length ? "ok" : n ? "stale" : "none";
-  }
-  var h = '<span class="seen-wrap" id="seen-wrap" data-mode="' + mode + '"><button class="btn seen-btn" id="seen-btn" aria-expanded="' + SEEN_OPEN + '">' +
-    '<span class="seen-dot ' + cls + '"></span>' + esc(label) + "</button>";
-  if (SEEN_OPEN) {
-    h += '<div class="seen-pop" role="dialog" aria-label="Who has seen the schedule"><div class="seen-hd">' +
-      (push ? "Last update pushed " + esc(seenWhen(push)) : "No push recorded yet") + "</div>" +
+/* Driver activity menu — the person icon at the far right of the header, on every page.
+   Badge = driver notes and scans not yet looked at. The list says who did what and a click opens
+   that order; the table under it says who has seen the schedule. The menu stays open until the icon
+   is clicked again, so it is still there (behind the order drawer) after an order is closed.
+   Read marks live in Supabase (driver_activity_reads); until that SQL is run they are kept in this browser. */
+var ACT_ITEMS = [], ACT_READ = {}, ACT_OPEN = false, ACT_FILTER = "all";
+try { JSON.parse(localStorage.getItem("actRead") || "[]").forEach(function (id) { ACT_READ[id] = true; }); } catch (e) { /* no storage */ }
+function actUnread() { return ACT_ITEMS.filter(function (x) { return !ACT_READ[x.id] && order(x.oid); }); }
+function actMarkRead(ids) {
+  ids = ids.filter(function (id) { return !ACT_READ[id]; });
+  if (!ids.length) return;
+  ids.forEach(function (id) { ACT_READ[id] = true; });
+  try { localStorage.setItem("actRead", JSON.stringify(Object.keys(ACT_READ).slice(-500))); } catch (e) { /* no storage */ }
+  api("driver/read", { ids: ids }).catch(function () { /* SQL not run yet: the browser copy still holds */ });
+  repaintSeen();
+}
+function actRowHtml(x) {
+  var o = order(x.oid); if (!o) return "";
+  var ch = buildChip(o), un = !ACT_READ[x.id];
+  var who = '<b>' + esc(x.driver || "A driver") + "</b>" + (x.truck ? ' <span class="trk">' + esc(x.truck) + "</span>" : "");
+  return '<div class="act-row' + (un ? " un" : "") + '" data-act="' + x.id + '" tabindex="0"><span class="act-dot"></span><div>' +
+    '<div class="act-t">' + who + (x.k === "note" ? " added a note to " : " scanned " + x.pages + " page" + (x.pages > 1 ? "s" : "") + " for ") +
+    "order <b>" + esc(o.rexius_order_no || "(no order #)") + "</b></div>" +
+    '<div class="act-m">' + esc(ch.title) + " · " + esc(seenWhen(Date.parse(x.at))) + "</div>" +
+    (x.k === "note" ? '<div class="act-q">' + esc(x.text) + "</div>" : "") + "</div></div>";
+}
+function seenHtml() {
+  var push = lastPushMs(), drivers = DB.trucks.filter(function (t) { return t.driver_name; });
+  var un = actUnread(), n = un.length;
+  var h = '<span class="seen-wrap" id="seen-wrap"><button class="hbtn act-btn" id="seen-btn" aria-expanded="' + ACT_OPEN +
+    '" aria-label="Driver activity' + (n ? ", " + n + " unread" : "") + '" title="Driver activity">' + icon("person") +
+    (n ? '<span class="act-badge">' + (n > 99 ? "99+" : n) + "</span>" : "") + "</button>";
+  if (ACT_OPEN) {
+    var rows = ACT_ITEMS.filter(function (x) { return (ACT_FILTER === "all" || x.k === ACT_FILTER) && order(x.oid); }).slice(0, 40);
+    h += '<div class="seen-pop act-pop" role="dialog" aria-label="Driver activity">' +
+      '<div class="act-hd"><b>Driver activity</b><button class="btn sm" id="act-all"' + (n ? "" : " disabled") + ">Mark All Read</button></div>" +
+      '<div class="act-filters">' + [["all", "All"], ["note", "Notes"], ["scan", "Scans"]].map(function (f) {
+        return '<button class="btn sm' + (ACT_FILTER === f[0] ? " active" : "") + '" data-actf="' + f[0] + '">' + f[1] + "</button>";
+      }).join("") + "</div>" +
+      '<div class="act-list">' + (rows.length ? rows.map(actRowHtml).join("") : emptyStateHtml("No driver notes or scans yet.")) + "</div>" +
       '<div class="seen-grid"><span class="lbl">Driver</span><span class="lbl">Current Week</span><span class="lbl">Their Tab</span>' +
       drivers.map(function (t) {
         var a = seenState(t, "cw", push), b = seenState(t, "own", push);
         return "<b>" + esc(t.driver_name) + '<span class="trk"> ' + esc(t.number) + "</span></b>" +
           '<span class="seen-st ' + a.cls + '">' + esc(a.txt) + '</span><span class="seen-st ' + b.cls + '">' + esc(b.txt) + "</span>";
       }).join("") + "</div>" +
-      '<div class="seen-ft">Counts drivers who opened the Flatbed Schedule since the last update.</div></div>';
+      '<div class="seen-ft">Click an item to open its order. It is marked read when you open it.</div></div>';
   }
   return h + "</span>";
 }
-// "Seen by" lives at the far right of the app header, only on the two
-// views drivers mirror (Current Week, Driver Tabs).
+// The icon lives at the far right of the app header on every page.
 function syncHeaderSeen() {
   var host = $("#hdr-seen");
   if (!host) { var r = $(".hdr-right"); if (!r) return; host = document.createElement("span"); host.id = "hdr-seen"; r.appendChild(host); }
-  var mode = SUB === "cw" ? "cw" : SUB === "driver" ? "dv" : "";
-  if (!mode) SEEN_OPEN = false;
-  host.innerHTML = mode ? seenHtml(mode) : "";
+  host.innerHTML = seenHtml();
 }
 function repaintSeen() {
-  var w = $("#seen-wrap");
-  if (w) w.outerHTML = seenHtml(w.getAttribute("data-mode"));
+  var w = $("#seen-wrap"); if (!w) return;
+  var l = w.querySelector(".act-list"), top = l ? l.scrollTop : 0;
+  w.outerHTML = seenHtml();
+  l = $("#seen-wrap .act-list"); if (l && top) l.scrollTop = top;
 }
 document.addEventListener("click", function (e) {
-  if (e.target.closest("#seen-btn")) { SEEN_OPEN = !SEEN_OPEN; repaintSeen(); return; }
-  if (SEEN_OPEN && !e.target.closest(".seen-pop")) { SEEN_OPEN = false; repaintSeen(); }
+  if (e.target.closest("#seen-btn")) { ACT_OPEN = !ACT_OPEN; repaintSeen(); return; }
+  if (!e.target.closest(".act-pop")) return;
+  var f = e.target.closest("[data-actf]");
+  if (f) { ACT_FILTER = f.getAttribute("data-actf"); repaintSeen(); return; }
+  if (e.target.closest("#act-all")) { actMarkRead(actUnread().map(function (x) { return x.id; })); return; }
+  var r = e.target.closest("[data-act]");
+  if (r) {
+    var id = r.getAttribute("data-act"), it = ACT_ITEMS.filter(function (x) { return x.id === id; })[0];
+    if (!it || !order(it.oid)) return;
+    actMarkRead([id]);
+    openOrder(it.oid);
+    var t = it.k === "note" ? $("#dw-drvnotes") : $("#dw-drvscans");
+    if (t && t.scrollIntoView) t.scrollIntoView({ block: "start" });
+  }
 });
 function vScheduler() {
   return toolbarHtml("Scheduler", {

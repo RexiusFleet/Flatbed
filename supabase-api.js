@@ -678,6 +678,8 @@ var ROUTES = {
     });
   },
   "driver/scan-bill": function (d) { return rpc("api_scan_bill_set", { d: d || {} }); },
+  // Mark driver notes / scans as read (the person-icon menu). {ids: [...]}
+  "driver/read": function (d) { return rpc("api_driver_activity_read", { d: d || {} }); },
 
   // Fleet / directory
   "driver": function (d, route) {
