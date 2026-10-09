@@ -1,6 +1,6 @@
 /* Dept 12 Dashboard — connection settings.
  *
- * Paste your Supabase project's values here (SETUP.md, step 5):
+ * Paste your Supabase project's values here:
  *   Project URL      → Supabase dashboard → Project Settings → Data API
  *   Publishable key  → Project Settings → API Keys ("sb_publishable_…",
  *                      or the legacy "anon" key on older projects)

@@ -135,7 +135,7 @@ function load() {
   var raw = null;
   var first;
   if (DEMO) {
-    first = window.Dept12SheetsPush({ start_date: null, days: 5 }, function (fn, a) {
+    first = window.Dept12BuildSchedule({ start_date: null, days: 5 }, function (fn, a) {
       return sampleRpc(fn, a).then(function (r) { if (fn === "driver_week_data") raw = r; return r; });
     }).then(function (p) { S.payload = p; S.source = "sample"; S.loadedAt = new Date(); S.refreshedAt = new Date(); S.error = ""; });
   } else {

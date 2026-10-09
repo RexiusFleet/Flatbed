@@ -11,9 +11,10 @@
  *   • Plain REST (/rest/v1/<table>) for simple single-row CRUD.
  *   • Storage (/storage/v1, private "documents" bucket) for PDFs.
  *   • Edge Functions (/functions/v1/*) ONLY for Motive, because it needs a
- *     secret the browser must never see. The Google Sheets driver mirror is
- *     written from the browser with the pusher's own Google sign-in
- *     (sheets-push.js).
+ *     secret the browser must never see. Publish Schedule builds what drivers
+ *     and the bag plant see in the browser (publish-schedule.js) and saves it
+ *     through api_publish_schedule; the driver and bag plant pages read it back
+ *     through the no-login public_* functions.
  *
  * Access: every signed-in account has full access — there are no in-app
  * roles or per-page permissions. Who can sign in is managed in Supabase:
@@ -659,7 +660,7 @@ var ROUTES = {
         return r;
       });
     };
-    return window.Dept12SheetsPush({ start_date: d.start_date, days: d.days }, capture).then(function (payload) {
+    return window.Dept12BuildSchedule({ start_date: d.start_date, days: d.days }, capture).then(function (payload) {
       return rpc("api_publish_schedule", { d: { payload: payload, raw: raw } }).then(function (res) {
         return { pushed: payload.drivers.map(function (x) { return x.truck; }), week_start: payload.week_start,
                  published_at: res && res.published_at };
@@ -763,7 +764,7 @@ var LOCAL_AUTH = { enabled: true, user: null };
 function localAuthCheck() {
   if (!SB_URL || !SB_KEY) {
     document.querySelector("#main").innerHTML = '<div class="empty"><b>Not connected to Supabase yet.</b><br>' +
-      'Fill in <span class="kbd">config.js</span> with your project URL and publishable key — see SETUP.md.</div>';
+      'Fill in <span class="kbd">config.js</span> with your project URL and publishable key.</div>';
     return new Promise(function () {});
   }
   LOCAL_AUTH.user = SESSION ? { username: (SESSION.user && SESSION.user.email) || "Signed in" } : null;

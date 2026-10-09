@@ -1,13 +1,13 @@
 /* Dept 12 Dashboard - "Publish Schedule": builds what drivers and the bag plant see.
  *
- * Runs in the browser. Dept12SheetsPush(d, rpc) reads the schedule window
+ * Runs in the browser. Dept12BuildSchedule(d, rpc) reads the schedule window
  * (driver_week_dates / driver_week_data through rpc) and returns the payload
  * the driver and bag plant pages draw. Publishing saves it (supabase-api.js).
  * Nothing here talks to Google any more.
  *
- * The week-building half is a straight conversion of the former sheets-push
- * Edge Function's payload.ts, so the dashboard's Driver Tabs view and what
- * drivers see stay column-for-column identical.
+ * The week-building half was converted from the retired sheets-push Edge Function's
+ * payload.ts (kept in archive/, local only), so the dashboard's Driver Tabs view and
+ * what drivers see stay column-for-column identical.
  */
 (function () {
 "use strict";
@@ -233,5 +233,5 @@ async function push(d, rpc) {
   return buildPayload(dates, data);
 }
 
-window.Dept12SheetsPush = push;
+window.Dept12BuildSchedule = push;
 })();
