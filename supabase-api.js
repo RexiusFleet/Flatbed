@@ -546,6 +546,16 @@ function addAutofillColumn(d) {
     return d;
   }).catch(function () { return d; });
 }
+// ...and the "mileage confirmed" mark set by the mileage review window.
+function addMilesConfirmedColumn(d) {
+  var orders = d && d.orders;
+  if (!orders || !orders.length || "miles_confirmed_at" in orders[0]) return d;
+  return rest("GET", "orders?select=id,miles_confirmed_at&miles_confirmed_at=not.is.null").then(function (rows) {
+    var byId = {}; (rows || []).forEach(function (r) { byId[r.id] = r.miles_confirmed_at; });
+    orders.forEach(function (o) { o.miles_confirmed_at = byId[o.id] || null; });
+    return d;
+  }).catch(function () { return d; });
+}
 var APPT_FIELDS = ["pick_appt_text", "drop_appt_text"];
 function addApptColumns(d) {
   var orders = d && d.orders;
@@ -558,7 +568,7 @@ function addApptColumns(d) {
   }).catch(function () { return d; });
 }
 var ROUTES = {
-  "bootstrap": function () { return loadBootstrap().then(addApptColumns).then(addRateColumns).then(addAutofillColumn); },
+  "bootstrap": function () { return loadBootstrap().then(addApptColumns).then(addRateColumns).then(addAutofillColumn).then(addMilesConfirmedColumn); },
   "order": viaRpc("api_order_create"),
   "order/ingest": viaRpc("api_order_ingest"),
   "internal-order": viaRpc("api_internal_order_add"),
@@ -657,6 +667,10 @@ var ROUTES = {
   "saved-report/list": viaRpc("api_saved_report_list"),
   "saved-report": viaRpc("api_saved_report_save"),
   "saved-report/delete": viaRpc("api_saved_report_delete"),
+  // Motive truck-days: pull from Motive (Edge Function motive-days), save to / read from Supabase (motive_daily).
+  "motive/days": function (d) { return edgeFunction("motive-days", d || {}); },
+  "motive/days-save": function (d) { return rpc("api_motive_days_save", { d: d || {} }); },
+  "motive/days-list": function (d) { return rpc("api_motive_days_list", { d: d || {} }); },
   "motive/sync-miles": function (d, route) { return edgeFunction("motive-sync", d, histHeaders(route, d)); },
   // Publish Schedule: builds what drivers and the bag plant see (the same data the
   // old Google push built, now read-only) and saves it as the latest published copy.

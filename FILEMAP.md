@@ -26,7 +26,8 @@ button, or a word, and it points you to the file and the part of the file.
    │    └─ public_* functions  → what the driver and bag plant pages call (no sign-in, read the
    │                             published schedule, add notes, register scans, log views)
    ├─ Edge Functions ─── code that holds private keys, runs on Supabase's servers
-   │    ├─ motive-sync         → talks to Motive (truck mileage and delivery dates)
+   │    ├─ motive-days         → reads Motive's truck-days (miles, odometers, first on / last off, hours)
+   │    ├─ motive-sync         → old per-order mileage pull (no longer called by the dashboard)
    │    └─ sheets-push         → RETIRED, delete it in Supabase (see §6)
    ├─ Edge Function Secrets ─ MOTIVE_API_KEY (GOOGLE_SERVICE_ACCOUNT_JSON is retired, delete it)
    └─ Storage ────────── "documents" bucket (private) for PDFs dropped in the app and driver scans
@@ -52,7 +53,8 @@ and with their Refresh button.
 | save anything (then refresh) | same `api("bootstrap")` | `api_bootstrap_since` — only rows changed since the last fetch, found through the History log |
 | scroll / jump / search back past ~90 days | `app.js` → `ensureHistory()` | `api_bootstrap_history` — the older history, once per session |
 | change anything | `app.js` → `api("<route>", {...})` | `supabase-api.js` → `ROUTES["<route>"]` → a Database function or table |
-| click **Sync Mileage & Dates** | `app.js` → `runSyncAll` → `api("motive/sync-miles")`, then `api("sync-delivery-dates")` | Edge Function `motive-sync` (last 31 days only) → Motive → `motive_apply_miles`; then `api_sync_delivery_dates`; `syncResultsModal` shows an editable review window |
+| click **Sync Delivery Dates** | `app.js` → `runSyncAll` → `api("sync-delivery-dates")`, then `motEnsure` (pulls only Motive days not saved yet), then `mrvOpen` (the mileage review window: miles and cost per delivered order, Save confirms) | `api_sync_delivery_dates`; Edge Function `motive-days` → Motive; `api_motive_days_save` / `_list` (table `motive_daily`); `api_freight`; `orders.miles_confirmed_at` |
+| open **Reports → Motive** | `vMotiveTab`, `motWeekHtml`, `motPull` | `api_motive_days_list`; Pull From Motive → `motive-days` → `api_motive_days_save` |
 | click **Publish Schedule** | `api("sheets/push-driver-tabs")` (the route keeps its old name) → `publish-schedule.js` | `driver_week_dates` / `driver_week_data`, then `api_publish_schedule` |
 | drop / view a PDF | `api("document")`, `openViewer`, `fetchStoredFile` | Storage bucket `documents` + `api_document_save` |
 | open Reports | `vReports` → `api("report-rows")` | `api_report_rows` (falls back to `api_report` "dump" if that function is missing); saved/pinned reports use `api_saved_report_*` |
@@ -103,7 +105,7 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | `═══ 02-chips-extract` | Lookups (`order()`, `party()`), what a **chip** says and what color it is, date helpers, **PDF text + OCR + rate-con parsing** (`parseRateCon` wraps `ratecon-parser.js`), broker matching, and the **autofill tags** (`afApply`, `afBadge`, `afMatchLocation`). | `buildChip`, `chipHtml`, `pushColorFor`, `cellHasLoad`, `parseRateCon`, `extractInvoiceInfo`, `ocrPdf`, `mergePdfs` |
 | `═══ 03-drawer-billing` | The **order drawer** (the panel that slides in when you click a chip or row), pickup/delivery pickers, billing packages. | `openOrder` (external), `openInternalOrder` (bag), `openTransferOrder` (internal freight), `routeSectionHtml` (the Pickup/Drop table with Add Stop and drag reorder), `rateInputHtml` (External Rate), `locCombo`, `partyCombo`, `doPackage`, `billDone` |
 | `═══ 04-views` | **Every screen's layout**: Scheduler, Current Week, Driver Tabs, the three order trackers (sortable column headers via `tsortTh`), Billing, Database grids, custom sheets, Reports (dashboard tiles, pivot builder, saved/pinned reports: `RPT_SYSTEM`, `rptRun`, `rptDashHtml`, `rptWinOpen`). | `vScheduler`, `vCurrentWeek`, `vDriverView`, `vInternal`, `vInternalFreight`, `vOrders`, `vBilling`, `vDatabase`, `vSheet`, `vReports`, `toolbarHtml` |
-| `═══ 05-settings-nav-search` | Settings pages, the Staging rail, the **`render()` dispatcher** (decides which screen to draw), `reload()`, global search box, **Sync Mileage & Dates** and its review window. | `render`, `reload`, `vSettings`, `renderRail`, `renderSearch`, `NAV`, `runSyncAll`, `syncResultsModal` |
+| `═══ 05-settings-nav-search` | Settings pages, the Staging rail, the **`render()` dispatcher** (decides which screen to draw), `reload()`, global search box, **Sync Delivery Dates** and the Motive mileage review window (`MOT`, `motBuckets`, `mrvCalc`). | `render`, `reload`, `vSettings`, `renderRail`, `renderSearch`, `NAV`, `runSyncAll`, `mrvOpen` |
 | `═══ 06-modals-grids` | Popups (add customer/location/truck, Add New Location, bulk add orders, day note, confirm), document viewer, spreadsheet-style cell editing, **document ingestion** (rate con / loose POD / invoice batch). | `openModal`, `addLocationModal`, `parseLocationText`, `openViewer`, `startEdit`/`commitEdit`, `ingestRateCon`, `ingestLoose`, `ingestBatch` |
 | `═══ 07-events` | The big **click / change / keyboard handlers** — where each button's action is wired. | Search the button's id or `data-…` attribute here, e.g. `"motive-sync"`, `data-report`, `new-order` |
 | `═══ 08-undo` | ⌘Z / ⌘⇧Z undo-redo, and the save helpers that record undo steps. | `histPush`, `moveLoad`, `scheduleNote`, `orderFieldSet`, `freightValueSet` |

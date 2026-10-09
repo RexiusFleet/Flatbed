@@ -728,6 +728,10 @@ document.addEventListener("keydown", function (e) {
     cycleNavSectionWithSettings(e.key === "ArrowUp" ? -1 : 1);
     return;
   }
+  // Reports has two in-page tabs (Dashboard, Motive) that behave like Database's: plain Left/Right switches between them
+  if (horiz && SEC === "reports" && !MOT.calOpen && navArrowShortcutAvailable(e, "section")) {
+    e.preventDefault(); REP.tab = REP.tab === "dash" ? "motive" : "dash"; motCalClose(); render(); return;
+  }
   if (!navArrowShortcutAvailable(e, horiz ? "sub" : "section")) return;
   e.preventDefault();
   if (horiz) cycleNavSub(e.key === "ArrowLeft" ? -1 : 1);
@@ -4763,10 +4767,11 @@ function rptDashHtml() {
   var all = rptFiltered(base), sum = function (l, f) { return l.reduce(function (a, r) { return a + (rptNum(r[f]) || 0); }, 0); };
   var by = { "Bag Order": 0, "External": 0, "Internal Freight": 0 }; all.forEach(function (r) { by[r.order_type]++; });
   var hasExt = all.some(function (r) { return r.order_type === "External" && r.revenue; });
-  var h = '<div class="rpt-hero">' +
-    '<div class="rpt-card"><div class="lbl">Total mileage</div><div class="rpt-big">' + Math.round(sum(all, "internal_miles")).toLocaleString() + '</div><div class="rpt-sub">internal miles</div></div>' +
+  var mc = motDashCards(range);
+  var h = '<div class="rpt-hero">' + (mc.miles ||
+    '<div class="rpt-card"><div class="lbl">Total mileage</div><div class="rpt-big">' + Math.round(sum(all, "internal_miles")).toLocaleString() + '</div><div class="rpt-sub">internal miles (pull Motive for the whole fleet)</div></div>') +
     '<div class="rpt-card"><div class="lbl">Loads delivered</div><div class="rpt-big">' + all.length.toLocaleString() + '</div><div class="rpt-sub">' + by["Bag Order"] + " bag · " + by["External"] + " external · " + by["Internal Freight"] + ' freight</div></div>' +
-    '<div class="rpt-card"><div class="lbl">Total revenue</div><div class="rpt-big">' + rptMoney(sum(all, "revenue")) + '</div><div class="rpt-sub">' + (hasExt ? "all order types" : "no external invoices in this period") + "</div></div></div>";
+    '<div class="rpt-card"><div class="lbl">Total revenue</div><div class="rpt-big">' + rptMoney(sum(all, "revenue")) + '</div><div class="rpt-sub">' + (hasExt ? "all order types" : "no external invoices in this period") + "</div></div>" + (mc.rpm || "") + "</div>" + (mc.roll ? motBrokerTable(mc.roll) : "");
   var months = [], y = +range.from.slice(0, 4), m = +range.from.slice(5, 7), ey = +range.to.slice(0, 4), em = +range.to.slice(5, 7);
   while ((y < ey || (y === ey && m <= em)) && months.length < 14) { months.push(y + "-" + String(m).padStart(2, "0")); m++; if (m > 12) { m = 1; y++; } }
   var lastM = months[months.length - 1], firstM = months[0];
@@ -4789,31 +4794,243 @@ function rptDashHtml() {
   if (RPT_HIDDEN.length) h += '<div class="rpt-foot"><button class="btn sm" data-rptrestore="1">Restore ' + RPT_HIDDEN.length + " Hidden Tile" + (RPT_HIDDEN.length === 1 ? "" : "s") + "</button></div>";
   return h;
 }
-function rptExportsHtml() {
-  var reps = [
-    { k: "dump", t: "Export everything", dates: true, d: "Every order with its load, truck, driver, customer/broker contact info, full addresses, dates, status, documents on file, both money paths, and any day note, for pivot tables." },
-    { k: "freight", t: "Internal freight transfer", dates: true, d: "$ total per truck + department for the date range, Bag Orders (dept 07) and Internal Freight transfers together, delivered/closed loads only." },
-    { k: "mileage", t: "Mileage: internal vs external, by customer/department", dates: true, d: "Total miles for the period, split three ways: Bag Orders by customer, Internal Freight transfers by department, true external as one total. Flags orders with no mileage entered yet." },
-    { k: "customers", t: "Export all Bagger Customers", dates: false, d: "Every bagger customer with address, timing window, designation, forklift, miles, and contact." },
-    { k: "brokers", t: "Export all External / freight customers", dates: false, d: "Every external (broker) customer with Rexius #, AP billing email, phone, and notes." },
-    { k: "fleet", t: "Export Fleet info", dates: false, d: "Every truck with its equipment type, active status, and current driver." }
-  ];
-  return '<div class="rep">' + reps.map(function (r) {
-    return '<div class="card"><h3>' + esc(r.t) + "</h3><p>" + esc(r.d) + "</p>" + (r.dates ? dateRange() : "") +
-      '<button class="btn" data-report="' + r.k + '">Export CSV</button></div>'; }).join("") + "</div>";
+/* ── Reports → Motive tab: truck-days from Motive, read only ───────────────
+   A cross-check for timecards and mileage: which trucks ran, odometer start and end, first on / last off, hours,
+   and where the day's miles went (Bag orders, Internal freight, External). Nothing on this tab edits an order. */
+function motWeekRange() { if (!MOT.day) MOT.day = motYesterday(); var mon = motMonday(MOT.day); return { from: mon, to: motAddDays(mon, 6) }; }
+function motTabEnsure() {
+  if (!MOT.day) MOT.day = motYesterday();
+  var r = motWeekRange(), key = r.from;
+  if (MOT.loadedWeek === key || MOT.loading) return;
+  MOT.loading = true; MOT.err = "";
+  // mark the week as tried even when the load fails, or the redraw below would ask again forever (the tab shook); Pull / Refresh retries
+  motLoad(r.from, r.to).then(function () { MOT.loadedWeek = key; }, function (e) { MOT.loadedWeek = key; MOT.err = "Couldn't read the saved Motive days: " + (e.message || String(e)); })
+    .then(function () { MOT.loading = false; if (SEC === "reports" && REP.tab === "motive") render(); });
+}
+function motTrucks() {
+  var list = (DB.trucks || []).filter(function (t) { return t.active !== false; }).map(function (t) { return String(t.number); });
+  Object.keys(MOT.rows).forEach(function (k) { var t = k.split("|")[0]; if (list.indexOf(t) < 0) list.push(t); });
+  return list;
+}
+function motBarHtml(b) {
+  var t = b.total || 0; if (!t) return "";
+  var seg = [["b", b.bag], ["i", b.intf], ["x", b.ext || 0]].map(function (s) { return '<b class="' + s[0] + '" style="width:' + (Math.max(0, s[1]) / t * 100) + '%"></b>'; }).join("");
+  return '<div class="mot-bar" title="Bag ' + Math.round(b.bag) + " · Internal " + Math.round(b.intf) + " · External " + Math.round(b.ext || 0) + '">' + seg + "</div>";
+}
+function motDayStateText(day) {
+  if (day > motYesterday()) return "Today isn't finished yet";
+  return MOT.pulled[day] ? "" : "Not pulled yet";
+}
+function motTrucksForDay(day) {
+  return motTrucks().filter(function (t) { return motRow(t, day) || true; });
+}
+function vMotiveTab() {
+  motTabEnsure();
+  var day = MOT.day, h = "";
+  if (MOT.err) h += '<div class="note-bar">' + esc(MOT.err) + "</div>";
+  if (MOT.view === "week") return h + motWeekHtml();
+  var trucks = motTrucks(), tot = 0, bag = 0, intf = 0, ext = 0, ran = 0;
+  trucks.forEach(function (t) { var b = motBuckets(t, day); if (b.total != null) { ran++; tot += b.total; bag += b.bag; intf += b.intf; ext += b.ext || 0; } });
+  var state = motDayStateText(day);
+  h += '<div class="mot-tiles">' +
+    '<div class="mot-tile"><i>Fleet miles</i><b>' + Math.round(tot).toLocaleString() + "</b><small>" + (state ? esc(state) : ran + " truck" + (ran === 1 ? "" : "s") + " ran") + "</small></div>" +
+    '<div class="mot-tile"><i class="b">Bag orders</i><b>' + Math.round(bag).toLocaleString() + "</b></div>" +
+    '<div class="mot-tile"><i class="i">Internal freight</i><b>' + Math.round(intf).toLocaleString() + "</b></div>" +
+    '<div class="mot-tile"><i class="x">External</i><b>' + Math.round(ext).toLocaleString() + "</b><small>everything else the trucks ran</small></div></div>";
+  h += '<div class="grid-wrap mot-wrap"><table class="data mot-table"><thead><tr><th style="width:80px">Truck</th><th style="width:150px">Driver</th><th class="n" style="width:100px">Start odo</th><th class="n" style="width:100px">End odo</th>' +
+    '<th class="n" style="width:80px">Miles</th><th style="width:96px">First on</th><th style="width:96px">Last off</th><th class="n" style="width:70px">Hours</th><th>Bag / Internal / External</th></tr></thead><tbody>';
+  trucks.forEach(function (t) {
+    var r = motRow(t, day), b = motBuckets(t, day);
+    if (!r) { h += '<tr data-motpick="' + esc(t) + '"><td><b>' + esc(t) + "</b></td><td>" + esc(motTruckDriver(t)) + '</td><td colspan="7" class="mute">' + esc(state || "Did not run") + "</td></tr>"; return; }
+    h += '<tr data-motpick="' + esc(t) + '" class="' + (MOT.pick === t ? "sel" : "") + '"><td><b>' + esc(t) + "</b></td><td>" + esc(r.drivers || motTruckDriver(t)) + '</td>' +
+      '<td class="n">' + (r.start_odo != null ? Number(r.start_odo).toLocaleString() : "—") + '</td><td class="n">' + (r.end_odo != null ? Number(r.end_odo).toLocaleString() : "—") + '</td>' +
+      '<td class="n"><b>' + Math.round(Number(r.miles) * 10) / 10 + "</b></td><td>" + motFmtTime(r.first_on) + "</td><td>" + motFmtTime(r.last_off) + '</td><td class="n">' + (r.hours != null ? r.hours : "—") + "</td>" +
+      "<td>" + motBarHtml(b) + (b.over ? '<span class="mot-over">Over by ' + Math.round(b.over * 10) / 10 + "</span>" : "") + "</td></tr>";
+  });
+  h += '</tbody></table></div><div class="mot-legend"><span class="b">Bag orders</span><span class="i">Internal freight</span><span class="x">External (the rest of the truck\'s miles)</span></div>';
+  if (MOT.pick) {
+    var b2 = motBuckets(MOT.pick, day), r2 = motRow(MOT.pick, day);
+    h += '<div class="mot-det"><h3>' + esc(MOT.pick) + " · " + esc(fmtLongDay(day)) + (r2 ? " · " + Math.round(Number(r2.miles) * 10) / 10 + " mi" : "") + "</h3>";
+    var ords = motOrdersFor(MOT.pick, day);
+    if (!ords.length) h += '<div class="mot-ev mute">No orders on this truck that day.</div>';
+    ords.forEach(function (o) {
+      var internal = motIsInternal(o), tag = !internal ? "External" : o.is_transfer ? "Internal freight" : "Bag order", cls = !internal ? "x" : o.is_transfer ? "i" : "b", lab = syncOrderLabel(o);
+      h += '<div class="mot-ev"><span class="mot-tag ' + cls + '">' + tag + "</span><span>" + esc(lab[0] + (lab[1] ? " · " + lab[1] : "")) + '</span><span class="n">' +
+        (internal ? (motNum(o.miles) != null ? motNum(o.miles) + " mi" : "no miles yet") : (motNum(o.external_rate) != null ? "$" + motNum(o.external_rate).toLocaleString() : "no rate")) + "</span></div>";
+    });
+    if (b2.total != null) h += '<div class="mot-ev tot"><span class="mot-tag x">External</span><span>The rest of the truck\'s miles</span><span class="n">' + Math.round(b2.ext * 10) / 10 + " mi</span></div>";
+    h += "</div>";
+  } else h += '<div class="rpt-foot">Click a truck to see its orders for the day.</div>';
+  return h;
+}
+function motWeekHtml() {
+  var r = motWeekRange(), days = motDaysBetween(r.from, r.to), trucks = motTrucks(), fleet = 0;
+  var h = '<div class="mot-wk"><div class="rpt-foot">Miles per truck per day from Motive. Click a day to open it.</div><table class="data mot-grid"><thead><tr><th>Truck</th>' +
+    days.map(function (d) { return '<th class="n">' + esc(fmtLongDay(d)) + "</th>"; }).join("") + '<th class="n">Week</th></tr></thead><tbody>';
+  trucks.forEach(function (t) {
+    var sum = 0;
+    h += "<tr><td><b>" + esc(t) + "</b> <span class=\"mute\">" + esc(motTruckDriver(t)) + "</span></td>" + days.map(function (d) {
+      var row = motRow(t, d), m = row ? motNum(row.miles) : null; if (m) sum += m;
+      var a = m ? Math.min(0.55, m / 700) : 0;
+      return '<td class="n" data-motday="' + d + '"' + (m ? ' style="background:color-mix(in srgb,var(--brand) ' + Math.round(a * 100) + '%,transparent)"' : "") + ">" + (m ? Math.round(m) : '<span class="mute">—</span>') + "</td>";
+    }).join("") + '<td class="n"><b>' + Math.round(sum).toLocaleString() + "</b></td></tr>";
+    fleet += sum;
+  });
+  return h + '</tbody><tfoot><tr><td><b>Fleet</b></td><td colspan="7" class="mute">Week total, all trucks</td><td class="n"><b>' + Math.round(fleet).toLocaleString() + "</b></td></tr></tfoot></table></div>";
+}
+function motTabContext() {
+  if (!MOT.day) MOT.day = motYesterday();
+  var r = motWeekRange(), label = MOT.view === "week" ? fmtLongDay(r.from) + " – " + fmtLongDay(r.to) : fmtLongDay(MOT.day);
+  return '<button class="btn sm mot-dt" data-mot="cal" aria-haspopup="dialog" aria-expanded="' + !!MOT.calOpen + '">' + esc(label) + ' <span class="mot-caret">&#9662;</span></button>';
+}
+// Every truck-day ever saved, with all the data we hold and where the miles went, as one CSV.
+function motDownloadAll() {
+  busyStart("Reading every saved Motive day…");
+  motLoad("2000-01-01", "2100-12-31").then(function () {
+    var keys = Object.keys(MOT.rows).sort(function (a, b) { var x = a.split("|"), y = b.split("|"); return x[1] < y[1] ? -1 : x[1] > y[1] ? 1 : x[0].localeCompare(y[0]); });
+    var when = function (iso) { if (!iso) return ""; var d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString([], { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" }); };
+    var out = [["Date", "Truck", "Drivers", "Start odometer", "End odometer", "Miles", "First on", "Last off", "Hours", "Bag order miles", "Internal freight miles", "External miles", "Typed miles over Motive total", "Saved from Motive at"]];
+    keys.forEach(function (k) {
+      var r = MOT.rows[k], b = motBuckets(r.truck_number, String(r.day).slice(0, 10));
+      out.push([String(r.day).slice(0, 10), r.truck_number, r.drivers || motTruckDriver(r.truck_number), r.start_odo, r.end_odo, r.miles, when(r.first_on), when(r.last_off), r.hours,
+        Math.round(b.bag * 10) / 10, Math.round(b.intf * 10) / 10, b.ext == null ? "" : Math.round(b.ext * 10) / 10, b.over ? Math.round(b.over * 10) / 10 : "", when(r.pulled_at)]);
+    });
+    var csv = out.map(function (row) { return row.map(function (c) { c = c == null ? "" : String(c); return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(","); }).join("\n") + "\n";
+    saveBlob("motive-all-days-" + TODAY + ".csv", new TextEncoder().encode(csv), "text/csv");
+    busyEnd(); toast("Downloaded " + keys.length + " truck-days from " + (keys.length ? String(MOT.rows[keys[0]].day).slice(0, 10) : "—") + " to " + (keys.length ? String(MOT.rows[keys[keys.length - 1]].day).slice(0, 10) : "—"));
+  }).catch(function (e) { busyEnd(); toast("Couldn't read the saved days: " + e.message, true); });
+}
+// Pull whatever is missing in view; when nothing is missing on a single finished day, pull that day again (Motive sometimes corrects a day).
+function motPullVisible() {
+  var r = MOT.view === "week" ? motWeekRange() : { from: MOT.day, to: MOT.day }, days = motMissing(r.from, r.to), again = false;
+  if (!days.length && MOT.view === "day" && MOT.day <= motYesterday()) { days = [MOT.day]; again = true; }
+  if (!days.length) { toast(MOT.view === "week" ? "Everything in view is already saved." : "That day isn't finished yet.", MOT.view !== "week"); return; }
+  busyStart("Pulling from Motive…");
+  motPull(days).then(function (n) { busyEnd(); toast((again ? "Refreshed " : "Saved ") + n + " truck-day" + (n === 1 ? "" : "s") + " from Motive"); MOT.calKey = ""; render(); },
+    function (e) { busyEnd(); toast("Motive: " + e.message, true); });
+}
+
+/* The date button opens a month calendar: a green bar under a day means it is saved, amber means a finished day not pulled yet. */
+function motMonthStart(iso) { return iso.slice(0, 8) + "01"; }
+function motCalHtml() {
+  var m0 = MOT.calMonth || motMonthStart(MOT.day), y = +m0.slice(0, 4), mo = +m0.slice(5, 7) - 1, first = new Date(y, mo, 1), pad = (first.getDay() + 6) % 7, n = new Date(y, mo + 1, 0).getDate();
+  var h = '<div class="mot-cal-hd"><button class="mot-cal-nav" data-motcal="-1" aria-label="Previous month">&lsaquo;</button><b>' +
+    esc(first.toLocaleDateString([], { month: "long", year: "numeric" })) + '</b><button class="mot-cal-nav" data-motcal="1" aria-label="Next month">&rsaquo;</button></div><div class="mot-cal-grid">' +
+    "MTWTFSS".split("").map(function (x) { return "<i>" + x + "</i>"; }).join("");
+  for (var p = 0; p < pad; p++) h += "<span></span>";
+  var last = motYesterday();
+  for (var d = 1; d <= n; d++) {
+    var iso = rptIso(new Date(y, mo, d)), cls = (iso === MOT.day ? "on " : "") + (MOT.pulled[iso] ? "has " : iso <= last ? "miss " : "dim ");
+    h += '<button class="' + cls + '" data-motday-pick="' + iso + '">' + d + "<em></em></button>";
+  }
+  return h + '</div><div class="mot-cal-lg"><span class="g">Saved</span><span class="a">Not pulled yet</span></div>' +
+    '<div class="mot-cal-ft"><button class="btn sm" data-motcal-view="' + (MOT.view === "week" ? "day" : "week") + '">' + (MOT.view === "week" ? "Show One Day" : "Show The Week") + '</button>' +
+    '<button class="btn sm" data-motcal-yday="1">Yesterday</button></div>';
+}
+function motCalClose() { MOT.calOpen = false; var el = document.getElementById("mot-cal"); if (el) el.remove(); var b = document.querySelector(".mot-dt"); if (b) b.setAttribute("aria-expanded", "false"); }
+function motCalPaint() {
+  var el = document.getElementById("mot-cal"), btn = document.querySelector(".mot-dt");
+  if (!btn) { motCalClose(); return; }
+  if (!el) { el = document.createElement("div"); el.id = "mot-cal"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Pick a day"); document.body.appendChild(el); }
+  el.innerHTML = motCalHtml();
+  var r = btn.getBoundingClientRect(); el.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 308)) + "px"; el.style.top = (r.bottom + 6) + "px";
+  btn.setAttribute("aria-expanded", "true");
+}
+function motCalOpen() {
+  MOT.calOpen = true; MOT.calMonth = motMonthStart(MOT.day); motCalPaint(); motCalLoadMonth();
+}
+function motCalLoadMonth() {
+  var m0 = MOT.calMonth, y = +m0.slice(0, 4), mo = +m0.slice(5, 7) - 1, to = rptIso(new Date(y, mo + 1, 0));
+  motLoad(m0, to).then(function () { if (MOT.calOpen) motCalPaint(); }, function () {});
+}
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape" && MOT.calOpen) motCalClose();
+}, true);
+document.addEventListener("mousedown", function (e) {
+  if (!MOT.calOpen) return;
+  if (!(e.target.closest && (e.target.closest("#mot-cal") || e.target.closest(".mot-dt")))) motCalClose();
+});
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("[data-mot]");
+  if (b) {
+    var k = b.dataset.mot;
+    if (k === "cal") { MOT.calOpen ? motCalClose() : motCalOpen(); return; }
+    if (k === "pull") { MOT.loadedWeek = ""; motPullVisible(); return; }
+    if (k === "all") { motDownloadAll(); return; }
+    return;
+  }
+  var nav = e.target.closest && e.target.closest("[data-motcal]");
+  if (nav) { var m0 = MOT.calMonth, d = new Date(+m0.slice(0, 4), +m0.slice(5, 7) - 1 + (+nav.dataset.motcal), 1); MOT.calMonth = rptIso(d); motCalPaint(); motCalLoadMonth(); return; }
+  var pk = e.target.closest && e.target.closest("[data-motday-pick]");
+  if (pk) { MOT.day = pk.dataset.motdayPick; MOT.pick = null; motCalClose(); render(); return; }
+  var vw = e.target.closest && e.target.closest("[data-motcal-view]");
+  if (vw) { MOT.view = vw.dataset.motcalView; MOT.pick = null; motCalClose(); render(); return; }
+  if (e.target.closest && e.target.closest("[data-motcal-yday]")) { MOT.day = motYesterday(); MOT.pick = null; motCalClose(); render(); return; }
+  var d2 = e.target.closest && e.target.closest("[data-motday]"); if (d2) { MOT.day = d2.dataset.motday; MOT.view = "day"; MOT.pick = null; render(); return; }
+  var p2 = e.target.closest && e.target.closest("[data-motpick]"); if (p2) { MOT.pick = MOT.pick === p2.dataset.motpick ? null : p2.dataset.motpick; render(); }
+});
+
+/* ── Dashboard: total miles and external RPM, from Motive's totals ───────── */
+// Per period: Motive's miles split Bag / Internal / External, external revenue, and RPM (revenue / ALL external bucket miles, deadhead included).
+function motRollup(range) {
+  var out = { total: 0, bag: 0, intf: 0, ext: 0, rev: 0, days: 0, brokers: {}, noLoadMiles: 0 };
+  Object.keys(MOT.rows).forEach(function (k) {
+    var p = k.split("|"), day = p[1]; if (day < range.from || day > range.to) return;
+    var b = motBuckets(p[0], day); if (b.total == null) return;
+    out.days++; out.total += b.total; out.bag += b.bag; out.intf += b.intf; out.ext += b.ext || 0;
+    var eo = b.extOrders.filter(function (o) { return motNum(o.external_rate) != null; });
+    if (!b.extOrders.length) { out.noLoadMiles += b.ext || 0; return; }
+    var share = (b.ext || 0) / b.extOrders.length;
+    b.extOrders.forEach(function (o) {
+      var rate = motNum(o.external_rate) || 0, who = o.broker_name || o.customer_name || "(no broker)", x = out.brokers[who] = out.brokers[who] || { loads: 0, rev: 0, miles: 0 };
+      x.loads++; x.rev += rate; x.miles += share; out.rev += rate;
+    });
+  });
+  return out;
+}
+var MOT_DASH = { key: "", loading: false };
+function motDashEnsure(range) {
+  var key = range.from + "|" + range.to;
+  if (MOT_DASH.key === key || MOT_DASH.loading) return;
+  MOT_DASH.loading = true;
+  motLoad(range.from, range.to).then(function () { MOT_DASH.key = key; }, function () { MOT_DASH.key = key; })
+    .then(function () { MOT_DASH.loading = false; if (SEC === "reports" && REP.tab === "dash") render(); });
+}
+function motDashCards(range) {
+  motDashEnsure(range);
+  var r = motRollup(range);
+  if (!r.days) return { miles: null, rpm: "" };
+  var rpm = r.ext > 0 && r.rev > 0 ? r.rev / r.ext : null;
+  return { roll: r, miles: '<div class="rpt-card"><div class="lbl">Total mileage</div><div class="rpt-big">' + Math.round(r.total).toLocaleString() + '</div><div class="rpt-sub">' +
+      Math.round(r.bag).toLocaleString() + " bag · " + Math.round(r.intf).toLocaleString() + " internal · " + Math.round(r.ext).toLocaleString() + " external (Motive)</div></div>",
+    rpm: '<div class="rpt-card"><div class="lbl">External RPM</div><div class="rpt-big">' + (rpm ? "$" + rpm.toFixed(2) : "—") + '</div><div class="rpt-sub">$' + Math.round(r.rev).toLocaleString() + " over " + Math.round(r.ext).toLocaleString() + " external miles, deadhead included</div></div>" };
+}
+function motBrokerTable(r) {
+  var list = Object.keys(r.brokers).map(function (k) { var x = r.brokers[k]; return { who: k, loads: x.loads, rev: x.rev, miles: x.miles, rpm: x.miles ? x.rev / x.miles : null }; }).sort(function (a, b) { return b.rev - a.rev; });
+  if (!list.length) return "";
+  return '<div class="rpt-card rpt-months"><div class="lbl">External RPM by customer</div><table><thead><tr><th></th><th>Loads</th><th>Revenue</th><th>External miles</th><th>RPM</th></tr></thead><tbody>' +
+    list.map(function (x) { return "<tr><td>" + esc(x.who) + "</td><td>" + x.loads + "</td><td>" + rptMoney(x.rev) + "</td><td>" + Math.round(x.miles).toLocaleString() + "</td><td>" + (x.rpm ? "$" + x.rpm.toFixed(2) : "—") + "</td></tr>"; }).join("") +
+    '</tbody></table><div class="rpt-foot">Each day\'s external miles are shared evenly between that day\'s external loads. ' +
+    (r.noLoadMiles ? Math.round(r.noLoadMiles).toLocaleString() + " external miles were on days with no external load (shop, fuel, empty miles) and count in the total above." : "") + "</div></div>";
 }
 function vReports() {
   rptSavedLoad();
   if (!REP.data && !REP.loading && !REP.err) rptDataLoad(); else if (REP.stale && !REP.loading) rptDataLoad();
-  var h = toolbarHtml("Reports", {
-    plain: true, className: "rpt-toolbar", context: REP.tab === "dash" ? rptPeriodSelect() + '<span class="rpt-live">' + esc(rptUpdatedText()) + "</span>" : "",
-    secondary: '<button class="btn" data-rptrefresh="1">Refresh Data</button><button class="btn" data-report="dump">Export Everything</button>',
-    primary: '<button class="btn pri" id="rpt-new">+ New Report</button>'
+  var mot = REP.tab === "motive";
+  // the same bar as Orders and Current Week (compact buttons, one primary on the right), then everything else scrolls below it
+  var h = toolbarHtml("Reports", mot ? {
+    className: "orders-toolbar rpt-toolbar", context: motTabContext(),
+    secondary: '<button class="btn sm" data-mot="all" title="Every truck-day saved from Motive, all the data, as one CSV">Download All Motive</button>',
+    primary: '<button class="btn pri sm" data-mot="pull">Pull From Motive</button>'
+  } : {
+    className: "orders-toolbar rpt-toolbar", context: rptPeriodSelect() + '<span class="rpt-live">' + esc(rptUpdatedText()) + "</span>",
+    secondary: '<button class="btn sm" data-rptrefresh="1">Refresh Data</button><button class="btn sm" data-report="dump">Export Everything</button>',
+    primary: '<button class="btn pri sm" id="rpt-new">+ New Report</button>'
   });
-  h += '<div class="rpt-tabs" role="tablist"><button class="' + (REP.tab === "dash" ? "on" : "") + '" data-rpttab="dash" role="tab">Dashboard</button>' +
-    '<button class="' + (REP.tab === "exp" ? "on" : "") + '" data-rpttab="exp" role="tab">Exports</button></div>';
-  if (REP.noSql) h += '<div class="note-bar">Saved reports are not set up in the database yet, so only the built-in tiles show. Run the saved reports SQL to save your own.</div>';
-  return h + (REP.tab === "dash" ? rptDashHtml() : rptExportsHtml());
+  h += '<div class="grid-wrap rpt-page"><div class="rpt-tabs" role="tablist"><button class="' + (REP.tab === "dash" ? "on" : "") + '" data-rpttab="dash" role="tab">Dashboard</button>' +
+    '<button class="' + (mot ? "on" : "") + '" data-rpttab="motive" role="tab">Motive</button></div>';
+  if (REP.noSql && !mot) h += '<div class="note-bar">Saved reports are not set up in the database yet, so only the built-in tiles show. Run the saved reports SQL to save your own.</div>';
+  return h + (mot ? vMotiveTab() : rptDashHtml()) + "</div>";
 }
 /* --- the pivot window --- */
 function rptFieldOpts() {
@@ -5122,8 +5339,8 @@ function settingsHelp() {
       "Edit a cell directly. Use the numbered gutter to select one or several rows, then use the table action for archive or delete. " +
       "The header <b>+</b> adds a field, and Manage Columns controls field order and visibility. Archived directory records remain on historical orders."],
     ["Mileage, delivery dates, and rates",
-      "<b>Sync Mileage</b> fills available truck mileage from Motive. If an internal rate is set, blank internal freight charges " +
-      "are calculated in that same run; existing charges are not overwritten. <b>Sync Delivery Dates</b> copies completed schedule dates back to orders."],
+      "<b>Sync Delivery Dates</b> copies completed schedule dates back to orders, saves Motive's miles for those days, and opens a window listing the delivered " +
+      "orders that still need mileage. Type the miles (and change the cost if you need to), Save, and the order leaves the list. The Motive tab under Reports shows each truck's day."],
     ["Settings and shortcuts",
       "General contains theme, accent, font, order numbering, and Scheduler sizing. Shortcuts can be " +
       "re-recorded, and <b>Add shortcut</b> gives an action an additional key combination."],
@@ -5241,36 +5458,233 @@ function internalFreightRateHtml() {
    edge on Orders pages, leaving this page toolbar focused on sync/actions.
    #sync-all is click-delegated by id (07-events.js): it runs both syncs and shows the results window. */
 function ordersToolbarExtras() {
-  return '<button class="btn sm" id="sync-all" title="Pull delivery dates from the schedule and mileage from Motive, then review the changes">' +
-    icon("sync") + 'Sync Mileage &amp; Dates</button>';
+  return '<button class="btn sm" id="sync-all" title="Pull delivery dates from the schedule, then add miles and cost to the delivered orders">' +
+    icon("sync") + 'Sync Delivery Dates</button>';
 }
-/* ── Sync Mileage & Dates: one button, then a review window ───────────────
-   Runs "sync delivery dates" and the Motive mileage pull together, fills any blank Transfer $ from the
-   miles, then lists every order that changed so it can be corrected right there. Edits in the window
-   save like the same boxes in the order trackers (the $ follows the miles every time). */
-var SYNC_FIELDS = ["delivery_date", "truck_id", "truck_number", "miles", "motive_miles", "miles_adjusted", "internal_freight_amount", "motive_synced_at"];
-function syncSnapshot() {
-  var snap = {};
-  orders().forEach(function (o) {
-    var x = {}; SYNC_FIELDS.forEach(function (k) { x[k] = o[k]; }); snap[o.id] = x;
+/* ── Motive truck-days and the mileage review ─────────────────────────────
+   Motive says how far each truck ran each day (odometers, first on, last off, hours). That is the true total.
+   Bag orders and internal freight carry miles typed (or confirmed) on the order; whatever the truck ran beyond
+   those is the External bucket, so Bag + Internal + External always adds up to Motive's total.
+   One pull saves each truck-day to Supabase (motive_daily) and records the day as pulled, so a day is asked
+   from Motive once. Today is never pulled (it is not finished). Sync Delivery Dates syncs the dates, makes sure
+   Motive's days are saved, then opens the review window for delivered orders whose mileage is not confirmed. */
+var MOT = { rows: {}, pulled: {}, from: "", to: "", loading: false, err: "", view: "day", day: "", pick: null, week: "" };
+function motAddDays(iso, n) { var d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n); return rptIso(d); }
+function motYesterday() { return motAddDays(TODAY, -1); }
+function motMonday(iso) { var d = new Date(iso + "T12:00:00"), k = (d.getDay() + 6) % 7; d.setDate(d.getDate() - k); return rptIso(d); }
+function motDaysBetween(a, b) { var out = [], d = a, n = 0; while (d <= b && n++ < 400) { out.push(d); d = motAddDays(d, 1); } return out; }
+function motKey(truck, day) { return String(truck) + "|" + day; }
+function motRow(truck, day) { return MOT.rows[motKey(truck, day)] || null; }
+function motNum(v) { var n = v == null || v === "" ? null : Number(v); return n == null || isNaN(n) ? null : n; }
+// Read saved truck-days for a range into MOT (merging).
+function motLoad(from, to) {
+  return api("motive/days-list", { from: from, to: to }).then(function (res) {
+    (res.days || []).forEach(function (r) { MOT.rows[motKey(r.truck_number, String(r.day).slice(0, 10))] = r; });
+    (res.pulled || []).forEach(function (d) { MOT.pulled[String(d).slice(0, 10)] = true; });
+    return res;
   });
-  return snap;
 }
+// Days in [from, to] that are finished (before today) and not saved yet.
+function motMissing(from, to) {
+  var last = motYesterday(); if (to > last) to = last;
+  return from > to ? [] : motDaysBetween(from, to).filter(function (d) { return !MOT.pulled[d]; });
+}
+// Pull the given days from Motive (31 at a time) and save them. force = true re-pulls days already saved.
+function motPull(days) {
+  if (!days.length) return Promise.resolve(0);
+  days = days.slice().sort();
+  var chunks = [], cur = [];
+  days.forEach(function (d) {
+    if (cur.length && (new Date(d) - new Date(cur[0])) / 864e5 > 30) { chunks.push(cur); cur = []; }
+    cur.push(d);
+  });
+  if (cur.length) chunks.push(cur);
+  var saved = 0;
+  return chunks.reduce(function (p, ch) {
+    return p.then(function () {
+      var set = {}; ch.forEach(function (d) { set[d] = 1; });
+      return api("motive/days", { start: ch[0], end: ch[ch.length - 1] }).then(function (res) {
+        var rows = (res.days || []).filter(function (r) { return set[String(r.day).slice(0, 10)]; });
+        return api("motive/days-save", { rows: rows, days: ch }).then(function () { saved += rows.length; });
+      });
+    });
+  }, Promise.resolve()).then(function () { return motLoad(days[0], days[days.length - 1]); }).then(function () { return saved; });
+}
+// Make sure every day in the list is saved: load what exists, pull only what is missing.
+function motEnsure(days) {
+  if (!days.length) return Promise.resolve(0);
+  var s = days.slice().sort(), from = s[0], to = s[s.length - 1];
+  return motLoad(from, to).then(function () { return motPull(s.filter(function (d) { return d <= motYesterday() && !MOT.pulled[d]; })); });
+}
+
+// Orders that ran on this truck on this day (cancelled and the old 2025 history left out).
+function motOrdersFor(truck, day) {
+  return orders().filter(function (o) {
+    return String(o.truck_number || "") === String(truck) && String(o.delivery_date || "").slice(0, 10) === day && o.stage !== "cancelled" && !isHistorical(o);
+  });
+}
+function motIsInternal(o) { return o.kind === "internal" || o.is_transfer === true || o.is_transfer === "true"; }
+// Bag / internal / external miles for one truck-day. External is whatever Motive recorded beyond the miles on bag and internal orders.
+function motBuckets(truck, day) {
+  var row = motRow(truck, day), T = row ? motNum(row.miles) : null, bag = 0, intf = 0, ext = [];
+  motOrdersFor(truck, day).forEach(function (o) {
+    if (!motIsInternal(o)) { ext.push(o); return; }
+    var m = motNum(o.miles) || 0;
+    if (o.is_transfer === true || o.is_transfer === "true") intf += m; else bag += m;
+  });
+  var rest = T == null ? null : T - bag - intf;
+  return { total: T, bag: bag, intf: intf, ext: rest == null ? null : Math.max(0, rest), over: rest != null && rest < 0 ? -rest : 0, extOrders: ext };
+}
+function motFmtTime(iso) { if (!iso) return "—"; var d = new Date(iso); return isNaN(d) ? "—" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+function motTruckDriver(truck) { var t = (DB.trucks || []).filter(function (x) { return String(x.number) === String(truck); })[0]; return t && t.driver_name || ""; }
+function motFreightCost(miles) {
+  var cfg = DB.internal_freight_rate || {}, r = Number(cfg.rate_per_mile) || 0, mn = Number(cfg.minimum_charge) || 0;
+  return r > 0 && miles > 0 ? Math.round(Math.max(miles * r, mn) * 100) / 100 : null;
+}
+
+/* ── The review window ─────────────────────────────────────────────────── */
+var MRV = { groups: [], note: "" };
+function mrvRowFor(o) {
+  var isInt = motIsInternal(o), conf = !!o.miles_confirmed_at, mi = motNum(o.miles), amt = motNum(o.internal_freight_amount);
+  // a cost typed before delivery (or one that differs from miles x rate) is kept as typed; otherwise it follows the miles
+  var manual = isInt && amt != null && (mi == null || Math.abs(amt - (motFreightCost(mi) || 0)) > 0.005);
+  // done = confirmed in this window before, or already has both miles and a cost (typed on the order, or from the old sync)
+  return { id: o.id, o: o, ext: !isInt, done: isInt && (conf || (mi != null && amt != null)), m: isInt ? mi : null, cost: manual ? amt : null, costShown: amt };
+}
+function mrvBuild() {
+  var last = motYesterday(), first = motAddDays(TODAY, -31), by = {};   // the last 31 days, like the old sync
+  orders().forEach(function (o) {
+    if (!motIsInternal(o) || o.miles_confirmed_at || isHistorical(o) || o.stage === "cancelled") return;
+    if (motNum(o.miles) != null && motNum(o.internal_freight_amount) != null) return;      // already has miles and a cost
+    var day = String(o.delivery_date || "").slice(0, 10);
+    if (!day || day > last || day < first) return;
+    var truck = o.truck_number ? String(o.truck_number) : "", k = truck + "|" + day;
+    by[k] = by[k] || { truck: truck, day: day, rows: [] };
+  });
+  Object.keys(by).forEach(function (k) {
+    var g = by[k];
+    var list = g.truck ? motOrdersFor(g.truck, g.day) : orders().filter(function (o) {
+      return motIsInternal(o) && !o.truck_number && !o.miles_confirmed_at && !(motNum(o.miles) != null && motNum(o.internal_freight_amount) != null) && String(o.delivery_date || "").slice(0, 10) === g.day && !isHistorical(o) && o.stage !== "cancelled";
+    });
+    g.rows = list.map(mrvRowFor);
+  });
+  MRV.groups = Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) {
+    return a.day < b.day ? 1 : a.day > b.day ? -1 : String(a.truck).localeCompare(String(b.truck)); });
+}
+// What each row shows: typed miles, or a suggestion worked out from Motive's total. Pure function of the group.
+function mrvCalc(g) {
+  var row = g.truck ? motRow(g.truck, g.day) : null, T = row ? motNum(row.miles) : null;
+  var ints = g.rows.filter(function (r) { return !r.ext; }), exts = g.rows.filter(function (r) { return r.ext; });
+  var typed = 0; ints.forEach(function (r) { if (r.m != null) typed += r.m; });
+  var info = { total: T, typed: typed, over: 0, extMiles: null, sug: {}, extRpm: null };
+  if (T == null) return info;
+  var rest = T - typed;
+  if (rest < 0) info.over = -rest;
+  var open = ints.filter(function (r) { return r.m == null && !r.done; });
+  if (!exts.length) {
+    var left = rest, k = open.length;
+    open.forEach(function (r) { var v = k === 1 ? Math.max(0, Math.round(left * 10) / 10) : Math.max(0, Math.round(rest / open.length)); info.sug[r.id] = v; left -= v; k--; });
+  }
+  info.extMiles = Math.max(0, Math.round(rest * 10) / 10);
+  if (exts.length) { var rev = exts.reduce(function (a, r) { return a + (motNum(r.o.external_rate) || 0); }, 0); if (rev && info.extMiles) info.extRpm = rev / info.extMiles; }
+  return info;
+}
+function mrvLabel(o) { var l = syncOrderLabel(o); return l[0] + (l[1] ? " · " + l[1] : ""); }
+function mrvCardsHtml() {
+  if (!MRV.groups.length) return '<div class="sync-none">Nothing needs mileage right now.</div>';
+  return MRV.groups.map(function (g, gi) {
+    var c = mrvCalc(g), row = g.truck ? motRow(g.truck, g.day) : null, drv = (row && row.drivers) || motTruckDriver(g.truck);
+    var h = '<div class="mrv-card"><div class="mrv-hd"><b>' + esc(g.truck || "No truck") + "</b>" + (drv ? " · " + esc(drv) : "") + " · " + esc(fmtLongDay(g.day)) +
+      '<span class="mrv-tot">' + (c.total != null ? "Motive says <b>" + c.total + "</b> mi" : (g.truck ? "No Motive data for this day" : "No truck on these orders")) + "</span></div>" +
+      '<div class="mrv-cols"><span>Type</span><span>Order</span><span>Miles</span><span>Cost</span><span>RPM</span></div>';
+    g.rows.forEach(function (r, ri) {
+      var o = r.o, type = r.ext ? "External" : o.is_transfer ? "Internal freight" : "Bag order", cls = r.ext ? "x" : o.is_transfer ? "i" : "b";
+      if (r.ext) {
+        var rate = motNum(o.external_rate);
+        h += '<div class="mrv-r ext"><span class="mrv-tag ' + cls + '">' + type + "</span><span>" + esc(mrvLabel(o)) + '</span><span class="mrv-n">' +
+          (c.extMiles != null ? c.extMiles : "") + '</span><span class="mrv-n mute">' + (rate != null ? "$" + rate.toLocaleString() + " rate" : "no rate") +
+          '</span><span class="mrv-n">' + (c.extRpm ? "$" + c.extRpm.toFixed(2) : "") + "</span></div>";
+        return;
+      }
+      if (r.done) {
+        h += '<div class="mrv-r done"><span class="mrv-tag ' + cls + '">' + type + "</span><span>" + esc(mrvLabel(o)) + ' <small>(done)</small></span><span class="mrv-n">' +
+          (motNum(o.miles) != null ? o.miles : "") + '</span><span class="mrv-n">' + (r.costShown != null ? "$" + r.costShown : "") + '</span><span></span></div>';
+        return;
+      }
+      var sug = c.sug[r.id], mShown = r.m != null ? r.m : null, mm = mShown != null ? mShown : sug;
+      var auto = mm != null ? motFreightCost(mm) : null;
+      h += '<div class="mrv-r"><span class="mrv-tag ' + cls + '">' + type + "</span><span>" + esc(mrvLabel(o)) + '</span>' +
+        '<input class="mrv-in' + (r.m == null ? " sug" : "") + '" data-mrv="' + gi + "|" + ri + '|m" value="' + (r.m != null ? r.m : "") + '" placeholder="' + (sug != null ? sug : "") + '" inputmode="decimal" aria-label="Miles">' +
+        '<input class="mrv-in' + (r.cost == null ? " sug" : "") + '" data-mrv="' + gi + "|" + ri + '|c" value="' + (r.cost != null ? r.cost : "") + '" placeholder="' + (auto != null ? "$" + auto.toFixed(2) : "") + '" inputmode="decimal" aria-label="Cost">' +
+        "<span></span></div>";
+    });
+    if (c.over) h += '<div class="mrv-flag bad">Over by ' + Math.round(c.over * 10) / 10 + " miles. Motive recorded " + c.total + ".</div>";
+    else if (c.total != null && g.rows.some(function (r) { return r.ext; })) h += '<div class="mrv-flag">External gets whatever is left: ' + c.extMiles + " miles so far.</div>";
+    return h + "</div>";
+  }).join("");
+}
+function fmtLongDay(iso) { var d = new Date(iso + "T12:00:00"); return d.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" }); }
+function mrvOpen(note) {
+  mrvBuild(); MRV.note = note || "";
+  openModal('<div class="modal-hd"><h2>Sync Delivery Dates</h2></div><div class="modal-body mrv-body">' +
+    (MRV.note ? '<div class="note-bar">' + MRV.note + "</div>" : "") +
+    '<p class="mrv-lead">Delivered orders from the last 31 days with no miles or no cost yet. Dashed boxes are suggestions: type over one and the leftover miles re-spread. Save confirms the miles and cost, and the order leaves this list. Orders that already have both are shown greyed so the day still adds up.</p>' +
+    '<div id="mrv-cards">' + mrvCardsHtml() + "</div></div>" +
+    '<div class="modal-ft"><button class="btn" id="modal-cancel">Close</button><button class="btn pri" id="mrv-save">Save</button></div>');
+  $("#modal").classList.add("wide-modal", "sync-modal");
+}
+document.addEventListener("input", function (e) {
+  var el = e.target.closest && e.target.closest("[data-mrv]"); if (!el) return;
+  var p = el.dataset.mrv.split("|"), g = MRV.groups[+p[0]], r = g && g.rows[+p[1]]; if (!r) return;
+  var v = el.value.replace(/[^0-9.]/g, ""), n = v === "" || v === "." ? null : Number(v), pos = el.selectionStart;
+  if (p[2] === "m") r.m = n; else r.cost = n;
+  $("#mrv-cards").innerHTML = mrvCardsHtml();
+  var back = document.querySelector('[data-mrv="' + el.dataset.mrv + '"]'); if (back) { back.focus(); try { back.setSelectionRange(pos, pos); } catch (x) { /* not a text box */ } }
+});
+function mrvSave() {
+  var jobs = [];
+  MRV.groups.forEach(function (g) {
+    var c = mrvCalc(g);
+    g.rows.forEach(function (r) {
+      if (r.ext || r.done) return;
+      var m = r.m != null ? r.m : c.sug[r.id];
+      if (m == null || m <= 0) return;                         // nothing to save yet: the order stays on the list
+      jobs.push({ r: r, m: m });
+    });
+  });
+  if (!jobs.length) { toast("Nothing to save yet.", true); return; }
+  var btn = $("#mrv-save"); if (btn) btn.disabled = true;
+  busyStart("Saving mileage…");
+  var i = 0, failed = 0;
+  (function next() {
+    if (i >= jobs.length) {
+      busyEnd();
+      return reload().then(function () {
+        closeModal(); toast("Saved " + (jobs.length - failed) + " order" + (jobs.length - failed === 1 ? "" : "s") + (failed ? " · " + failed + " failed" : ""), failed > 0); render();
+      });
+    }
+    var j = jobs[i++], body = { order_id: j.r.id, miles: String(j.m) };
+    if (j.r.cost != null) body.freight_amount = String(j.r.cost);        // a typed cost wins; otherwise the server works it out from the miles
+    api("freight", body).then(function () { return api("order/update", { id: j.r.id, miles_confirmed_at: new Date().toISOString() }); })
+      .catch(function (err) { failed++; console.error(err); toast(err.message, true); }).then(next);
+  })();
+}
+
+/* ── Sync Delivery Dates: dates, then Motive's missing days, then the review ── */
 function runSyncAll(btn) {
   if (btn.disabled) return;
-  btn.disabled = true; toast("Syncing delivery dates and mileage…");
-  var before = syncSnapshot(), notes = [], unmatched = [];
-  api("sync-delivery-dates", {}).catch(function (err) { notes.push("Delivery dates: " + err.message); })
-    .then(function () { return api("motive/sync-miles", {}); })
-    .then(function (r) { unmatched = (r && r.unmatched) || []; if (r && r.message) notes.push(r.message); },
-      function (err) { notes.push("Motive mileage: " + err.message); })
-    .then(function () {
-      var rate = DB.internal_freight_rate && DB.internal_freight_rate.rate_per_mile;
-      return rate ? api("internal-freight-rate/calculate", {}).catch(function () {}) : null;
-    })
+  btn.disabled = true; busyStart("Syncing delivery dates…");
+  var notes = [];
+  api("sync-delivery-dates", {}).catch(function (err) { notes.push("Delivery dates: " + esc(err.message)); })
     .then(reload)
-    .then(function () { btn.disabled = false; syncResultsModal(before, notes, unmatched); })
-    .catch(function (err) { btn.disabled = false; toast(err.message, true); });
+    .then(function () {
+      busyStart("Reading Motive…");
+      // every finished day of the last 31, not just the days with orders, so fleet and external miles are complete
+      var days = motDaysBetween(motAddDays(TODAY, -31), motYesterday()), dayMap = days;
+      return motEnsure(dayMap).catch(function (err) { notes.push("Motive: " + esc(err.message) + ". You can still type the miles by hand."); });
+    })
+    .then(function () { btn.disabled = false; busyEnd(); mrvOpen(notes.join(" · ")); })
+    .catch(function (err) { btn.disabled = false; busyEnd(); toast(err.message, true); });
 }
 function syncOrderLabel(o) {
   if (o.is_transfer) return [o.notes || "Internal freight", o.transfer_department_name || ""];
@@ -5278,68 +5692,7 @@ function syncOrderLabel(o) {
   var who = o.broker_name || o.customer_name || "";
   return [o.rexius_order_no || o.broker_load_no || "External order", who];
 }
-function syncResultsModal(before, notes, unmatched) {
-  var rows = [];
-  orders().forEach(function (o) {
-    var b = before[o.id]; if (!b) return;
-    var dateChg = String(b.delivery_date || "").slice(0, 10) !== String(o.delivery_date || "").slice(0, 10);
-    var milesChg = b.miles !== o.miles || b.motive_miles !== o.motive_miles;
-    var frChg = b.internal_freight_amount !== o.internal_freight_amount;
-    var noData = !!o.motive_synced_at && !b.motive_synced_at && o.motive_miles == null;
-    if (!(dateChg || milesChg || frChg || noData)) return;
-    var tags = [];
-    if (dateChg) tags.push(b.delivery_date ? "Date was " + isoToMdy(String(b.delivery_date).slice(0, 10)) : "Date filled in");
-    if (o.motive_miles != null && b.motive_miles !== o.motive_miles) tags.push(o.miles_adjusted ? "Motive " + o.motive_miles + " (kept your typed miles)" : "Miles from Motive");
-    if (noData) tags.push("No Motive data for truck " + (o.truck_number || "?"));
-    if (frChg && !milesChg) tags.push("$ calculated");
-    rows.push({ o: o, tags: tags, miles: o.is_transfer || o.kind === "internal" });
-  });
-  var h = '<div class="modal-hd"><h2>Sync results</h2></div><div class="modal-body sync-results">';
-  if (notes.length) h += '<div class="note-bar">' + notes.map(esc).join(" · ") + "</div>";
-  if (unmatched.length) h += '<div class="note-bar">No Motive data for truck ' + unmatched.map(esc).join(", ") +
-    ". Check the truck number matches the vehicle number in Motive.</div>";
-  if (!rows.length) h += "<p>Nothing needed updating.</p>";
-  else {
-    h += "<p>" + rows.length + " order" + (rows.length === 1 ? "" : "s") + " updated. Fix anything that looks wrong; changes save as you leave each box, and the $ follows the miles.</p>" +
-      '<div class="sync-scroll"><table class="data sync-table"><thead><tr><th>Order</th><th style="width:60px">Truck</th>' +
-      '<th style="width:118px">Delivered</th><th style="width:84px">Miles</th><th style="width:92px">Transfer $</th><th>What changed</th></tr></thead><tbody>';
-    rows.forEach(function (r) {
-      var o = r.o, lab = syncOrderLabel(o), id = esc(o.id);
-      h += '<tr data-syncrow="' + id + '"><td><div class="cell"><b>' + esc(lab[0]) + "</b>" + (lab[1] ? "<br><small>" + esc(lab[1]) + "</small>" : "") + "</div></td>" +
-        '<td><div class="cell n">' + esc(o.truck_number || "") + "</div></td>" +
-        '<td><div class="cell"><input class="cell-i n" type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-syncedit="' + id + '|delivery_date" data-last-iso="' +
-          esc(String(o.delivery_date || "").slice(0, 10)) + '" value="' + esc(isoToMdy(String(o.delivery_date || "").slice(0, 10))) + '"></div></td>' +
-        (r.miles
-          ? '<td><div class="cell"><input class="cell-i n" type="number" step="0.1" data-syncedit="' + id + '|miles" value="' + (o.miles == null ? "" : o.miles) + '"></div></td>' +
-            '<td><div class="cell"><input class="cell-i n" data-syncedit="' + id + '|freight_amount" value="' + (o.internal_freight_amount == null ? "" : o.internal_freight_amount) + '"></div></td>'
-          : '<td><div class="cell">—</div></td><td><div class="cell">—</div></td>') +
-        '<td><div class="cell"><small>' + esc(r.tags.join(" · ")) + "</small></div></td></tr>";
-    });
-    h += "</tbody></table></div>";
-  }
-  h += '</div><div class="modal-ft"><button class="btn pri" id="modal-cancel">Done</button></div>';
-  openModal(h);
-  $("#modal").classList.add("wide-modal", "sync-modal");
-}
-document.addEventListener("change", function (e) {
-  var el = e.target.closest && e.target.closest("[data-syncedit]");
-  if (!el) return;
-  var p = el.dataset.syncedit.split("|"), oid = p[0], field = p[1], o = order(oid);
-  if (!o) return;
-  var req, val;
-  if (field === "delivery_date") { val = el.dataset.lastIso || ""; req = api("order/update", { id: oid, delivery_date: val || null }); }
-  else { val = el.value; var body = { order_id: oid }; body[field] = val; req = api("freight", body); }
-  req.then(function (row) {
-    if (row) for (var k in row) o[k] = row[k];
-    var tr = el.closest("tr");
-    // the $ follows the miles: show what the server worked out
-    if (field === "miles" && tr) {
-      var fr = tr.querySelector('[data-syncedit$="|freight_amount"]');
-      if (fr) fr.value = o.internal_freight_amount == null ? "" : o.internal_freight_amount;
-    }
-    render();
-  }).catch(function (err) { toast(err.message, true); });
-});
+document.addEventListener("click", function (e) { if (e.target.closest && e.target.closest("#mrv-save")) mrvSave(); });
 function render() {
   if ((SUB === "cw" || SUB === "driver") && needsHistory(CW_START) && !HISTORY_FETCH)
     ensureHistory().then(function (got) { if (got) render(); });
@@ -5396,7 +5749,7 @@ function render() {
       requestAnimationFrame(function () { schedNode.scrollTop = schedScrollTop; });
     }
   } else if (SUB === "cw" || SUB === "driver" || SUB === "int" || SUB === "xfer" || SUB === "ext" ||
-             SUB === "bill" || SEC === "database") {
+             SUB === "bill" || SUB === "rep" || SEC === "database") {
     // Inserted straight into #main, not wrapped in a .pad (D137/D140,
     // extended to the three Orders trackers D237, and to Billing/Database
     // D256) — identical to how vScheduler()'s own toolbar+grid-wrap pair
@@ -5415,7 +5768,7 @@ function render() {
     // `main`/`.grid-wrap` already provide generically, just with padding.
     main.insertAdjacentHTML("beforeend", SUB === "cw" ? vCurrentWeek() : SUB === "driver" ? vDriverView() :
       SUB === "int" ? vInternal() : SUB === "xfer" ? vInternalFreight() : SUB === "ext" ? vOrders("external") :
-      SUB === "bill" ? vBilling() : vDatabase(SUB));
+      SUB === "bill" ? vBilling() : SUB === "rep" ? vReports() : vDatabase(SUB));
   } else {
     var html = SUB === "rep" ? vReports() : vSettings(SUB);
     var pad = document.createElement("div");
