@@ -125,7 +125,7 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | **Orders → Bag Orders** | `vInternal`, `bagOrderRowHtml` | `api_internal_order_add` (numbering), `api_order_update`, `api_freight`, **Sync Mileage & Dates** (`motive-sync`, `api_sync_delivery_dates`) |
 | **Orders → Internal Freight** | `vInternalFreight`, `xferOrderRowHtml` | `api_transfer_order_add`, `api_order_update`, `api_freight` |
 | **Orders → External Orders** | `vOrders`, `extOrderRowHtml` | `api_order_create`, `api_order_update`, `api_order_route_save`, `api_order_copy`, `api_order_cancel`, `api_order_delete` |
-| **Billing → Invoices & Packages** | `vBilling` | `api_document_save` / `_attach` / `_delete` + Storage; `orders.billed_date` |
+| **Billing → Invoices & Packages** | `vBilling`, `billDocCardHtml` (To Match cards), `invoiceCandidates` / `readInvoiceBands` (the invoice reader), `ingestBatch`, `attachInvoiceDoc` | `api_document_save` / `_attach` / `_delete` + Storage; `orders.billed_date` |
 | **Reports → Export & Reports** | `vReports` (dashboard tiles, pivot builder, pinned reports) | `api_report_rows`, `api_report` (CSV), `api_saved_report_list` / `_save` / `_delete` |
 | **Database** (tabs across the top) | `vDatabase` → `vBuiltin` (Bagger Customers, External Customers, Pick/Drop, Fleet, Internal Freight departments), `vSheet` (custom sheets) | `api_row_update`, `api_row_custom`, `api_grid_row_*`, `api_database_archive`, `api_grid_column_*`, `api_entity_*`, `api_field_*`, `api_record_*`, `api_sheet*` |
 | **Settings** (gear, bottom left) | `vSettings` (General, Shortcuts) | `api_order_number_settings_save` |

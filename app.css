@@ -1172,7 +1172,7 @@ details[open]>summary.sec-h::before{content:"\25BE"}
 .settings-section-title{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:14px}
 .settings-section-title p{color:var(--ink-2);font-size:var(--fs-body)}
 .settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}
-.settings-grid{grid-template-areas:"theme accent" "outlook accent" "type account";align-items:stretch}
+.settings-grid{grid-template-areas:"theme accent" "type accent";align-items:stretch}
 .set-theme{grid-area:theme}.set-accent{grid-area:accent}.set-type{grid-area:type}.set-account{grid-area:account}.set-outlook{grid-area:outlook}
 .set-card{background:var(--panel);border:1px solid var(--rule);border-radius:var(--r-lg);padding:18px;margin-bottom:14px;box-shadow:var(--e1)}
 .settings-grid>.set-card{margin-bottom:0}
@@ -1383,7 +1383,7 @@ body.nav-collapsed .nav-footer-btn>span:last-child{display:none}
   #drawer{width:100vw}
   .modal-card{max-width:none}
   #profile-menu{right:8px!important}
-  .settings-grid{grid-template-columns:1fr;grid-template-areas:"theme" "accent" "type" "account" "outlook"}
+  .settings-grid{grid-template-columns:1fr;grid-template-areas:"theme" "accent" "type"}
   .profile-card{grid-template-columns:auto 1fr}
   .profile-edit{grid-column:1/-1;justify-content:stretch}
   .profile-edit .setting-field{flex:1}
@@ -1591,3 +1591,46 @@ th.tsortable:hover{color:var(--ink);background:var(--panel)}
 .busy{display:inline-flex;align-items:center;gap:8px;margin-right:12px;font-size:var(--fs-label);color:var(--ink-2)}
 .spin{width:14px;height:14px;border:2px solid var(--rule-2);border-top-color:var(--brand);border-radius:50%;animation:spin .8s linear infinite;flex:none}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* Billing page (vBilling): drop strip, To Match list on the left, Billing Queue table on the right */
+.bill-page{padding-right:12px}
+.bill-filters{display:inline-flex;gap:6px}
+.bill-drops{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.bill-drops .drop{margin:0;padding:12px}
+.bill-progress{display:flex;align-items:center;gap:8px;margin:0 0 12px;font-size:var(--fs-label);color:var(--ink-2)}
+.bill-board{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,380px);gap:16px;align-items:start}
+.bill-col{min-width:0}
+.bill-col>.sec-h{display:flex;align-items:center;gap:8px}
+.bill-ready{margin-left:auto;font-family:var(--mono);font-size:var(--fs-caption);color:var(--good);letter-spacing:.06em}
+.bill-docs{display:flex;flex-direction:column;gap:8px}
+.bill-doc{border:1px solid var(--rule-2);border-radius:var(--r-md);background:var(--panel);padding:8px 10px;display:flex;flex-direction:column;gap:6px;cursor:grab}
+.bill-doc.dragging{opacity:.45}
+.bill-doc-hd{display:flex;align-items:center;gap:8px;min-width:0}
+.bill-doc-hd b{font-size:var(--fs-body-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.bill-doc-acts{margin-left:auto;display:flex;gap:4px;flex:none}
+.bill-sug{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:var(--fs-label)}
+.bill-sug .af{margin:0;cursor:default}
+.bill-sug b{font-weight:650}
+.bill-sug .btn{margin-left:auto}
+.bill-sug.alt{opacity:.85}
+.bill-sug.none{color:var(--ink-3)}
+.bill-why{color:var(--ink-3);font-size:var(--fs-label)}
+.bill-doc select.cell-i{width:100%}
+.billing-tracker .bill-invcell{display:flex;align-items:center;gap:6px}
+.bill-invno{font-family:var(--mono);font-size:var(--fs-label);color:var(--ink-2)}
+.bill-x{margin-left:auto;border:0;background:none;color:var(--ink-3);font-size:var(--fs-h3);line-height:1;cursor:pointer;padding:0 4px}
+.bill-x:hover{color:var(--bad)}
+@media(max-width:980px){.bill-board{grid-template-columns:1fr}.bill-drops{grid-template-columns:1fr}}
+.billing-tracker{min-width:980px}
+.billing-tracker td .cell{white-space:nowrap;text-overflow:clip}
+
+/* Billing queue paperwork bars: RC / POD / INV, filled when on file; the row's left edge shows ready (green) or waiting (amber) */
+.billing-tracker tbody tr,.billing-tracker tbody td{height:44px}
+.bill-pw{display:inline-flex;gap:5px;vertical-align:middle}
+.bill-pw span{display:flex;flex-direction:column;gap:3px;width:34px}
+.bill-pw em{font:600 var(--fs-caption)/1 var(--mono);font-style:normal;letter-spacing:.08em;color:var(--ink-3)}
+.bill-pw b{display:block;height:7px;border-radius:0;background:var(--paper);border:1px solid var(--rule-2)}
+.bill-pw .y em{color:var(--good)}
+.bill-pw .y b{background:var(--good);border-color:var(--good)}
+.billing-tracker tr.bill-ready td:first-child{box-shadow:inset 3px 0 0 var(--good)}
+.billing-tracker tr.bill-wait td:first-child{box-shadow:inset 3px 0 0 var(--warn)}

@@ -1663,6 +1663,84 @@ function parseRateCon(text, filename) {
   return out;
 }
 
+/* Reading a scanned Rexius invoice. Reading the whole page as one block misses the small boxes: on 428 real scans
+   the full-page read found the invoice number 72% of the time and the Rexius order number almost never (the table
+   cell is shaded and the number prints with no dashes). The form is the same every time, so read just the two boxes
+   that matter, each on its own: the top right (invoice date, invoice no., customer no.) and the order table (order no.).
+   Tested on those 428 scans: invoice number 99%, order number 99%, and every order number matched the delivery
+   receipt in the same file. Smaller pictures also make it faster than reading the whole page. */
+var INVOICE_BANDS = {
+  head:  { box: [0.60, 0.0, 1.0, 0.22],    zoom: 2 },     // invoice date, invoice no., customer no.
+  table: { box: [0.0, 0.295, 1.0, 0.37],   zoom: 2 },     // the order table: Rexius order no.
+  row:   { box: [0.0, 0.312, 1.0, 0.352],  zoom: 3 },     // its one data row: customer order no. (the broker's load #), truck, terms
+  sold:  { box: [0.0, 0.18, 1.0, 0.30],    zoom: 2 }      // Sold To / Shipped To: names and street addresses
+};
+function loadImageEl(src) {
+  return new Promise(function (res, rej) { var im = new Image(); im.onload = function () { res(im); }; im.onerror = rej; im.src = src; });
+}
+function readInvoiceBands(b64) {
+  if (!window.Tesseract || !window.pdfjsLib) return Promise.resolve(null);
+  return pdfjsLib.getDocument({ data: bytesFromB64(b64) }).promise.then(function (pdf) {
+    return pdfPageImage(pdf, 1);
+  }).then(loadImageEl).then(function (img) {
+    return getOcrWorker().then(function (worker) {
+      function crop(band) {
+        var b = band.box, z = band.zoom, w = img.width, h = img.height, x = Math.floor(w * b[0]), y = Math.floor(h * b[1]),
+            cw = Math.floor(w * (b[2] - b[0])), ch = Math.floor(h * (b[3] - b[1]));
+        var c = document.createElement("canvas"); c.width = cw * z; c.height = ch * z;
+        c.getContext("2d").drawImage(img, x, y, cw, ch, 0, 0, cw * z, ch * z);
+        return c.toDataURL("image/png");
+      }
+      var out = {}, chain = worker.setParameters({ tessedit_pageseg_mode: "11" });   // sparse text: finds numbers floating in boxes
+      Object.keys(INVOICE_BANDS).forEach(function (k) {
+        chain = chain.then(function () { return worker.recognize(crop(INVOICE_BANDS[k])); }).then(function (r) { out[k] = r.data.text || ""; });
+      });
+      return chain.then(function () { return worker.setParameters({ tessedit_pageseg_mode: "3" }); }).then(function () { return out; });
+    });
+  }).then(function (o) {
+    if (!o) return null;
+    var inv = (o.head.match(/\b\d{6}\b/g) || []).filter(function (x) { return x.indexOf("1200") !== 0; })[0] || null;
+    var ordRe = /\b(12)(\d{2})(\d{2})(\d{4})\b/g;
+    var on = ((o.table + "\n" + o.row).match(ordRe) || []).filter(function (x) { var m = +x.slice(2, 4); return m >= 1 && m <= 12; })[0];
+    var solomon = on ? on.slice(0, 2) + "-" + on.slice(2, 6) + "-" + on.slice(6) : null;
+    // customer order no. (the broker's load #): whatever else in the table row looks like a number or code
+    var toks = (o.row + "\n" + o.table).split(/\n+/).map(function (x) { return x.replace(/[^A-Za-z0-9\-]/g, "").toUpperCase(); })
+      .filter(function (x) { return x.length >= 4 && /\d/.test(x) && !/^12\d{8}$/.test(x) && !/^00\d{2}$/.test(x); });
+    var keys = o.sold.split(/\n/).map(afStreetKey).filter(Boolean);
+    return { invoiceNum: inv, solomon: solomon,
+      text: o.head + "\n" + o.table + "\n" + o.row + (solomon ? "\n " + solomon + " " : ""),
+      feat: { rowToks: toks, soldKeys: keys, soldText: o.sold.toLowerCase().replace(/[^a-z0-9 ]+/g, " ") } };
+  }).catch(function (e) { console.error("Invoice band read failed", e); return null; });
+}
+/* Who an invoice could belong to. Scores every load still waiting to bill against what was read off the invoice:
+   the Rexius order # (certain), the broker's load #, PO or delivery # in the order table, the delivery street (from the
+   load's own route or its rate con), and the Bill To name. Tested on 194 real invoices against their own rate cons: a best
+   score of 5 or more with a 3-point lead picked the right load 102 times and the wrong one twice; the rest were
+   repeat lanes (same broker, same drop) that only a load # tells apart. So a match from this is a suggestion to confirm,
+   never attached on its own. */
+function invoiceCandidates(info) {
+  var f = info.feat || {}, toks = f.rowToks || [], keys = f.soldKeys || [], soldText = f.soldText || "", out = [];
+  function compact(v) { return String(v || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+  queueOrders().forEach(function (o) {
+    var sc = 0, why = [];
+    if (info.solomon && o.rexius_order_no === info.solomon) { sc += 20; why.push("Order # " + info.solomon); }
+    var ids = [["Load #", o.broker_load_no], ["PO #", o.po_number], ["Delivery #", o.delivery_number]];
+    for (var i = 0; i < ids.length && !why.some(function (w) { return /#/.test(w) && w !== "Order # " + info.solomon; }); i++) {
+      var k = compact(ids[i][1]);
+      if (k.length >= 4 && toks.some(function (t) { t = compact(t); return t === k || (k.length >= 5 && t.indexOf(k) >= 0); })) { sc += 6; why.push(ids[i][0] + " " + ids[i][1]); }
+    }
+    var addrs = [], loc = o.delivery_location_id ? locById(o.delivery_location_id) : null;
+    if (loc && loc.address) addrs.push(loc.address);
+    docsFor(o.id).forEach(function (d) { var ef = d.doc_type === "rate_con" && d.extracted_fields; if (ef && ef.delivery && ef.delivery.address) addrs.push(ef.delivery.address); });
+    if (addrs.some(function (a) { var key = afStreetKey(a); return key && keys.indexOf(key) >= 0; })) { sc += 3; why.push("Delivery address"); }
+    var title = buildChip(o).title, words = normBroker(title).toLowerCase().match(/[a-z]{4,}/g) || [];
+    if (words.some(function (w) { return soldText.indexOf(w) >= 0; })) { sc += 2; why.push("Bill To " + title); }
+    if (loc && loc.city && soldText.indexOf(String(loc.city).toLowerCase()) >= 0) sc += 1;
+    if (sc >= 3) out.push({ order_id: o.id, score: sc, why: why });
+  });
+  out.sort(function (a, b) { return b.score - a.score; });
+  return out;
+}
 /* extractInvoiceInfo — legacy :1738, position-aware then regex fallback.
    Real invoice batches (D225's 326 already-matched fixtures, tested
    2026-09-18) are scanned/faxed pages with NO embedded text layer at
@@ -1709,7 +1787,11 @@ function extractInvoiceInfo(b64) {
         var sm = full.match(SOLOMON);
         var thin = full.replace(/\s/g, "").length < 40;
         if (thin) {
-          return ocrPdf(b64).then(function (ocrText) {
+          return readInvoiceBands(b64).then(function (bands) {
+            if (bands && (bands.invoiceNum || bands.solomon)) return { invoiceNum: bands.invoiceNum, solomon: bands.solomon, text: bands.text, feat: bands.feat };
+            return ocrPdf(b64);
+          }).then(function (ocrText) {
+            if (ocrText && typeof ocrText === "object") return ocrText;
             if (ocrText.replace(/\s/g, "").length < 20) return { invoiceNum: invoiceNum, solomon: sm ? sm[0] : null, text: full };
             var ocrInv = ocrText.match(/Invoice\s*(?:No\.?|#|Number)\s*[:\s]\s*([0-9]{4,10})/i);
             var ocrSol = ocrText.match(SOLOMON);
@@ -3875,85 +3957,83 @@ function vInternalFreight() {
     h += '<div class="note-bar" style="margin-top:8px">No departments yet — add one from Database → Departments.</div>';
   return h;
 }
+/* Billing: documents on the left that still need a load, loads waiting to bill on the right. An invoice that fits a load
+   comes with a suggestion to confirm; anything else can be dragged onto the right load, or picked from the list. */
+function billDocCardHtml(d, exts) {
+  var ef = d.extracted_fields || {}, type = (d.doc_type || "other").replace("_", " ");
+  var sug = (ef.suggested || []).filter(function (c) { var o = order(c.order_id); return o && !o.billed_date; });
+  var title = d.doc_type === "invoice" && ef.invoiceNum ? "Invoice #" + ef.invoiceNum : (d.original_filename || "(file)");
+  var h = '<div class="bill-doc" draggable="true" data-dragdoc="' + d.id + '" title="Drag onto a load in the Billing Queue">' +
+    '<div class="bill-doc-hd"><span class="pill">' + esc(type) + "</span><b>" + esc(title) + "</b>" +
+    '<span class="bill-doc-acts"><a class="btn sm" href="#" data-filepath="' + esc(d.storage_path) + '" data-filename="' + esc(d.original_filename || "") + '" data-filemode="open">Open</a>' +
+    '<button class="btn sm bad" data-delete-doc="' + d.id + '">Delete</button></span></div>';
+  if (sug.length) {
+    var top = sug[0], o = order(top.order_id), strong = top.score >= 9;
+    h += '<div class="bill-sug"><span class="af ' + (strong ? "af-ok" : "af-check") + '">' + (strong ? "Likely" : "Possible") + "</span>" +
+      "<b>" + esc(orderLabel(o)) + "</b>" + (top.why.length ? '<span class="bill-why">' + esc(top.why.join(" · ")) + "</span>" : "") +
+      '<button class="btn sm" data-confirm-doc="' + d.id + "|" + o.id + '">Confirm</button></div>';
+    sug.slice(1).forEach(function (c) {
+      var o2 = order(c.order_id);
+      h += '<div class="bill-sug alt"><span class="bill-why">Or</span><b>' + esc(orderLabel(o2)) + "</b>" +
+        (c.why.length ? '<span class="bill-why">' + esc(c.why.join(" · ")) + "</span>" : "") +
+        '<button class="btn sm" data-confirm-doc="' + d.id + "|" + o2.id + '">Use This</button></div>';
+    });
+  } else if (d.doc_type === "invoice") {
+    h += '<div class="bill-sug none"><span class="bill-why">' + (ef.read_order_no ? "Order # " + esc(ef.read_order_no) + " is not on any load. " : "") + "No load fits yet. Drag it onto one, or pick below.</span></div>";
+  }
+  h += '<select class="cell-i" data-attach-doc="' + d.id + '"><option value="">Attach to a load…</option>' +
+    exts.map(function (o) { return '<option value="' + o.id + '">' + esc(orderLabel(o)) + "</option>"; }).join("") + "</select></div>";
+  return h;
+}
 function vBilling() {
+  var queue = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_date && !isHistorical(o); });
+  var haveOf = function (o) { var have = {}; docsFor(o.id).forEach(function (d) { have[d.doc_type] = d; }); return have; };
+  var readyN = queue.filter(function (o) { var hv = haveOf(o); return hv.pod && hv.invoice; }).length;
+  var shown = queue;   // always everything: no filter
   var h = toolbarHtml("Billing", {
-    secondary: '<button class="btn" id="bill-dl-sel">Download Selected (' + GROUP.length + ")</button>",
-    primary: '<button class="btn pri" id="bill-combine-sel">Combine Into One PDF (' + GROUP.length + ")</button>"
+    secondary: '<button class="btn sm" id="bill-dl-sel">Download Selected (' + GROUP.length + ")</button>",
+    primary: '<button class="btn pri sm" id="bill-combine-sel">Combine Into One PDF (' + GROUP.length + ")</button>"
   });
-  // Everything below the toolbar shares one outer .grid-wrap (D256) so it
-  // fills the space below the now-real toolbar header and scrolls as one
-  // region, same as every other section — the drop zones/unmatched table/
-  // invoice pool/billing queue keep stacking and scrolling together exactly
-  // as they did inside the old .pad, just not inset. The two inner
-  // `.grid-wrap`s below (unmatched table, billing queue table) aren't flex
-  // items of anything here — this outer one isn't display:flex — so they
-  // keep behaving exactly as before (horizontal scroll only).
-  h += '<div class="grid-wrap">';
-  h += '<div class="drop" id="batch-drop" style="margin-bottom:10px"><b>Drop a Rexius invoice batch here</b></div>';
-  h += '<div class="drop" id="loose-drop" style="margin-bottom:10px"><b>Drop a POD or loose document here</b></div>';
-  h += batchReviewHtml();
+  h += '<div class="grid-wrap bill-page">';
+  h += '<div class="bill-drops"><div class="drop" id="batch-drop"><b>Drop a Rexius invoice batch here</b> or click to choose</div>' +
+    '<div class="drop" id="loose-drop"><b>Drop a POD or loose document here</b> or click to choose</div></div>';
+  if (BATCH_REVIEW) h += '<div class="bill-progress"><span class="spin" aria-hidden="true"></span>Reading invoice ' + Math.min(BATCH_REVIEW.done + 1, BATCH_REVIEW.total) + " of " + BATCH_REVIEW.total + " from " + esc(BATCH_REVIEW.name) + "</div>";
 
-  /* Unmatched documents queue (Phase 4) — anything the D7 matcher couldn't
-     place. Attach each to an order by hand. */
   var unmatched = DB.documents.filter(function (d) {
     return d.matched_by === "unmatched" && !d.order_id && !d.load_id && !d.load_stop_id;
   });
-  if (unmatched.length) {
-    var exts = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !isHistorical(o); });
-    h += '<div class="sec-h">Unmatched documents — ' + unmatched.length + "</div>" +
-      '<div class="grid-wrap billing-unmatched-scroll"><table class="data" style="width:100%;min-width:780px;margin-bottom:12px"><thead><tr>' +
-      '<th style="width:90px">Type</th><th style="width:280px">File</th><th>Attach to order</th>' +
-      '<th style="width:132px"></th></tr></thead><tbody>';
-    unmatched.forEach(function (d) {
-      h += "<tr><td><div class=\"cell\"><span class=\"pill\">" + esc((d.doc_type || "other").replace("_", " ")) +
-        '</span></div></td>' +
-        '<td><div class="cell"><a href="#" data-filepath="' + esc(d.storage_path) + '" data-filemode="open">' +
-        esc(d.original_filename || "(file)") + "</a></div></td>" +
-        '<td><div class="cell"><select class="cell-i" data-attach-doc="' + d.id + '">' +
-        '<option value="">— pick an order —</option>' +
-        exts.map(function (o) {
-          return '<option value="' + o.id + '">' +
-            esc((o.rexius_order_no || o.broker_load_no || "no #") + " · " + buildChip(o).title) + "</option>";
-        }).join("") + "</select></div></td>" +
-        '<td><div class="cell" style="display:flex;gap:4px"><a class="btn sm" href="#" data-filepath="' + esc(d.storage_path) +
-        '" data-filemode="open">Open</a>' +
-        '<button class="btn sm bad" data-delete-doc="' + d.id + '">Delete</button></div></td></tr>';
-    });
-    h += "</tbody></table></div>";
-  } else {
-    h += '<div class="sec-h">Unmatched documents — 0</div>' +
-      emptyStateHtml("Nothing unmatched right now");
-  }
-  var queue = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_date && !isHistorical(o); });
-  h += '<div class="sec-h">Billing queue — ' + queue.length + "</div>";
-  h += '<div class="grid-wrap"><table class="data" style="min-width:1040px"><thead><tr>' +
-    '<th style="width:44px"></th><th style="width:140px">Order #</th><th style="width:220px">Customer / Broker</th>' +
-    '<th style="width:80px">POD</th><th style="width:80px">Invoice</th><th style="width:110px">Status</th>' +
-    '<th style="width:270px"></th></tr></thead><tbody>';
-  queue.forEach(function (o) {
-    var have = {}; docsFor(o.id).forEach(function (d) { have[d.doc_type] = d; });
-    function tick(t) {
-      if (!have[t]) return '<span class="pill bad">No</span>';
-      // An invoice matched automatically says so, so it's easy to spot-check.
-      var auto = t === "invoice" && have[t].matched_by && have[t].matched_by !== "manual" ? '<span class="auto-tag">Auto</span>' : "";
-      return '<span class="pill on">Yes</span>' + auto;
-    }
-    var ready = have.pod && have.invoice;
-    h += '<tr class="bill-row" data-bill="' + o.id + '" data-roworder="' + o.id + '">' +
-      '<td><div class="cell"><input type="checkbox" data-group="' + o.id + '"' +
-        (GROUP.indexOf(o.id) >= 0 ? " checked" : "") + "></div></td>" +
+  var exts = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !isHistorical(o); });
+  var tm = '<section class="bill-col"><div class="sec-h">To Match <span class="ct">' + unmatched.length + "</span></div>";
+  tm += unmatched.length ? '<div class="bill-docs">' + unmatched.map(function (d) { return billDocCardHtml(d, exts); }).join("") + "</div>"
+    : emptyStateHtml("Nothing unmatched right now");
+  tm += "</section>";
+  h += '<div class="bill-board"><section class="bill-col"><div class="sec-h">Billing Queue <span class="ct">' + queue.length + "</span>" +
+    (readyN ? '<span class="bill-ready">' + readyN + " ready</span>" : "") + "</div>";
+  h += '<div class="grid-wrap"><table class="data order-tracker billing-tracker"><thead><tr>' +
+    '<th style="width:36px"></th>' + trackerOpenTh() +
+    '<th style="width:128px">Order #</th><th style="width:210px">Customer / Broker</th><th style="width:138px">Paperwork</th>' +
+    '<th style="width:170px">Invoice #</th><th style="width:196px"></th></tr></thead><tbody>';
+  shown.forEach(function (o) {
+    var have = haveOf(o), ready = have.pod && have.invoice;
+    var bars = [["rate_con", "RC"], ["pod", "POD"], ["invoice", "INV"]].map(function (t) {
+      return '<span class="' + (have[t[0]] ? "y" : "") + '" title="' + (have[t[0]] ? "On file" : "Missing") + '"><em>' + t[1] + "</em><b></b></span>";
+    }).join("");
+    var inv = have.invoice, ief = inv && inv.extracted_fields || {};
+    var invCell = !inv ? "—" :
+      (ief.invoiceNum ? "#" + esc(ief.invoiceNum) : "On file") +
+      (inv.matched_by && inv.matched_by !== "manual" ? '<span class="auto-tag" title="Matched by the invoice reader">Auto</span>' : "") +
+      '<button class="bill-x" data-unmatch-doc="' + inv.id + '" title="Not this load: send the invoice back to To Match" aria-label="Unmatch invoice">&times;</button>';
+    h += '<tr class="bill-row ' + (ready ? "bill-ready" : "bill-wait") + '" data-bill="' + o.id + '" data-roworder="' + o.id + '">' +
+      '<td><div class="cell"><input type="checkbox" data-group="' + o.id + '"' + (GROUP.indexOf(o.id) >= 0 ? " checked" : "") + "></div></td>" +
+      trackerOpenTd(o) +
       '<td><div class="cell n">' + esc(o.rexius_order_no || "—") + "</div></td>" +
       '<td><div class="cell" style="font-weight:600">' + esc(buildChip(o).title) + "</div></td>" +
-      '<td><div class="cell">' + tick("pod") + "</div></td>" +
-      '<td><div class="cell">' + tick("invoice") + "</div></td>" +
-      '<td><div class="cell">' + (ready ? '<span class="pill on">Ready</span>' : '<span class="pill mid">Waiting</span>') + "</div></td>" +
-      '<td><div class="cell" style="display:flex;gap:4px">' +
-        '<button class="btn sm" data-bill-dl="' + o.id + '"' + (packageDocs(o.id).length ? "" : " disabled") + ">Download</button>" +
-        '<button class="btn sm" data-bill-done="' + o.id + '">Mark Billed</button>' +
-      "</div></td></tr>";
+      '<td><div class="cell"><div class="bill-pw" role="img" aria-label="' + (ready ? "POD and invoice on file" : "Paperwork missing") + '">' + bars + "</div></div></td>" +
+      '<td><div class="cell bill-invcell n">' + invCell + "</div></td>" +
+      '<td><div class="cell" style="display:flex;gap:4px"><button class="btn sm" data-bill-dl="' + o.id + '"' + (packageDocs(o.id).length ? "" : " disabled") + ">Download</button>" +
+      '<button class="btn sm" data-bill-done="' + o.id + '">Mark Billed</button></div></td></tr>';
   });
-  h += "</tbody></table></div>";
-  h += "</div>";
+  h += "</tbody></table></div></section>" + tm + "</div></div>";
   return h;
 }
 /* ── Metadata-driven Database grids (D85) ─────────────────────────────────────
@@ -4870,7 +4950,7 @@ document.addEventListener("change", function (e) {
 /* ── Settings (D54) ──────────────────────────────────────────────────────── */
 var CUSTOM_ACCENT_OPEN = false;
 function vSettings(sub) {
-  var h = '<div class="settings-head"><div><h2>Settings</h2><p>Personalize this workspace and manage your account.</p></div></div>';
+  var h = '<div class="settings-head"><div><h2>Settings</h2><p>Personalize this workspace.</p></div></div>';
   if (sub === "shortcuts") return '<div class="settings-shell">' + h + settingsShortcuts() + "</div>";
   return '<div class="settings-shell">' + h + settingsAppearance() + "</div>";
 }
@@ -4927,8 +5007,7 @@ function schedulerSizingHtml() {
 }
 function settingsAppearance() {
   var fontName = (FONTS.filter(function (f) { return f[0] === (PREFS.font || ""); })[0] || FONTS[0])[1];
-  var h = settingsProfileHtml();
-  h += '<div class="settings-grid">';
+  var h = '<div class="settings-grid">';
   h += '<section class="set-card set-theme"><div class="set-title"><div><div class="set-h">Theme</div>' +
     '<p>Light, dark, or match this device.</p></div></div>' +
     '<div class="setting-choices" role="group" aria-label="Theme">' + prefBtn("theme", "system", "System") +
@@ -4956,11 +5035,10 @@ function settingsAppearance() {
     '</select></label><div class="font-sample" style="font-family:' + (PREFS.font || "inherit") + '">' +
       '<span>' + esc(fontName) + '</span><strong>SAMPLE CUSTOMER</strong>' +
       '<p>Sample Driver · Sample Truck · 24 PAL · Sample Order · EARLY</p></div></section>';
-  h += settingsConnectionsHtml();
   h += "</div>";
   h += orderNumberingHtml();
   h += schedulerSizingHtml();
-  h += '<div class="settings-save-note">Profile, appearance, and sizing are saved on this device. Workspace numbering applies to everyone.</div>';
+  h += '<div class="settings-save-note">Appearance and sizing are saved on this device. Workspace numbering applies to everyone.</div>';
   return h;
 }
 
@@ -5019,27 +5097,6 @@ function settingsShortcuts() {
   h += '<div class="set-row"><button class="btn" data-scresetall="1">Reset All To Defaults</button></div>';
   return h;
 }
-function settingsProfileHtml() {
-  var h = '<section class="set-card profile-card set-wide"><div class="settings-avatar">' + esc(initials(profileName)) +
-    '</div><div class="profile-copy"><div class="set-h">Your profile</div><h3>' + esc(profileName) +
-    '</h3><p>Your display name sets the initials shown in the header.</p></div>' +
-    '<div class="profile-edit"><label class="setting-field"><span>Display name</span>' +
-    '<input id="profile-name-input" value="' + esc(profileName) + '" autocomplete="name"></label>' +
-    '<button class="btn pri" data-profile="savename">Save profile</button></div></section>';
-  return h;
-}
-function settingsConnectionsHtml() {
-  // TODO(AUTH): everyone signs in with ONE shared Supabase account for now
-  // (see supabase-api.js). Per-person accounts are a follow-up phase.
-  var authUser = dashboardAuth.user();
-  var h = '<section class="set-card set-account"><div class="set-title"><div><div class="set-h">Account</div>' +
-    '<p>Sign-in and access for this workspace.</p></div></div>' +
-    '<div class="connection-row"><div><span class="status-dot on"></span><b>' +
-    esc((authUser && authUser.email) || "Shared login") + '</b><small>Shared team login · per-person accounts not set up yet</small></div>' +
-    '<button class="btn sm" data-profile="signout">Sign out</button></div>';
-  h += "</section>";
-  return h;
-}
 function settingsHelp() {
   var faqs = [
     ["Scheduler",
@@ -5068,7 +5125,7 @@ function settingsHelp() {
       "<b>Sync Mileage</b> fills available truck mileage from Motive. If an internal rate is set, blank internal freight charges " +
       "are calculated in that same run; existing charges are not overwritten. <b>Sync Delivery Dates</b> copies completed schedule dates back to orders."],
     ["Settings and shortcuts",
-      "General contains profile, theme, accent, font, account, order numbering, and Scheduler sizing. Shortcuts can be " +
+      "General contains theme, accent, font, order numbering, and Scheduler sizing. Shortcuts can be " +
       "re-recorded, and <b>Add shortcut</b> gives an action an additional key combination."],
     ["Undo and history",
       "Undo and Redo cover changes made in the current session. Open History for the shared audit trail and " +
@@ -6889,7 +6946,7 @@ function ingestLoose(file) {
    Every invoice is saved the moment it's read (nothing waits in the browser
    to be lost on a refresh), matched to its load by what's printed on it, and
    listed in the batch review so a person can double-check or fix it. */
-var BATCH_REVIEW = null;   // { name, total, done, odd, items:[{docId, label, read, how, orderId, ambiguous}] }
+var BATCH_REVIEW = null;   // { name, total, done } while a batch is being read
 function queueOrders() {
   return orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_date && !isHistorical(o); });
 }
@@ -6900,6 +6957,9 @@ function matchInvoiceText(text) {
   var T = " " + String(text || "").toUpperCase().replace(/\s+/g, " ") + " ";
   var exts = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !isHistorical(o); });
   var sols = String(text || "").match(/\d{2}-\d{4}-\d{4}/g) || [];
+  (String(text || "").match(/\b12(?:0[1-9]|1[0-2])\d{2}\d{4}\b/g) || []).forEach(function (x) {   // printed with no dashes on the invoice form
+    var d = x.slice(0, 2) + "-" + x.slice(2, 6) + "-" + x.slice(6); if (sols.indexOf(d) < 0) sols.push(d);
+  });
   function has(v) {
     v = String(v || "").trim().toUpperCase(); if (v.replace(/[^A-Z0-9]/g, "").length < 4) return false;
     return new RegExp("[^A-Z0-9]" + v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[^A-Z0-9]").test(T);
@@ -6920,81 +6980,85 @@ function matchInvoiceText(text) {
   return { order: null, how: sols.length ? "No load has order # " + sols[0] : "No order, load or PO number found" };
 }
 function ingestBatch(file) {
-  toast("Splitting batch…");
+  busyStart("Splitting batch…");
   return file.arrayBuffer().then(function (buf) { return PDFLib.PDFDocument.load(buf); }).then(function (pdf) {
-    var total = pdf.getPageCount(), count = Math.ceil(total / 2);
-    BATCH_REVIEW = { name: file.name, total: count, done: 0, odd: total % 2 !== 0, items: [] };
+    var total = pdf.getPageCount(), count = Math.ceil(total / 2), tally = { auto: 0, suggested: 0, open: 0, failed: 0 };
+    BATCH_REVIEW = { name: file.name, total: count, done: 0 };
     render();
     var chain = Promise.resolve();
     for (var i = 0; i < count; i++) (function (idx) {
       chain = chain.then(function () {
+        busyStart("Reading invoice " + (idx + 1) + " of " + count + "…");
         return PDFLib.PDFDocument.create().then(function (doc) {
           return doc.copyPages(pdf, [idx * 2]).then(function (pgs) { doc.addPage(pgs[0]); return doc.save(); });
         }).then(function (bytes) {
           var b64 = b64FromBytes(bytes);
           return extractInvoiceInfo(b64).then(function (info) {
-            var m = matchInvoiceText(info.text || ""), label = info.invoiceNum ? "Invoice #" + info.invoiceNum : "Invoice " + (idx + 1);
+            // 1. an order #, load #, PO or delivery # printed on the invoice that fits exactly one load: attach it.
+            // 2. otherwise score the loads; a clear best one is saved as a suggestion to confirm. Nothing is guessed silently.
+            var m = matchInvoiceText(info.text || ""), cands = m.order ? [] : invoiceCandidates(info);
+            var best = cands[0], second = cands[1] ? cands[1].score : 0, suggest = best && best.score >= 5 && best.score - second >= 3;
             var body = { doc_type: "invoice", filename: (info.invoiceNum ? "Invoice " + info.invoiceNum : "Invoice " + (idx + 1)) + ".pdf", b64: b64,
-              extracted_fields: { invoiceNum: info.invoiceNum || null, read_order_no: info.solomon || null, match_how: m.how, batch: file.name } };
+              extracted_fields: { invoiceNum: info.invoiceNum || null, read_order_no: info.solomon || null, match_how: m.how, batch: file.name,
+                suggested: cands.slice(0, 3) } };
             if (m.order) { body.order_id = m.order.id; body.matched_by = m.matchedBy; }
-            return api("document", body).then(function (doc) {
-              BATCH_REVIEW.items.push({ docId: doc.id, label: label, read: info.solomon || "", how: doc.order_id && !m.order ? "Order # in the file name" : m.how,
-                orderId: doc.order_id || null, ambiguous: !!m.ambiguous, path: doc.storage_path, name: doc.original_filename });
+            return api("document", body).then(function () {
+              if (m.order) {
+                tally.auto++;
+                if (info.solomon && !m.order.rexius_order_no) return api("order/update", { id: m.order.id, rexius_order_no: info.solomon }).catch(function () {});
+              } else if (suggest) tally.suggested++; else tally.open++;
             });
           });
-        }).then(function () { BATCH_REVIEW.done++; repaintBatchReview(); },
-          function (err) { BATCH_REVIEW.done++; BATCH_REVIEW.items.push({ label: "Invoice " + (idx + 1), error: err.message }); repaintBatchReview(); });
+        }).then(function () { BATCH_REVIEW.done++; },
+          function (err) { BATCH_REVIEW.done++; tally.failed++; console.error("Invoice " + (idx + 1) + " failed", err); });
       });
     })(i);
     return chain.then(reload).then(function () {
-      var ok = BATCH_REVIEW.items.filter(function (it) { return it.orderId; }).length;
-      toast(ok + " of " + count + " invoices matched" + (ok < count ? " · check the rest below" : ""));
+      BATCH_REVIEW = null; busyEnd(); render();
+      toast(count + " invoices read: " + tally.auto + " matched" + (tally.suggested ? ", " + tally.suggested + " suggested" : "") +
+        (tally.open ? ", " + tally.open + " to match by hand" : "") + (tally.failed ? ", " + tally.failed + " failed" : "") + ".");
     });
-  }).catch(function (e) { toast("Split failed: " + e.message, true); });
+  }).catch(function (e) { BATCH_REVIEW = null; busyEnd(); toast("Split failed: " + e.message, true); });
 }
-function batchReviewHtml() {
-  var b = BATCH_REVIEW; if (!b) return "";
-  var matched = b.items.filter(function (it) { return it.orderId; }).length, busy = b.done < b.total;
-  var loads = queueOrders();
-  var h = '<div class="batch-review" id="batch-review"><div class="batch-hd"><div><b>Invoice batch · ' + esc(b.name) + "</b><span>" +
-    (busy ? "Reading " + (b.done + 1) + " of " + b.total + "…" : b.total + " invoices · " + matched + " matched · " + (b.total - matched) + " need a load") +
-    (b.odd ? " · odd page count, the last invoice had no back page" : "") + "</span></div>" +
-    (busy ? "" : '<button class="btn" id="batch-dismiss">Done Reviewing</button>') + "</div>";
-  h += '<table class="data batch-table"><thead><tr><th>Invoice</th><th>Read off the page</th><th>Matched by</th><th>Bills with</th><th></th></tr></thead><tbody>';
-  b.items.forEach(function (it, i) {
-    if (it.error) { h += "<tr><td><div class=\"cell\">" + esc(it.label) + '</div></td><td colspan="4"><div class="cell" style="color:var(--bad)">Couldn\'t save: ' + esc(it.error) + "</div></td></tr>"; return; }
-    var o = it.orderId ? order(it.orderId) : null, opts = '<option value="">Not matched · pick a load</option>', seen = {};
-    (o ? [o] : []).concat(loads).forEach(function (x) {
-      if (seen[x.id]) return; seen[x.id] = 1;
-      opts += '<option value="' + x.id + '"' + (x.id === it.orderId ? " selected" : "") + ">" + esc(orderLabel(x)) + (x.billed_date ? " (billed)" : "") + "</option>";
-    });
-    h += '<tr class="' + (it.orderId ? "" : "batch-miss") + '"><td><div class="cell"><b>' + esc(it.label) + "</b></div></td>" +
-      '<td><div class="cell n">' + esc(it.read || "—") + "</div></td>" +
-      '<td><div class="cell">' + (it.orderId ? '<span class="pill on">' + esc(it.how) + "</span>" : '<span class="pill ' + (it.ambiguous ? "mid" : "bad") + '">' + esc(it.how) + "</span>") + "</div></td>" +
-      '<td><div class="cell"><select class="cell-i" data-batch-bill="' + i + '">' + opts + "</select></div></td>" +
-      '<td><div class="cell"><a class="btn sm" href="#" data-filepath="' + esc(it.path) + '" data-filename="' + esc(it.name) + '" data-filemode="open">View</a></div></td></tr>';
-  });
-  return h + "</tbody></table></div>";
+// Attach an invoice to a load (confirming a suggestion, or after a drag). If the load has no order # yet, the one read off the invoice goes on it.
+function attachInvoiceDoc(docId, oid) {
+  var d = (DB.documents || []).filter(function (x) { return x.id === docId; })[0], o = order(oid);
+  var read = d && d.extracted_fields && d.extracted_fields.read_order_no, fill = !!(read && o && !o.rexius_order_no);
+  return api("document/attach", { id: docId, order_id: oid }).then(function () {
+    return fill ? api("order/update", { id: oid, rexius_order_no: read }) : null;
+  }).then(reload).then(function () {
+    toast("Attached to " + orderLabel(order(oid)) + (fill ? " · order # filled from the invoice" : ""));
+  }).catch(function (e) { toast(e.message, true); });
 }
-function repaintBatchReview() {
-  var el = $("#batch-review");
-  if (el) el.outerHTML = batchReviewHtml(); else if (SUB === "bill") render();
-}
-// Fix a match from the review: move it to another load, or unassign it
-// (it then waits in Unmatched documents).
-document.addEventListener("change", function (e) {
-  var sel = e.target.closest && e.target.closest("[data-batch-bill]");
-  if (!sel || !BATCH_REVIEW) return;
-  var it = BATCH_REVIEW.items[+sel.getAttribute("data-batch-bill")]; if (!it) return;
-  var to = sel.value || null;
-  var call = to ? api("document/attach", { id: it.docId, order_id: to }) : api("document/unassign", { id: it.docId });
-  call.then(function (row) {
-    it.orderId = to; it.how = to ? "Picked by hand" : "Unassigned by hand"; it.ambiguous = false;
-    if (row && row.storage_path) it.path = row.storage_path;
-    return reload();
-  }).then(function () { toast(to ? "Invoice now bills with " + orderLabel(order(to)) : "Invoice unassigned · it's in Unmatched documents"); })
-    .catch(function (err) { toast(err.message, true); repaintBatchReview(); });
+var BILL_DRAG = null;
+document.addEventListener("click", function (e) {
+  var c = e.target.closest && e.target.closest("[data-confirm-doc]");
+  if (c) { e.preventDefault(); var p = c.getAttribute("data-confirm-doc").split("|"); attachInvoiceDoc(p[0], p[1]); return; }
+  var u = e.target.closest && e.target.closest("[data-unmatch-doc]");
+  if (u) {
+    e.preventDefault();
+    api("document/unassign", { id: u.getAttribute("data-unmatch-doc") }).then(reload).then(function () { toast("Sent back to To Match"); }).catch(function (er) { toast(er.message, true); });
+    return;
+  }
 });
+document.addEventListener("dragstart", function (e) {
+  var d = e.target.closest && e.target.closest("[data-dragdoc]");
+  if (!d) return;
+  BILL_DRAG = d.getAttribute("data-dragdoc");
+  e.dataTransfer.setData("text/plain", "doc:" + BILL_DRAG); e.dataTransfer.effectAllowed = "move";
+  d.classList.add("dragging");
+});
+document.addEventListener("dragover", function (e) {
+  if (!BILL_DRAG) return;
+  var r = e.target.closest("[data-bill]");
+  if (r) { e.preventDefault(); r.classList.add("over"); }
+});
+document.addEventListener("drop", function (e) {
+  if (!BILL_DRAG) return;
+  var r = e.target.closest("[data-bill]");
+  if (r) { e.preventDefault(); e.stopPropagation(); r.classList.remove("over"); var id = BILL_DRAG; BILL_DRAG = null; attachInvoiceDoc(id, r.getAttribute("data-bill")); }
+}, true);
+document.addEventListener("dragend", function () { BILL_DRAG = null; });
 /* Group merge — ported from legacy :3090, including the multi-broker guard. */
 function groupMerge() {
   if (GROUP.length < 2) { toast("Tick at least two loads for the same customer to combine.", true); return; }
@@ -7256,7 +7320,7 @@ document.addEventListener("click", function (e) {
     "#profile-btn,[data-profile],[data-setpref],[data-showsched],[data-screc],[data-screset],[data-scresetall]," +
     "[data-cw-step],[data-schedsize-step],[data-schedsize-reset],[data-accent-pick],[data-accent-save],[data-accent-forget],[data-custom-accent-toggle],[data-numbering-save]," +
     "#navtoggle,[data-navto],[data-navsec],[data-navcycle],[data-bill-done],[data-bill-dl],[data-reopen-bill]," +
-    "#bill-dl-sel,#bill-combine-sel,#batch-dismiss");
+    "#bill-dl-sel,#bill-combine-sel");
   if (!t) return;
   if (t.id === "scrim") { closeDrawer(); closeModal(); return; }
   if (t.id === "nav-scrim") { closeMobileNav(); return; }
@@ -7631,7 +7695,6 @@ document.addEventListener("click", function (e) {
   }
   if (t.id === "bill-dl-sel") { billBatch(); return; }
   if (t.id === "bill-combine-sel") { groupMerge(); return; }
-  if (t.id === "batch-dismiss") { BATCH_REVIEW = null; render(); return; }
   if (t.dataset.reopenBill) {
     var roid = t.dataset.reopenBill;
     billOrder(roid, false).then(reload).then(function () {
@@ -7735,12 +7798,6 @@ document.addEventListener("click", function (e) {
     dashboardAuth.signOut().then(function () { location.reload(); })
       .catch(function (e) { toast(e.message, true); });
     return;
-  }
-  if (t.dataset.profile === "savename") {
-    var nm = ($("#profile-name-input").value || "").trim();
-    if (!nm) { toast("Enter a name", true); return; }
-    profileName = nm; localStorage.setItem("profile_name", nm); renderProfile(); render();
-    toast("Profile name saved"); return;
   }
   if (t.dataset.accentPick) {
     setAccentPref(t.dataset.accentPick); CUSTOM_ACCENT_OPEN = false; render(); return;
