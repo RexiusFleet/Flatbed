@@ -7,7 +7,7 @@
   --early:#3F7D3A;--anytime:#C6931A;--early-e:#9A6A15;--anytime-e:#7A4A22;--ext:#2F5D8C;
   --good:#3F7D3A;--warn:#C6931A;--bad:#B03A2E;
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
-  --mono:ui-monospace,"SF Mono","Cascadia Mono","Roboto Mono",Consolas,monospace;
+  --mono:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif; /* TEST: was ui-monospace,"SF Mono","Cascadia Mono","Roboto Mono",Consolas,monospace */
   /* Type scale (D172) — collapses 17 ad hoc sizes (8px–23px, half-pixel steps
      included) down to 8 named steps. Each step's value is the size that
      already had the most call sites in its cluster, so this is a rename +
@@ -1738,3 +1738,143 @@ th.tsortable:hover{color:var(--ink);background:var(--panel)}
 .toolbar,.toolbar.home-base-bar,.cw-toolbar{padding-left:14px;padding-right:14px}
 .toolbar h2,.orders-toolbar h2,.cw-toolbar h2,.toolbar.home-base-bar h2{min-width:132px}
 .toolbar,.orders-toolbar{gap:8px}
+
+/* Motion polish — every hover, press, open and close eases the same way.
+   Selection-ring cells (td.sel, td.over, marquee, fill handle) stay instant on purpose. */
+:root{interpolate-size:allow-keywords}
+.act-row,.af,.bill-x,.bord-b,.bord-pencil,.bord-sty,.bord-stybtn,.cell-link,.col-plus-h,.custom-accent-toggle,.drop,.dv-embed,.fb,.fb-font,.fb-fs-b,
+.font-opt,.gs-opt,.history-day-hd,.history-event,.history-head,.loc-opt,.mot-cal-grid button,.mot-cal-nav,.pm-item,.pill-inv,.route-cell,
+.rpt-chip button,.rpt-name,.rpt-ord,.rpt-row,.rpt-tile,.rpt-x,.saved-accent-remove,.sw-cell,.sw-none,.tracker-action,.tracker-collapse-hd,
+.tracker-collapse-more,.tracker-open,.ctxmenu button,.navtoggle,.rail-toggle-icon,.nm-carrow,.nm-cicon,.ifr-arrow,
+.toolbar input,.toolbar select,#drawer input,#drawer select,#drawer textarea,.modal-card input,.modal-card select,.modal-card textarea{
+  transition:background-color var(--motion-fast) var(--ease-ui),border-color var(--motion-fast) var(--ease-ui),color var(--motion-fast) var(--ease-ui),
+  box-shadow var(--motion-fast) var(--ease-ui),opacity var(--motion-fast) var(--ease-ui),transform var(--motion-fast) var(--ease-ui)}
+.btn:active:not(:disabled),.hbtn:active,.pill:active,.sub-tab:active,.section-tab:active,.chip:active,.fb-fs-b:active,.mot-cal-nav:active{transform:scale(.97)}
+.tracker-collapse-arrow,.history-day-arrow,.mot-caret{transition:transform var(--motion-ui) var(--ease-ui)}
+.btn:disabled{transition:opacity var(--motion-ui) var(--ease-ui)}
+/* Popups: grow from their button, shrink back on close */
+#mot-cal{transform-origin:top left;animation:menu-in var(--motion-ui) var(--ease-ui) both}
+#mot-cal.closing,.act-pop.closing{animation:menu-out var(--motion-fast) var(--ease-ui) both;pointer-events:none}
+.act-pop.pop-in{transform-origin:top right;animation:menu-in var(--motion-ui) var(--ease-ui) both}
+/* Collapse groups in trackers: rows fade in under their header, fade out before they go */
+@keyframes row-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+@keyframes row-out{to{opacity:0;transform:translateY(-4px)}}
+tr.row-in{animation:row-in var(--motion-ui) var(--ease-ui) both}
+tr.row-out{animation:row-out var(--motion-fast) var(--ease-ui) both;pointer-events:none}
+/* <details> sections (Customer, Outside carrier) open and close smoothly where the browser supports it */
+details::details-content{block-size:0;overflow:hidden;transition:block-size var(--motion-panel) var(--ease-ui),content-visibility var(--motion-panel) allow-discrete}
+details[open]::details-content{block-size:auto}
+/* Whole page change: new content settles in (list-style pages too, not only .pad) */
+.grid-wrap.page-in,.rpt-page.page-in{animation:content-in var(--motion-ui) var(--ease-ui) both}
+
+/* Scheduler bar: running $/mi (collapsible) beside the date controls, Internal Rate at the right edge */
+.toolbar.sched-bar{--bar-h:46px;flex-wrap:nowrap;container-type:inline-size}
+.sched-stats{display:flex;align-items:center;min-width:0;align-self:stretch}
+.sched-statwrap{display:flex;align-items:center;gap:6px;min-width:0}
+.ss-rates{display:flex;justify-content:flex-end;overflow:hidden;max-width:560px;opacity:1;transition:max-width var(--motion-panel) var(--ease-ui),opacity var(--motion-ui) var(--ease-ui)}
+.sched-statwrap.closed .ss-rates{max-width:0;opacity:0}
+.ss-grp{display:flex;align-items:center;gap:2px}
+.ss{display:flex;flex-direction:column;justify-content:center;padding:0 9px;line-height:1.2;white-space:nowrap}
+.ss .lbl{font-size:var(--fs-caption);letter-spacing:.1em}
+.ss-v{font-family:var(--mono);font-weight:700;font-size:var(--fs-body);font-variant-numeric:tabular-nums;color:var(--ink)}
+.ifr-bar{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.ifr-body{display:inline-flex;align-items:center;gap:6px;overflow:hidden;padding:2px 1px;max-width:380px;opacity:1;transition:max-width var(--motion-panel) var(--ease-ui),opacity var(--motion-ui) var(--ease-ui)}
+.ifr-bar.closed .ifr-body{max-width:0;opacity:0;padding-left:0;padding-right:0}
+@container (max-width:760px){.sched-stats{display:none}}
+.ss-none{font-size:var(--fs-label);color:var(--ink-3);padding:0 8px;white-space:nowrap}
+/* Pin buttons on Reports cards and tiles: hidden until hover, filled with the accent color when pinned */
+.rpt-card{position:relative}
+.rpt-pin{position:absolute;right:8px;bottom:8px;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-sm);
+  border:1px solid transparent;color:var(--ink-3);cursor:pointer;opacity:0;z-index:2}
+.rpt-card:hover .rpt-pin,.rpt-tile:hover .rpt-pin,.rpt-pin:focus-visible{opacity:1}
+.rpt-pin:hover{color:var(--ink);border-color:var(--rule-2);background:var(--panel-2)}
+.rpt-pin.on{opacity:1;color:var(--brand-ink);background:var(--brand);border-color:transparent}
+.rpt-pin.on:hover{filter:brightness(1.06);color:var(--brand-ink);background:var(--brand)}
+
+/* Header: last publish and changes since, kept small and quiet */
+.hdr-pub{display:inline-flex;align-items:center;gap:3px;white-space:nowrap;font-size:var(--fs-caption);color:var(--ink-3);line-height:1}
+.hdr-pub .pub-when{font-variant-numeric:tabular-nums}
+.hdr-pub .pub-n{color:var(--warn);font-weight:700}
+.hdr-pub .pub-ok{color:var(--good)}
+@media(max-width:900px){.hdr-pub{display:none}}
+
+/* Reports dashboard: one grid of cards (each with a pin), period strip under the tabs */
+.rpt-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-bottom:12px}
+.rpt-cards .rpt-card,.rpt-cards .rpt-tile{min-height:84px;padding:12px 14px;border-radius:var(--r-lg)}
+.rpt-cards .rpt-card:hover,.rpt-cards .rpt-tile:hover{border-color:var(--brand)}
+.rpt-perbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding-bottom:12px;border-bottom:1px solid var(--rule)}
+.rpt-perbar .lbl{font-family:var(--mono);font-size:var(--fs-caption);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
+.rpt-seg{display:inline-flex;border:1px solid var(--rule-2);border-radius:var(--r-sm);overflow:hidden;height:var(--ctl-h)}
+.rpt-seg button{padding:0 12px;border:0;border-right:1px solid var(--rule);background:var(--panel);color:var(--ink-2);font:inherit;font-size:var(--fs-body-sm);cursor:pointer;
+  transition:background-color var(--motion-fast) var(--ease-ui),color var(--motion-fast) var(--ease-ui)}
+.rpt-seg button:last-child{border-right:0}
+.rpt-seg button:hover{background:var(--panel-2);color:var(--ink)}
+.rpt-seg button.on{background:var(--brand-soft);color:var(--ink);font-weight:650}
+.rpt-perbar .rpt-live{margin-left:auto}
+
+.rpt-cards .rpt-tile .lbl{padding-right:52px}
+
+/* Report builder window: settings on the left, live result on the right */
+#modal.rpt-modal .modal-card{max-width:1040px;border-radius:var(--r-lg)}
+.rpt-hd{display:flex;align-items:center;gap:14px;padding:16px 22px}
+.rpt-hd .rpt-name{flex:1;font-size:var(--fs-h3,16px)}
+.rpt-tog{display:inline-flex;align-items:center;gap:9px;border:0;background:none;color:var(--ink-2);font:inherit;font-size:var(--fs-body-sm);cursor:pointer;padding:4px 2px;white-space:nowrap}
+.rpt-tog.off{cursor:default;color:var(--ink-3)}
+.rpt-tog i{position:relative;width:32px;height:18px;border-radius:9px;background:var(--rule-2);flex:none;transition:background-color var(--motion-ui) var(--ease-ui)}
+.rpt-tog i::after{content:"";position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:50%;background:var(--panel);transition:transform var(--motion-ui) var(--ease-ui)}
+.rpt-tog.on i{background:var(--brand)}
+.rpt-tog.on i::after{transform:translateX(14px)}
+.rpt-tog.on{color:var(--ink)}
+.modal-body.rpt-win{display:grid;grid-template-columns:320px minmax(0,1fr);padding:0;min-height:420px;max-height:68vh;overflow:hidden}
+.rpt-win #rpt-ctlbox{padding:18px 20px;background:var(--panel-2);border-right:1px solid var(--rule);overflow:auto}
+.rpt-win #rpt-out{padding:18px 22px;overflow:auto;min-width:0}
+.rpt-win .rpt-sec{display:block;padding:0;border:0;margin-bottom:20px}
+.rpt-win .rpt-t{font-family:var(--mono);font-size:var(--fs-caption);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);margin-bottom:8px}
+.rpt-win .rpt-sec>div{min-width:0}
+.rpt-win .rpt-chips,.rpt-win .rpt-line{gap:7px;margin-bottom:7px}
+.rpt-win .rpt-chip{height:var(--ctl-h);padding:0 6px 0 11px;font-family:var(--font);font-size:var(--fs-body-sm);border-radius:var(--r-sm);background:var(--panel)}
+.rpt-win .rpt-sel,.rpt-win .rpt-fin,.rpt-win .rpt-date{height:var(--ctl-h);padding:0 9px;max-width:100%}
+.rpt-win .rpt-fsel{min-width:0;max-width:150px}
+.rpt-win .rpt-add{border:1px dashed var(--rule-2);background:none;color:var(--ink-2);border-radius:var(--r-sm);height:var(--ctl-h);padding:0 11px;font:inherit;font-size:var(--fs-body-sm);cursor:pointer;
+  transition:border-color var(--motion-fast) var(--ease-ui),color var(--motion-fast) var(--ease-ui)}
+.rpt-win .rpt-add:hover{border-color:var(--brand);color:var(--brand)}
+.rpt-win .rpt-tbl{max-height:none;border-radius:var(--r-md)}
+.rpt-win .rpt-meta{margin:0 0 10px}
+@media(max-width:860px){.modal-body.rpt-win{grid-template-columns:1fr;max-height:80vh;overflow:auto}.rpt-win #rpt-ctlbox{border-right:0;border-bottom:1px solid var(--rule)}}
+.modal-body.rpt-win{grid-template-columns:350px minmax(0,1fr)}
+.rpt-win .rpt-line{flex-wrap:nowrap}
+.rpt-win .rpt-line .rpt-sel,.rpt-win .rpt-line .rpt-fin,.rpt-win .rpt-line .rpt-date{flex:1 1 0;min-width:0;max-width:none}
+.rpt-win .rpt-line .rpt-sel[data-rptin="vagg"],.rpt-win .rpt-line .rpt-sel[data-rptin="fop"]{flex:0 0 auto;width:auto}
+.rpt-win .rpt-line .rpt-note,.rpt-win .rpt-line .rpt-x{flex:none}
+.rpt-win .rpt-chips .rpt-fsel{flex:0 0 auto;max-width:170px}
+
+/* Reports → Transfer */
+.trf-status{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 14px;padding-bottom:12px;border-bottom:1px solid var(--rule)}
+.trf-status .lbl{font-family:var(--mono);font-size:var(--fs-caption);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
+.trf-dot{width:10px;height:10px;border-radius:50%;background:var(--good);flex:none}
+.trf-dot.soon{background:var(--warn)}
+.trf-dot.due{background:var(--bad)}
+.trf-big{font-size:var(--fs-body-lg);font-weight:650}
+.trf-sub{font-size:var(--fs-body-sm);color:var(--ink-2)}
+.trf-card{padding:0;overflow:hidden;margin-bottom:12px}
+.trf-tbl{width:100%;border-collapse:collapse;font-size:var(--fs-body-sm)}
+.trf-tbl th{text-align:right;font-family:var(--mono);font-size:var(--fs-caption);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);font-weight:600;padding:9px 14px;background:var(--panel-2);border-bottom:1px solid var(--rule-2)}
+.trf-tbl th:first-child,.trf-tbl td:first-child{text-align:left}
+.trf-tbl td{text-align:right;padding:8px 14px;border-bottom:1px solid var(--rule);font-variant-numeric:tabular-nums}
+.trf-dep td{background:var(--panel-2);font-weight:650;cursor:pointer}
+.trf-dep i,.trf-b i{display:inline-block;font-style:normal;margin-right:7px;color:var(--ink-3);transition:transform var(--motion-ui) var(--ease-ui)}
+.trf-dep.open i,.trf-b.open i{transform:rotate(90deg)}
+.trf-trk td:first-child{padding-left:34px}
+.trf-tot td{font-weight:650;border-top:1px solid var(--rule-2);border-bottom:0}
+.trf-none{text-align:center!important;color:var(--ink-3);padding:20px!important}
+.trf-h{margin:18px 0 6px}
+.trf-h .lbl{font-family:var(--mono);font-size:var(--fs-caption);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
+.trf-b{cursor:pointer}
+.trf-b:hover td{background:var(--panel-2)}
+.trf-hist td.act,.trf-hist th:last-child{width:80px}
+.trf-detail td{background:var(--paper);padding:6px 14px 10px 34px!important;text-align:left!important}
+.trf-mini{width:100%;border-collapse:collapse;font-size:var(--fs-body-sm)}
+.trf-mini td{padding:5px 8px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--rule)}
+.trf-mini td:first-child{text-align:left}
+.trf-md td{font-weight:650}
+.trf-sum{margin:0 0 12px;line-height:1.5}

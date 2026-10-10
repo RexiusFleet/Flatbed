@@ -224,7 +224,6 @@ var WEEKEND_ON = (function () {
 /* D170: the internal freight rate/minimum controls on the Orders toolbar
    collapse behind an arrow by default — Nate: "otherwise itll be annoying
    for me to look at." Per-device, like every other toolbar UI preference. */
-var IFR_OPEN = localStorage.getItem("ifrOpen") === "1";
 
 /* ── UI preferences (D54) ────────────────────────────────────────────────────
    Persisted in localStorage until there's a per-user settings store (arrives
@@ -271,6 +270,10 @@ var FONTS = [
   ["'Chalkboard SE','Comic Sans MS',cursive", "Chalkboard"],
   ["Copperplate,'Copperplate Gothic Light',serif", "Copperplate"],
   ["Papyrus,fantasy", "Papyrus"]];
+/* Labels, numbers and chips use --mono. Same stacks as above plus real monospace; "" keeps the stylesheet's own default. */
+var MONO_FONTS = [["", "Default"], ["ui-monospace,'SF Mono','Cascadia Mono','Roboto Mono',Consolas,monospace", "System Mono"],
+  ["-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',system-ui,sans-serif", "System Sans"]]
+  .concat(FONTS.filter(function (f) { return f[0] && f[1] !== "Monospace"; }));
 /* Scheduler row height / truck-column width (D175) — Nate: chips were
    getting cut off at the old fixed 72px row height. Customizable per
    device like every other PREFS value; clamped so a stray localStorage
@@ -285,6 +288,7 @@ var PREFS = {
   theme: localStorage.getItem("pref_theme") || "light",
   accent: localStorage.getItem("pref_accent") || DEFAULT_ACCENT,
   font: localStorage.getItem("pref_font") || "",
+  monoFont: localStorage.getItem("pref_monoFont") || "",
   rowHeight: clampInt(localStorage.getItem("pref_rowHeight"), 56, 160, 96),
   colWidth: clampInt(localStorage.getItem("pref_colWidth"), 100, 320, 150)
 };
@@ -341,6 +345,8 @@ function applyPrefs() {
   } else { root.style.removeProperty("--brand"); root.style.removeProperty("--brand-soft"); }
   if (PREFS.font) root.style.setProperty("--font", PREFS.font);
   else root.style.removeProperty("--font");
+  if (PREFS.monoFont) root.style.setProperty("--mono", PREFS.monoFont);
+  else root.style.removeProperty("--mono");
   root.style.setProperty("--row-h", PREFS.rowHeight + "px");
   root.style.setProperty("--col-w", PREFS.colWidth + "px");
 }
@@ -728,9 +734,9 @@ document.addEventListener("keydown", function (e) {
     cycleNavSectionWithSettings(e.key === "ArrowUp" ? -1 : 1);
     return;
   }
-  // Reports has two in-page tabs (Dashboard, Motive) that behave like Database's: plain Left/Right switches between them
+  // Reports has three in-page tabs (Dashboard, Motive, Transfer) that behave like Database's: plain Left/Right switches between them
   if (horiz && SEC === "reports" && !MOT.calOpen && navArrowShortcutAvailable(e, "section")) {
-    e.preventDefault(); REP.tab = REP.tab === "dash" ? "motive" : "dash"; motCalClose(); render(); return;
+    e.preventDefault(); var rt = ["dash", "motive", "transfer"], ri = rt.indexOf(REP.tab); REP.tab = rt[(ri + (e.key === "ArrowLeft" ? 2 : 1)) % 3]; motCalClose(); render(); return;
   }
   if (!navArrowShortcutAvailable(e, horiz ? "sub" : "section")) return;
   e.preventDefault();
@@ -2933,6 +2939,7 @@ function buildScheduler() {
   var wrap = document.createElement("div");
   wrap.className = "grid-wrap"; wrap.id = "sched-wrap"; wrap.innerHTML = h;
   wrap.addEventListener("scroll", onSchedScroll);
+  wrap.addEventListener("scroll", schedStatsOnScroll);
   schedNeedsScroll = true;  // render() scrolls this to today once it's in the DOM
   return wrap;
 }
@@ -3075,7 +3082,7 @@ function seenState(truck, kind, push) {
    that order; the table under it says who has seen the schedule. The menu stays open until the icon
    is clicked again, so it is still there (behind the order drawer) after an order is closed.
    Read marks live in Supabase (driver_activity_reads); until that SQL is run they are kept in this browser. */
-var ACT_ITEMS = [], ACT_READ = {}, ACT_OPEN = false, ACT_FILTER = "all";
+var ACT_ITEMS = [], ACT_READ = {}, ACT_OPEN = false, ACT_FILTER = "all", ACT_ANIM = false;
 try { JSON.parse(localStorage.getItem("actRead") || "[]").forEach(function (id) { ACT_READ[id] = true; }); } catch (e) { /* no storage */ }
 function actUnread() { return ACT_ITEMS.filter(function (x) { return !ACT_READ[x.id] && order(x.oid); }); }
 function actMarkRead(ids) {
@@ -3104,7 +3111,7 @@ function seenHtml() {
     (n ? '<span class="act-badge">' + (n > 99 ? "99+" : n) + "</span>" : "") + "</button>";
   if (ACT_OPEN) {
     var rows = ACT_ITEMS.filter(function (x) { return (ACT_FILTER === "all" || x.k === ACT_FILTER) && order(x.oid); }).slice(0, 40);
-    h += '<div class="seen-pop act-pop" role="dialog" aria-label="Driver activity">' +
+    h += '<div class="seen-pop act-pop' + (ACT_ANIM ? " pop-in" : "") + '" role="dialog" aria-label="Driver activity">' +
       '<div class="act-hd"><b>Driver activity</b><button class="btn sm" id="act-all"' + (n ? "" : " disabled") + ">Mark All Read</button></div>" +
       '<div class="act-filters">' + [["all", "All"], ["note", "Notes"], ["scan", "Scans"]].map(function (f) {
         return '<button class="btn sm' + (ACT_FILTER === f[0] ? " active" : "") + '" data-actf="' + f[0] + '">' + f[1] + "</button>";
@@ -3125,6 +3132,46 @@ function syncHeaderSeen() {
   var host = $("#hdr-seen");
   if (!host) { var r = $(".hdr-right"); if (!r) return; host = document.createElement("span"); host.id = "hdr-seen"; r.appendChild(host); }
   host.innerHTML = seenHtml();
+  pubPaint(); pubRefresh();
+}
+/* Publish indicator, left of the driver icon: when the schedule was last published and how many
+   schedule edits (loads placed or moved, truck days off, notes, driver-visible order fields) came after it.
+   Counted from the edit history; Publish Schedule itself does not count as a change. */
+var PUB = { n: null, at: 0, base: -1, busy: false };
+var PUB_ORDER_FIELDS = ["pickup_location_id", "delivery_location_id", "pallet_count", "driver_note", "po_number", "delivery_number", "route_mode",
+  "pick_appt_text", "drop_appt_text", "pick_appt_date", "pick_appt_from", "pick_appt_to", "drop_appt_date", "drop_appt_from", "drop_appt_to",
+  "customer_party_id", "broker_party_id", "solomon_order_no", "broker_load_no", "notes"];
+function pubCounts(ev, since) {
+  if (!ev || new Date(ev.occurred_at).getTime() <= since + 8000) return false;
+  return (ev.changes || []).some(function (c) {
+    var f = c.changed_fields || [], t = c.table_name;
+    if (t === "loads") return f.some(function (x) { return x !== "pushed_at" && x !== "updated_at"; });
+    if (t === "load_orders" || t === "load_stops" || t === "schedule_notes" || t === "truck_off_days") return true;
+    if (t === "trucks") return f.indexOf("driver_id") >= 0;
+    if (t === "orders") return f.some(function (x) { return PUB_ORDER_FIELDS.indexOf(x) >= 0; });
+    return false;
+  });
+}
+function pubRefresh(force) {
+  var base = lastPushMs();
+  if (PUB.busy || (!force && PUB.base === base && Date.now() - PUB.at < 6000)) return;
+  if (!base) { PUB.base = base; PUB.n = null; pubPaint(); return; }
+  PUB.busy = true;
+  api("history?limit=100", {}).then(function (r) {
+    var evs = (r && r.events) || [], n = evs.filter(function (e) { return pubCounts(e, base); }).length;
+    var oldest = evs.length ? new Date(evs[evs.length - 1].occurred_at).getTime() : 0;
+    PUB.n = n; PUB.more = !!(r && r.has_more) && oldest > base;
+  }, function () {}).then(function () { PUB.busy = false; PUB.at = Date.now(); PUB.base = base; pubPaint(); });
+}
+function pubPaint() {
+  var r = $(".hdr-right"); if (!r) return;
+  var el = $("#hdr-pub");
+  if (!el) { el = document.createElement("span"); el.id = "hdr-pub"; el.className = "hdr-pub"; r.insertBefore(el, $("#hdr-seen") || null); }
+  var base = lastPushMs();
+  el.title = base ? "Schedule last published " + new Date(base).toLocaleString() : "The schedule has not been published yet";
+  var ch = PUB.n == null ? "" : PUB.n ? '<b class="pub-n">' + PUB.n + (PUB.more ? "+" : "") + " change" + (PUB.n === 1 && !PUB.more ? "" : "s") + "</b>" : '<span class="pub-ok">Up to date</span>';
+  el.innerHTML = 'Published <span class="pub-when">' + (base ? esc(seenWhen(base)) : "never") + "</span>" + (ch ? " · " + ch : "");
+  el.classList.toggle("stale", !!PUB.n || !base);
 }
 function repaintSeen() {
   var w = $("#seen-wrap"); if (!w) return;
@@ -3133,7 +3180,11 @@ function repaintSeen() {
   l = $("#seen-wrap .act-list"); if (l && top) l.scrollTop = top;
 }
 document.addEventListener("click", function (e) {
-  if (e.target.closest("#seen-btn")) { ACT_OPEN = !ACT_OPEN; repaintSeen(); return; }
+  if (e.target.closest("#seen-btn")) {
+    var apop = ACT_OPEN && document.querySelector(".act-pop");
+    if (apop) { apop.classList.add("closing"); setTimeout(function () { ACT_OPEN = false; repaintSeen(); }, 130); return; }
+    ACT_OPEN = !ACT_OPEN; ACT_ANIM = ACT_OPEN; repaintSeen(); ACT_ANIM = false; return;
+  }
   if (!e.target.closest(".act-pop")) return;
   var f = e.target.closest("[data-actf]");
   if (f) { ACT_FILTER = f.getAttribute("data-actf"); repaintSeen(); return; }
@@ -3148,13 +3199,128 @@ document.addEventListener("click", function (e) {
     if (t && t.scrollIntoView) t.scrollIntoView({ block: "start" });
   }
 });
+/* Scheduler bar: the numbers pinned on Reports, for the year of whatever day is at the top of the board, behind a Numbers toggle.
+   The Internal Rate box lives on the main toolbar (all pages). */
+var SCHED_STAT = { day: TODAY, motYear: "" }, SCHED_RATES_OPEN = (function () { try { return localStorage.getItem("schedRatesOpen") !== "0"; } catch (e) { return true; } })();
+function schedWeekRange(ds) {
+  var d = new Date(ds + "T12:00:00"), a = new Date(d); a.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  var b = new Date(a); b.setDate(a.getDate() + 6);
+  return { from: rptIso(a), to: rptIso(b), a: a };
+}
+function schedTopDay() {
+  var w = document.getElementById("sched-wrap"); if (!w) return SCHED_STAT.day;
+  var r = w.getBoundingClientRect(), el = document.elementFromPoint(r.left + 40, r.top + 110), tr = el && el.closest && el.closest("tr");
+  while (tr && !/^row-\d{4}-/.test(tr.id)) tr = tr.previousElementSibling;
+  return tr ? tr.id.slice(4) : SCHED_STAT.day;
+}
+function ssItem(label, value, sub, cls) {
+  return '<div class="ss' + (cls ? " " + cls : "") + '"><span class="lbl">' + esc(label) + '</span><span class="ss-v">' + value + (sub ? " <small>" + sub + "</small>" : "") + "</span></div>";
+}
+/* ── Pinned numbers (Scheduler bar) ───────────────────────────────────────
+   What shows on the bar is chosen on Reports: the pin on a dashboard card or tile adds it, the same pin removes it.
+   Up to SB_MAX at once. The list is saved with the saved reports (a row named "__scheduler_bar"), so every device shows the same bar;
+   this device keeps a copy as a fallback. Built-in numbers are "m:" keys; a pinned saved report is "r:<id>" (single number only). */
+var IFR_OPEN = (function () { try { return localStorage.getItem("ifrOpen") !== "0"; } catch (e) { return true; } })();
+var SB_MAX = 4, SB_DEFAULT = ["m:orders", "m:miles", "m:amw", "m:ext"], SB_SAVE = Promise.resolve();
+var SB_LABELS = { "m:orders": "Orders", "m:aow": "Avg Orders/Wk", "m:miles": "Miles", "m:amw": "Avg Miles/Wk", "m:rev": "Revenue",
+  "m:bag": "Bag $/Mi", "m:int": "Internal $/Mi", "m:ext": "External $/Mi" };
+function sbPinRow() { return (REP.saved || []).filter(function (r) { return r.name === "__scheduler_bar"; })[0] || null; }
+function sbPins() {
+  var r = sbPinRow();
+  if (r && r.config && Array.isArray(r.config.pins)) return r.config.pins;
+  try { var l = JSON.parse(localStorage.getItem("sbPins") || "null"); if (Array.isArray(l)) return l; } catch (e) {}
+  return SB_DEFAULT.slice();
+}
+var SB_TILE_KEY = { "Bag order revenue / mile": "m:bag", "Internal freight revenue / mile": "m:int" };
+var SB_SHORT = { "s:External revenue": "External Rev", "s:External backhaul revenue": "Backhaul Rev", "s:Average delivery time": "Avg Delivery" };
+function rptTileKey(t) { return t.sys ? (SB_TILE_KEY[t.name] || "s:" + t.name) : "r:" + t.id; }
+function sbTile(k) { return rptTiles().filter(function (t) { return rptTileKey(t) === k; })[0] || null; }
+function sbLabel(k) { if (SB_LABELS[k]) return SB_LABELS[k]; if (SB_SHORT[k]) return SB_SHORT[k]; var t = sbTile(k); return t ? t.name : null; }
+function sbSetPins(pins) {
+  try { localStorage.setItem("sbPins", JSON.stringify(pins)); } catch (e) {}
+  var row = sbPinRow();
+  if (row) row.config = { pins: pins }; else REP.saved = (REP.saved || []).concat([{ id: null, name: "__scheduler_bar", config: { pins: pins } }]);
+  SB_SAVE = SB_SAVE.then(function () {
+    var r = sbPinRow(), latest = r && r.config && r.config.pins ? r.config.pins : pins;
+    var idp = r && r.id ? Promise.resolve(r.id) : api("saved-report/list", {}).then(function (rows) {
+      var f = (rows || []).filter(function (x) { return x.name === "__scheduler_bar"; })[0]; return f ? f.id : null; });
+    return idp.then(function (id) {
+      var body = { name: "__scheduler_bar", config: { pins: latest } };
+      if (id) body.id = id;
+      return api("saved-report", body).then(function (res) { var rr = sbPinRow(); if (rr && res && res.id) rr.id = res.id; });
+    });
+  }).catch(function () {});
+}
+// The built-in numbers for any date range: delivered orders, per-week averages, Motive miles, revenue per mile by type.
+function sbCalc(from, to) {
+  if (!REP.data) return null;
+  var y = { n: 0, rev: 0, bag: { rev: 0, mi: 0 }, intf: { rev: 0, mi: 0 } };
+  REP.data.forEach(function (r) {
+    var d = r.delivery_date ? String(r.delivery_date).slice(0, 10) : "";
+    if (r.stage === "cancelled" || !d || d < from || d > to) return;
+    y.n++; y.rev += r.revenue || 0;
+    var t = r.order_type === "Bag Order" ? y.bag : r.order_type === "Internal Freight" ? y.intf : null;
+    if (t) { t.rev += r.revenue || 0; t.mi += r.internal_miles || 0; }
+  });
+  var roll = motRollup({ from: from, to: to }), end = TODAY < to && TODAY >= from ? TODAY : to;
+  var weeks = Math.max(1, (new Date(end + "T12:00:00") - new Date(from + "T12:00:00")) / 864e5 / 7 + 1 / 7);
+  var rate = function (rev, mi) { return mi > 0 && rev > 0 ? "$" + (rev / mi).toFixed(2) : "—"; };
+  return { "m:orders": y.n.toLocaleString(), "m:aow": (y.n / weeks).toFixed(1), "m:rev": rptMoney(y.rev),
+    "m:miles": roll.days ? Math.round(roll.total).toLocaleString() : "—", "m:amw": roll.days ? Math.round(roll.total / weeks).toLocaleString() : "—",
+    "m:bag": rate(y.bag.rev, y.bag.mi), "m:int": rate(y.intf.rev, y.intf.mi), "m:ext": roll.ext > 0 && roll.rev > 0 ? "$" + (roll.rev / roll.ext).toFixed(2) : "—" };
+}
+function sbValue(k, calc, from, to) {
+  if (!calc) return "…";
+  if (calc[k] != null) return calc[k];
+  var t = sbTile(k); if (!t) return "—";
+  var cfg = rptCfgCopy(t.cfg); cfg.per = "custom"; cfg.from = from; cfg.to = to;
+  var tv = rptTotalVal(cfg, rptRun(cfg));
+  return tv.v ? rptValFmt(tv.v, tv.x) + (tv.v.f === "days_to_deliver" && tv.x != null ? " days" : "") : "—";
+}
+function sbPinIcon() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
+}
+function sbPinBtn(key) {
+  var on = sbPins().indexOf(key) >= 0;
+  return '<span class="rpt-pin' + (on ? " on" : "") + '" role="button" tabindex="0" aria-pressed="' + on + '" data-sbpin="' + esc(key) + '" title="' +
+    (on ? "On the Scheduler bar. Click to remove" : "Show on the Scheduler bar") + '">' + sbPinIcon() + "</span>";
+}
+function schedStatsHtml() {
+  var year = SCHED_STAT.day.slice(0, 4), from = year + "-01-01", to = year + "-12-31", calc = sbCalc(from, to);
+  var pins = sbPins().filter(sbLabel).slice(0, SB_MAX);
+  return '<span class="sched-statwrap' + (SCHED_RATES_OPEN ? "" : " closed") + '" id="sched-statwrap">' +
+    '<span class="ss-rates"><span class="ss-grp">' + (pins.length ? pins.map(function (k) { return ssItem(sbLabel(k), sbValue(k, calc, from, to)); }).join("") :
+      '<span class="ss-none">Pin numbers from Reports</span>') + "</span></span>" +
+    '<button class="rail-toggle-icon" id="ss-toggle" aria-expanded="' + SCHED_RATES_OPEN + '" title="' + (SCHED_RATES_OPEN ? "Hide" : "Show") + ' pinned numbers" aria-label="Pinned numbers">' +
+    (SCHED_RATES_OPEN ? "&gt;" : "&lt;") + "</button></span>";
+}
+function schedStatsPaint() {
+  var el = document.getElementById("sched-stats"); if (!el) return;
+  rptSavedLoad();
+  if (!REP.data && !REP.loading && !REP.err) rptDataLoad();
+  else if (REP.stale && !REP.loading) rptDataLoad();
+  var year = SCHED_STAT.day.slice(0, 4);
+  if (SCHED_STAT.motYear !== year) { SCHED_STAT.motYear = year; motLoad(year + "-01-01", year + "-12-31").then(schedStatsPaint, function () {}); }
+  el.innerHTML = schedStatsHtml();
+}
+var schedStatRaf = 0;
+function schedStatsOnScroll() {
+  if (schedStatRaf) return;
+  schedStatRaf = requestAnimationFrame(function () {
+    schedStatRaf = 0;
+    var d = schedTopDay();
+    if (d !== SCHED_STAT.day && d.slice(0, 4) !== SCHED_STAT.day.slice(0, 4)) { SCHED_STAT.day = d; schedStatsPaint(); }
+    else SCHED_STAT.day = d;
+  });
+}
 function vScheduler() {
   return toolbarHtml("Scheduler", {
-    className: "home-base-bar",
+    className: "home-base-bar sched-bar",
     context: '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate id="jump" data-last-iso="' + TODAY +
       '" value="' + esc(isoToMdy(TODAY)) + '">' +
       '<button class="btn" id="jump-btn">Go</button><button class="btn" id="today-jump">Today</button>',
-    primary: '<button class="btn pri" id="push-driver-tabs">' + icon("sync") + 'Publish Schedule</button>'
+    secondary: '<div class="sched-stats" id="sched-stats">' + schedStatsHtml() + "</div>"
   });
 }
 /* Current Week — an editable window onto the Scheduler (D56, was read-only D28).
@@ -3599,6 +3765,26 @@ function tsortRows(group, rows) {
   });
 }
 
+/* Opening or closing a tracker group: the arrow turns and the rows fade, instead of the table snapping. */
+function motionCollapse(btn, key, wasOpen) {
+  var after = function (b) {
+    var out = [], tr = b && b.closest("tr"), n = tr && tr.nextElementSibling;
+    while (n && !n.classList.contains("tracker-collapse-row")) { out.push(n); n = n.nextElementSibling; }
+    return out;
+  };
+  if (wasOpen) {
+    btn.setAttribute("aria-expanded", "false");
+    var rs = after(btn); rs.slice(0, 40).forEach(function (r) { r.classList.add("row-out"); });
+    setTimeout(render, rs.length ? 140 : 0);
+    return;
+  }
+  render();
+  var nb = document.querySelector('[data-tracker-collapse="' + key + '"]');
+  if (!nb) return;
+  nb.setAttribute("aria-expanded", "false");
+  after(nb).slice(0, 40).forEach(function (r, i) { r.style.animationDelay = Math.min(i, 10) * 14 + "ms"; r.classList.add("row-in"); });
+  requestAnimationFrame(function () { requestAnimationFrame(function () { nb.setAttribute("aria-expanded", "true"); }); });
+}
 function trackerCollapseToggleRow(key, label, count, colspan) {
   var open = !!TRACKER_COLLAPSED_OPEN[key];
   return '<tr class="tracker-collapse-row"><td colspan="' + colspan + '">' +
@@ -4641,14 +4827,14 @@ function rptDataLoad() {
     REP.fields = REP.data.length ? Object.keys(REP.data[0]).sort() : Object.keys(RPT_DERIVED);
   }, function (err) { REP.err = err.message || String(err); })
     .then(function () { REP.loading = false; if (REP.again) { REP.again = false; rptDataLoad(); return; }
-      if (SEC === "reports") { if (REP.win) rptWinUpdate(); render(); } });
+      if (SEC === "reports") { if (REP.win) rptWinUpdate(); render(); } else if (SUB === "sched") schedStatsPaint(); });
 }
 function rptOnReload() { if (SEC === "reports" && (REP.data || REP.loading)) rptDataLoad(); else REP.stale = true; }
 function rptSavedLoad() {
   if (REP.saved !== null || REP.savedLoading) return;
   REP.savedLoading = true;
   api("saved-report/list", {}).then(function (rows) { REP.saved = rows || []; REP.noSql = false; }, function () { REP.saved = []; REP.noSql = true; })
-    .then(function () { REP.savedLoading = false; if (SEC === "reports") render(); });
+    .then(function () { REP.savedLoading = false; if (SEC === "reports") render(); else if (SUB === "sched") schedStatsPaint(); });
 }
 /* --- pivot engine --- */
 function rptUpgrade(c) {
@@ -4753,7 +4939,16 @@ function rptPeriodSelect() {
     '<span class="lbl">to</span>' +
     '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-rptdto class="rpt-date" data-last-iso="' + r.to + '" value="' + esc(isoToMdy(r.to)) + '">';
 }
-function rptTiles() { return RPT_SYSTEM.concat((REP.saved || []).map(function (r) { var c = rptUpgrade(r.config || {});
+function rptPeriodStrip() {
+  var r = rptDashRange();
+  return '<div class="rpt-perbar"><span class="lbl">Period</span><span class="rpt-seg" role="group" aria-label="Period">' + [["month", "This Month"], ["3m", "Last 3 Months"], ["ytd", "Year to Date"], ["custom", "Custom"]].map(function (x) {
+    return '<button class="' + (REP.per === x[0] ? "on" : "") + '" data-rptper="' + x[0] + '">' + x[1] + "</button>"; }).join("") + "</span>" +
+    '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-rptdfrom class="rpt-date" data-last-iso="' + r.from + '" value="' + esc(isoToMdy(r.from)) + '">' +
+    '<span class="lbl">to</span>' +
+    '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-rptdto class="rpt-date" data-last-iso="' + r.to + '" value="' + esc(isoToMdy(r.to)) + '">' +
+    '<span class="rpt-live">' + esc(rptUpdatedText()) + "</span></div>";
+}
+function rptTiles() { return RPT_SYSTEM.concat((REP.saved || []).filter(function (r) { return String(r.name).indexOf("__") !== 0; }).map(function (r) { var c = rptUpgrade(r.config || {});
   return { id: r.id, name: r.name, cfg: c, tag: (c.rows && c.rows.length ? "grouped by " + c.rows.join(", ") : "totals") }; })); }
 function rptUpdatedText() {
   if (REP.loading) return "Updating…";
@@ -4767,11 +4962,26 @@ function rptDashHtml() {
   var all = rptFiltered(base), sum = function (l, f) { return l.reduce(function (a, r) { return a + (rptNum(r[f]) || 0); }, 0); };
   var by = { "Bag Order": 0, "External": 0, "Internal Freight": 0 }; all.forEach(function (r) { by[r.order_type]++; });
   var hasExt = all.some(function (r) { return r.order_type === "External" && r.revenue; });
-  var mc = motDashCards(range);
-  var h = '<div class="rpt-hero">' + (mc.miles ||
-    '<div class="rpt-card"><div class="lbl">Total mileage</div><div class="rpt-big">' + Math.round(sum(all, "internal_miles")).toLocaleString() + '</div><div class="rpt-sub">internal miles (pull Motive for the whole fleet)</div></div>') +
-    '<div class="rpt-card"><div class="lbl">Loads delivered</div><div class="rpt-big">' + all.length.toLocaleString() + '</div><div class="rpt-sub">' + by["Bag Order"] + " bag · " + by["External"] + " external · " + by["Internal Freight"] + ' freight</div></div>' +
-    '<div class="rpt-card"><div class="lbl">Total revenue</div><div class="rpt-big">' + rptMoney(sum(all, "revenue")) + '</div><div class="rpt-sub">' + (hasExt ? "all order types" : "no external invoices in this period") + "</div></div>" + (mc.rpm || "") + "</div>" + (mc.roll ? motBrokerTable(mc.roll) : "");
+  var mc = motDashCards(range), calc = sbCalc(range.from, range.to) || {};
+  var plain = function (key, name, big, sub) { return '<div class="rpt-card">' + sbPinBtn(key) + '<div class="lbl">' + name + '</div><div class="rpt-big sm">' + big + '</div><div class="rpt-sub">' + sub + "</div></div>"; };
+  var miles = mc.roll ? Math.round(mc.roll.total).toLocaleString() : Math.round(sum(all, "internal_miles")).toLocaleString();
+  var h = '<div class="rpt-cards">' +
+    plain("m:miles", "Total mileage", miles, mc.roll ? Math.round(mc.roll.bag).toLocaleString() + " bag · " + Math.round(mc.roll.intf).toLocaleString() + " internal · " + Math.round(mc.roll.ext).toLocaleString() + " external (Motive)" : "internal miles (pull Motive for the whole fleet)") +
+    plain("m:orders", "Loads delivered", all.length.toLocaleString(), by["Bag Order"] + " bag · " + by["External"] + " external · " + by["Internal Freight"] + " freight") +
+    plain("m:rev", "Total revenue", rptMoney(sum(all, "revenue")), hasExt ? "all order types" : "no external invoices in this period") +
+    (mc.roll ? plain("m:ext", "External RPM", calc["m:ext"], "$" + Math.round(mc.roll.rev).toLocaleString() + " over " + Math.round(mc.roll.ext).toLocaleString() + " external miles, deadhead included") : "") +
+    plain("m:aow", "Avg orders / week", calc["m:aow"] || "—", "delivered orders") +
+    plain("m:amw", "Avg miles / week", calc["m:amw"] || "—", "Motive miles");
+  var shown = 0;
+  rptTiles().forEach(function (t, i) {
+    if (t.sys && (t.name === "Total revenue" || RPT_HIDDEN.indexOf(t.name) >= 0)) return;
+    shown++;
+    var mute = !!t.later && (REP.fields || []).indexOf("backhaul") < 0, res = mute ? null : rptRun(t.cfg), tv = res ? rptTotalVal(t.cfg, res) : null;
+    var v = mute ? "—" : tv.v ? rptValFmt(tv.v, tv.x) + (tv.v.f === "days_to_deliver" && tv.x != null ? " days" : "") : "—";
+    h += '<button class="rpt-tile' + (t.sys ? "" : " mine") + (mute ? " mute" : "") + '" data-rpttile="' + i + '"><span class="go">Open &rarr;</span>' + (mute ? "" : sbPinBtn(rptTileKey(t))) + '<div class="lbl">' + esc(t.name) +
+      '</div><div class="rpt-big sm">' + v + '</div><div class="rpt-sub">' + esc(mute ? "turns on with the backhaul checkbox" : t.tag + (t.sys ? "" : " · your report")) + "</div></button>";
+  });
+  h += "</div>" + (mc.roll ? motBrokerTable(mc.roll) : "");
   var months = [], y = +range.from.slice(0, 4), m = +range.from.slice(5, 7), ey = +range.to.slice(0, 4), em = +range.to.slice(5, 7);
   while ((y < ey || (y === ey && m <= em)) && months.length < 14) { months.push(y + "-" + String(m).padStart(2, "0")); m++; if (m > 12) { m = 1; y++; } }
   var lastM = months[months.length - 1], firstM = months[0];
@@ -4782,14 +4992,6 @@ function rptDashHtml() {
   [["Loads delivered", function (l) { return l.length.toLocaleString(); }], ["Total mileage", function (l) { return Math.round(sum(l, "internal_miles")).toLocaleString(); }], ["Total revenue", function (l) { return rptMoney(sum(l, "revenue")); }]].forEach(function (r) {
     h += "<tr><td>" + r[0] + "</td>" + ml.map(function (l, i) { return "<td" + (months[i] === lastM ? ' class="cur"' : "") + ">" + r[1](l) + "</td>"; }).join("") + "</tr>"; });
   h += '</tbody></table><div class="rpt-foot">* partial month</div></div>';
-  var shown = 0;
-  h += '<div class="rpt-tiles">' + rptTiles().map(function (t, i) {
-    if (t.sys && RPT_HIDDEN.indexOf(t.name) >= 0) return "";
-    shown++;
-    var mute = !!t.later && (REP.fields || []).indexOf("backhaul") < 0, res = mute ? null : rptRun(t.cfg), tv = res ? rptTotalVal(t.cfg, res) : null;
-    var v = mute ? "—" : tv.v ? rptValFmt(tv.v, tv.x) + (tv.v.f === "days_to_deliver" && tv.x != null ? " days" : "") : "—";
-    return '<button class="rpt-tile' + (t.sys ? "" : " mine") + (mute ? " mute" : "") + '" data-rpttile="' + i + '"><span class="go">Open &rarr;</span><div class="lbl">' + esc(t.name) +
-      '</div><div class="rpt-big sm">' + v + '</div><div class="rpt-sub">' + esc(mute ? "turns on with the backhaul checkbox" : t.tag + (t.sys ? "" : " · your report")) + "</div></button>"; }).join("") + "</div>";
   if (!shown) h += '<div class="empty">No tiles on the Dashboard. Restore the built-in ones below, or click + New Report.</div>';
   if (RPT_HIDDEN.length) h += '<div class="rpt-foot"><button class="btn sm" data-rptrestore="1">Restore ' + RPT_HIDDEN.length + " Hidden Tile" + (RPT_HIDDEN.length === 1 ? "" : "s") + "</button></div>";
   return h;
@@ -4927,10 +5129,11 @@ function motCalHtml() {
     '<div class="mot-cal-ft"><button class="btn sm" data-motcal-view="' + (MOT.view === "week" ? "day" : "week") + '">' + (MOT.view === "week" ? "Show One Day" : "Show The Week") + '</button>' +
     '<button class="btn sm" data-motcal-yday="1">Yesterday</button></div>';
 }
-function motCalClose() { MOT.calOpen = false; var el = document.getElementById("mot-cal"); if (el) el.remove(); var b = document.querySelector(".mot-dt"); if (b) b.setAttribute("aria-expanded", "false"); }
+function motCalClose() { MOT.calOpen = false; var el = document.getElementById("mot-cal"); if (el) { el.classList.add("closing"); setTimeout(function () { if (el.classList.contains("closing")) el.remove(); }, 130); } var b = document.querySelector(".mot-dt"); if (b) b.setAttribute("aria-expanded", "false"); }
 function motCalPaint() {
   var el = document.getElementById("mot-cal"), btn = document.querySelector(".mot-dt");
   if (!btn) { motCalClose(); return; }
+  if (el && el.classList.contains("closing")) { el.remove(); el = null; }
   if (!el) { el = document.createElement("div"); el.id = "mot-cal"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Pick a day"); document.body.appendChild(el); }
   el.innerHTML = motCalHtml();
   var r = btn.getBoundingClientRect(); el.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 308)) + "px"; el.style.top = (r.bottom + 6) + "px";
@@ -5016,22 +5219,160 @@ function motBrokerTable(r) {
 function vReports() {
   rptSavedLoad();
   if (!REP.data && !REP.loading && !REP.err) rptDataLoad(); else if (REP.stale && !REP.loading) rptDataLoad();
-  var mot = REP.tab === "motive";
+  var mot = REP.tab === "motive", trf = REP.tab === "transfer";
   // the same bar as Orders and Current Week (compact buttons, one primary on the right), then everything else scrolls below it
-  var h = toolbarHtml("Reports", mot ? {
+  var h = toolbarHtml("Reports", trf ? {
+    className: "orders-toolbar rpt-toolbar", context: "",
+    secondary: '<button class="btn sm" data-trf="csv" title="The transfer below, one line per order, as a CSV">Download CSV</button>',
+    primary: '<button class="btn pri sm" data-trf="mark">Mark Transfer Done</button>'
+  } : mot ? {
     className: "orders-toolbar rpt-toolbar", context: motTabContext(),
     secondary: '<button class="btn sm" data-mot="all" title="Every truck-day saved from Motive, all the data, as one CSV">Download All Motive</button>',
     primary: '<button class="btn pri sm" data-mot="pull">Pull From Motive</button>'
   } : {
-    className: "orders-toolbar rpt-toolbar", context: rptPeriodSelect() + '<span class="rpt-live">' + esc(rptUpdatedText()) + "</span>",
+    className: "orders-toolbar rpt-toolbar", context: "",
     secondary: '<button class="btn sm" data-rptrefresh="1">Refresh Data</button><button class="btn sm" data-report="dump">Export Everything</button>',
     primary: '<button class="btn pri sm" id="rpt-new">+ New Report</button>'
   });
   h += '<div class="grid-wrap rpt-page"><div class="rpt-tabs" role="tablist"><button class="' + (REP.tab === "dash" ? "on" : "") + '" data-rpttab="dash" role="tab">Dashboard</button>' +
-    '<button class="' + (mot ? "on" : "") + '" data-rpttab="motive" role="tab">Motive</button></div>';
-  if (REP.noSql && !mot) h += '<div class="note-bar">Saved reports are not set up in the database yet, so only the built-in tiles show. Run the saved reports SQL to save your own.</div>';
-  return h + (mot ? vMotiveTab() : rptDashHtml()) + "</div>";
+    '<button class="' + (mot ? "on" : "") + '" data-rpttab="motive" role="tab">Motive</button>' +
+    '<button class="' + (trf ? "on" : "") + '" data-rpttab="transfer" role="tab">Transfer</button></div>';
+  if (!mot && !trf) h += rptPeriodStrip();
+  if (REP.noSql && !mot && !trf) h += '<div class="note-bar">Saved reports are not set up in the database yet, so only the built-in tiles show. Run the saved reports SQL to save your own.</div>';
+  return h + (trf ? vTransferTab() : mot ? vMotiveTab() : rptDashHtml()) + "</div>";
 }
+/* ── Reports → Transfer: billing the internal transfers ───────────────────
+   Every delivered bag and internal freight order carries a dollar amount (miles × the Internal Rate). Roughly once a week
+   (sometimes mid-week) all departments are transferred together. This tab lists what is due since the last transfer, by
+   department and truck, up to a chosen delivery date; Mark Transfer Done saves it as one batch with your batch number, and
+   those orders drop off the list for good. Undo removes a batch and its orders become due again. */
+var TRF = { loaded: false, loading: false, err: "", batches: [], done: {}, through: "", fold: {}, open: {}, lines: {} };
+function trfLoad() {
+  if (TRF.loading) return; TRF.loading = true;
+  api("transfer/list", {}).then(function (r) {
+    TRF.batches = (r && r.batches) || []; TRF.done = {}; ((r && r.done) || []).forEach(function (id) { TRF.done[id] = 1; }); TRF.err = "";
+  }, function (e) { TRF.err = /function|schema|relation|does not exist/i.test(e.message) ? "Transfers are not set up in the database yet. Run the transfers SQL first." : e.message; })
+    .then(function () { TRF.loaded = true; TRF.loading = false; if (SEC === "reports" && REP.tab === "transfer") render(); });
+}
+function trfDay(ts) { return rptIso(new Date(ts)); }   // the local calendar day a timestamp falls on
+function trfDept(v) { v = String(v == null ? "" : v).trim(); return !v ? "(no department)" : /^\d+$/.test(v) ? "Dept " + v : v; }
+function trfMoney(n) { return "$" + (Math.round(n * 100) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+// What is due: delivered, not cancelled, bag or internal freight, not in a batch yet, delivered on or before the chosen day.
+function trfDue() {
+  var thru = TRF.through || motYesterday(), out = { lines: [], missing: [], depts: {}, total: 0, miles: 0, from: "" };
+  (REP.data || []).forEach(function (r) {
+    if (r.stage === "cancelled" || (r.order_type !== "Bag Order" && r.order_type !== "Internal Freight")) return;
+    var d = r.delivery_date ? String(r.delivery_date).slice(0, 10) : "";
+    if (!d || d > thru || (r.order_id && TRF.done[r.order_id])) return;
+    var amt = rptNum(r.internal_freight_amount), dep = trfDept(r.pivot_department), trk = r.truck_number || "(no truck)", mi = rptNum(r.miles) || 0;
+    if (!(amt > 0)) { out.missing.push({ truck: trk, no: r.rexius_order_no || r.broker_load_no || "" }); return; }
+    var L = { order_id: r.order_id, department: dep, truck_number: trk, delivery_date: d, miles: mi, amount: amt };
+    out.lines.push(L); out.total += amt; out.miles += mi; if (!out.from || d < out.from) out.from = d;
+    var D = out.depts[dep] = out.depts[dep] || { orders: 0, miles: 0, amount: 0, trucks: {} };
+    D.orders++; D.miles += mi; D.amount += amt;
+    var T = D.trucks[trk] = D.trucks[trk] || { orders: 0, miles: 0, amount: 0 };
+    T.orders++; T.miles += mi; T.amount += amt;
+  });
+  return out;
+}
+function trfAgo(iso) {
+  var n = Math.round((new Date(TODAY + "T12:00:00") - new Date(String(iso).slice(0, 10) + "T12:00:00")) / 864e5);
+  return n <= 0 ? "today" : n === 1 ? "yesterday" : n + " days ago";
+}
+function vTransferTab() {
+  if (!TRF.loaded && !TRF.loading) trfLoad();
+  if (!TRF.through) TRF.through = motYesterday();
+  if (TRF.err) return '<div class="note-bar">' + esc(TRF.err) + "</div>";
+  if (!REP.data || !TRF.loaded) return '<div class="empty">Loading…</div>';
+  var due = trfDue(), last = TRF.batches[0], days = last ? Math.round((new Date(TODAY + "T12:00:00") - new Date(trfDay(last.done_at) + "T12:00:00")) / 864e5) : null;
+  var late = days == null || days >= 7;
+  var h = '<div class="trf-status"><span class="trf-dot' + (due.lines.length && late ? " due" : due.lines.length ? " soon" : "") + '"></span><div>' +
+    '<div class="trf-big">' + (last ? "Last transfer " + esc(new Date(last.done_at).toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" })) + " · " + trfAgo(trfDay(last.done_at)) + (last.batch_no ? " · batch " + esc(last.batch_no) : "") : "No transfer done yet") + "</div>" +
+    '<div class="trf-sub">' + (due.lines.length ? trfMoney(due.total) + " across " + due.lines.length + " order" + (due.lines.length === 1 ? "" : "s") + " is due" + (late ? ". It has been a week or more." : ".") : "Nothing is due through " + esc(isoToMdy(TRF.through)) + ".") + "</div></div>" +
+    '<span style="flex:1"></span><span class="lbl">Include through</span><span class="rpt-seg" role="group" aria-label="Include through">' +
+    [[motYesterday(), "Yesterday"], [TODAY, "Today"]].map(function (x) { return '<button class="' + (TRF.through === x[0] ? "on" : "") + '" data-trfthru="' + x[0] + '">' + x[1] + "</button>"; }).join("") + "</span>" +
+    '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-trfdate class="rpt-date" data-last-iso="' + TRF.through + '" value="' + esc(isoToMdy(TRF.through)) + '"></div>';
+  h += '<div class="rpt-card trf-card"><table class="trf-tbl"><thead><tr><th>Department / truck</th><th>Orders</th><th>Miles</th><th>Amount</th></tr></thead><tbody>';
+  var deps = Object.keys(due.depts).sort();
+  deps.forEach(function (d) {
+    var D = due.depts[d], closed = !!TRF.fold[d];
+    h += '<tr class="trf-dep' + (closed ? "" : " open") + '" data-trffold="' + esc(d) + '"><td><i>&#9656;</i>' + esc(d) + "</td><td>" + D.orders + "</td><td>" + Math.round(D.miles).toLocaleString() + "</td><td>" + trfMoney(D.amount) + "</td></tr>";
+    if (!closed) Object.keys(D.trucks).sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); }).forEach(function (t) {
+      var T = D.trucks[t]; h += '<tr class="trf-trk"><td>Truck ' + esc(t) + "</td><td>" + T.orders + "</td><td>" + Math.round(T.miles).toLocaleString() + "</td><td>" + trfMoney(T.amount) + "</td></tr>"; });
+  });
+  h += deps.length ? '<tr class="trf-tot"><td>Total to transfer</td><td>' + due.lines.length + "</td><td>" + Math.round(due.miles).toLocaleString() + "</td><td>" + trfMoney(due.total) + "</td></tr>" :
+    '<tr><td colspan="4" class="trf-none">All caught up through ' + esc(isoToMdy(TRF.through)) + ".</td></tr>";
+  h += "</tbody></table></div>";
+  if (due.missing.length) {
+    var by = {}; due.missing.forEach(function (m) { by[m.truck] = (by[m.truck] || 0) + 1; });
+    h += '<div class="note-bar">' + due.missing.length + " delivered order" + (due.missing.length === 1 ? " has" : "s have") + " no amount yet, so " + (due.missing.length === 1 ? "it is" : "they are") + " not counted: " +
+      Object.keys(by).map(function (t) { return "truck " + esc(t) + " (" + by[t] + ")"; }).join(", ") + ". Run Sync Delivery Dates to fill them in.</div>";
+  }
+  h += '<div class="trf-h"><span class="lbl">Done</span></div><div class="rpt-card trf-card"><table class="trf-tbl trf-hist"><thead><tr><th>Done</th><th>Batch</th><th>Covers</th><th>Orders</th><th>Amount</th><th></th></tr></thead><tbody>';
+  if (!TRF.batches.length) h += '<tr><td colspan="6" class="trf-none">No transfers yet.</td></tr>';
+  TRF.batches.forEach(function (b) {
+    var open = !!TRF.open[b.id];
+    h += '<tr class="trf-b' + (open ? " open" : "") + '" data-trfopen="' + b.id + '"><td><i>&#9656;</i>' + esc(isoToMdy(trfDay(b.done_at))) + "</td><td>" + esc(b.batch_no || "—") + "</td><td>" +
+      esc((b.from_date ? isoToMdy(String(b.from_date).slice(0, 10)) + " – " : "through ") + isoToMdy(String(b.through_date).slice(0, 10))) + "</td><td>" + b.order_count + "</td><td>" + trfMoney(b.total) +
+      '</td><td class="act"><button class="btn sm" data-trfundo="' + b.id + '">Undo</button></td></tr>';
+    if (open) {
+      var ls = TRF.lines[b.id];
+      h += '<tr class="trf-detail"><td colspan="6">' + (!ls ? "Loading…" : trfBatchDetail(ls)) + "</td></tr>";
+    }
+  });
+  return h + "</tbody></table></div>";
+}
+function trfBatchDetail(ls) {
+  var D = {}; ls.forEach(function (l) { var d = D[l.department || "(no department)"] = D[l.department || "(no department)"] || {}, t = d[l.truck_number || "(no truck)"] = d[l.truck_number || "(no truck)"] || { n: 0, mi: 0, amt: 0 }; t.n++; t.mi += +l.miles || 0; t.amt += +l.amount || 0; });
+  return '<table class="trf-mini"><tbody>' + Object.keys(D).sort().map(function (d) {
+    var tot = 0; Object.keys(D[d]).forEach(function (t) { tot += D[d][t].amt; });
+    return '<tr class="trf-md"><td>' + esc(d) + "</td><td></td><td></td><td>" + trfMoney(tot) + "</td></tr>" + Object.keys(D[d]).sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); }).map(function (t) {
+      var x = D[d][t]; return '<tr><td>Truck ' + esc(t) + "</td><td>" + x.n + "</td><td>" + Math.round(x.mi).toLocaleString() + "</td><td>" + trfMoney(x.amt) + "</td></tr>"; }).join(""); }).join("") + "</tbody></table>";
+}
+function trfMarkModal() {
+  var due = trfDue();
+  if (!due.lines.length) { toast("Nothing is due through " + isoToMdy(TRF.through), true); return; }
+  var deps = Object.keys(due.depts).sort();
+  openModal('<div class="modal-hd"><h2>Mark transfer done</h2></div><div class="modal-body">' +
+    '<p class="trf-sum">' + trfMoney(due.total) + " across " + due.lines.length + " order" + (due.lines.length === 1 ? "" : "s") + ", delivered " + esc(isoToMdy(due.from)) + " through " + esc(isoToMdy(TRF.through)) + ".</p>" +
+    '<table class="trf-mini">' + deps.map(function (d) { return "<tr><td>" + esc(d) + "</td><td>" + Object.keys(due.depts[d].trucks).length + " truck" + (Object.keys(due.depts[d].trucks).length === 1 ? "" : "s") + "</td><td>" + trfMoney(due.depts[d].amount) + "</td></tr>"; }).join("") + "</table>" +
+    '<label class="setting-field" style="margin-top:14px"><span>Batch number</span><input type="text" id="trf-batch" placeholder="e.g. the journal entry or batch number" autocomplete="off"></label></div>' +
+    '<div class="modal-ft"><span style="flex:1"></span><button class="btn" id="modal-cancel">Cancel</button><button class="btn pri" id="trf-confirm">Mark Done</button></div>');
+  var inp = $("#trf-batch"); if (inp) inp.focus();
+  var go = function () {
+    var btn = $("#trf-confirm"); if (btn.disabled) return; btn.disabled = true;
+    api("transfer/create", { batch_no: ($("#trf-batch").value || "").trim(), through_date: TRF.through, from_date: due.from, lines: due.lines })
+      .then(function (b) { closeModal(); toast("Transfer marked done · " + trfMoney(b.total)); TRF.loaded = false; TRF.lines = {}; trfLoad(); })
+      .catch(function (err) { btn.disabled = false; toast(err.message, true); });
+  };
+  $("#trf-confirm").addEventListener("click", go);
+  if (inp) inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+}
+function trfCsv() {
+  var due = trfDue(), q = function (v) { v = String(v == null ? "" : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  var lines = ["Department,Truck,Delivery date,Miles,Amount"].concat(due.lines.slice().sort(function (a, b) { return (a.department + a.truck_number + a.delivery_date).localeCompare(b.department + b.truck_number + b.delivery_date, undefined, { numeric: true }); })
+    .map(function (l) { return [l.department, l.truck_number, l.delivery_date, l.miles, l.amount.toFixed(2)].map(q).join(","); }));
+  saveBlob("dept12_transfer_through_" + TRF.through + ".csv", new TextEncoder().encode(lines.join("\n") + "\n"), "text/csv"); toast("Exported the transfer");
+}
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("[data-trf]");
+  if (b) { if (b.dataset.trf === "mark") trfMarkModal(); else if (b.dataset.trf === "csv") trfCsv(); return; }
+  var th = e.target.closest && e.target.closest("[data-trfthru]"); if (th) { TRF.through = th.dataset.trfthru; render(); return; }
+  var f = e.target.closest && e.target.closest("[data-trffold]"); if (f) { TRF.fold[f.dataset.trffold] = !TRF.fold[f.dataset.trffold]; render(); return; }
+  var u = e.target.closest && e.target.closest("[data-trfundo]");
+  if (u) { var id = u.dataset.trfundo; confirmModal("Undo this transfer? Its orders become due again.", function () {
+    api("transfer/delete", { id: id }).then(function () { TRF.loaded = false; TRF.lines = {}; trfLoad(); toast("Transfer undone"); }).catch(function (err) { toast(err.message, true); });
+  }, "Undo Transfer"); return; }
+  var o = e.target.closest && e.target.closest("[data-trfopen]");
+  if (o) {
+    var bid = o.dataset.trfopen; TRF.open[bid] = !TRF.open[bid];
+    if (TRF.open[bid] && !TRF.lines[bid]) api("transfer/lines", { batch_id: bid }).then(function (ls) { TRF.lines[bid] = ls || []; render(); }, function () { TRF.lines[bid] = []; render(); });
+    render();
+  }
+});
+document.addEventListener("change", function (e) {
+  if (e.target.matches && e.target.matches("[data-trfdate]") && e.target.dataset.lastIso) { TRF.through = e.target.dataset.lastIso; render(); }
+});
 /* --- the pivot window --- */
 function rptFieldOpts() {
   var f = (REP.fields || []).slice(); Object.keys(RPT_DERIVED).forEach(function (k) { if (f.indexOf(k) < 0) f.push(k); });
@@ -5044,35 +5385,50 @@ function rptWinOpen(tile) {
   if (!c.dateF) c.dateF = "delivery_date"; if (!c.per) c.per = "dash";
   if (c.per === "custom" && (!c.from || !c.to)) { var r0 = rptDashRange(); c.from = r0.from; c.to = r0.to; }
   REP.win = { id: tile && tile.id || null, sys: !!(tile && tile.sys), name: tile ? tile.name : "New report", cfg: c, sortCol: null, dir: -1, drill: null };
-  openModal('<div class="modal-hd"><input class="rpt-name" id="rpt-name" value="' + esc(REP.win.name) + '"' + (REP.win.sys ? " disabled" : "") + '></div>' +
+  var pinKey = REP.win.sys ? rptTileKey({ sys: 1, name: REP.win.name }) : REP.win.id ? "r:" + REP.win.id : "";
+  openModal('<div class="modal-hd rpt-hd"><input class="rpt-name" id="rpt-name" value="' + esc(REP.win.name) + '"' + (REP.win.sys ? " disabled" : "") + '>' +
+    (pinKey ? rptPinSwitch(pinKey) : '<span class="rpt-tog off" title="Save the report first, then you can pin it">Save to pin on the Scheduler bar</span>') +
+    '<button class="btn sm" id="rpt-csv">Export CSV</button></div>' +
     '<div class="modal-body rpt-win"><datalist id="rpt-fields">' + rptFieldOpts() + '</datalist><div id="rpt-ctlbox"></div><div id="rpt-out"></div></div>' +
-    '<div class="modal-ft"><button class="btn" id="rpt-csv">Export CSV</button>' + (REP.win.id ? '<button class="btn bad" id="rpt-del">Unpin Report</button>' : REP.win.sys ? '<button class="btn" id="rpt-unpinsys">Unpin Report</button>' : "") + '<span style="flex:1"></span>' +
-    (REP.win.id ? '<button class="btn" id="rpt-saveas">Save As New</button><button class="btn pri" id="rpt-save">Save Changes</button>' : '<button class="btn pri" id="rpt-save">Save &amp; Pin to Dashboard</button>') +
+    '<div class="modal-ft">' + (REP.win.id ? '<button class="btn bad" id="rpt-del">Unpin Report</button>' : REP.win.sys ? '<button class="btn" id="rpt-unpinsys">Unpin Report</button>' : "") + '<span style="flex:1"></span>' +
+    (REP.win.id ? '<button class="btn" id="rpt-saveas">Save As New</button><button class="btn pri" id="rpt-save">Save Changes</button>' : '<button class="btn pri" id="rpt-save">Save Report</button>') +
     '<button class="btn" id="modal-cancel">Close</button></div>');
   $("#modal").classList.add("wide-modal", "rpt-modal");
   rptWinControls(); rptWinUpdate();
 }
+function rptNice(f) { return String(f == null ? "" : f).replace(/_/g, " "); }
+function rptPinSwitch(key) {
+  var on = sbPins().indexOf(key) >= 0;
+  return '<button class="rpt-tog' + (on ? " on" : "") + '" role="switch" aria-checked="' + on + '" data-sbpin="' + esc(key) + '"><i></i>Show on Scheduler bar</button>';
+}
+function rptFldSel(attr, val, ph, i) {
+  var opts = (REP.fields || []).slice(); Object.keys(RPT_DERIVED).forEach(function (k) { if (opts.indexOf(k) < 0) opts.push(k); }); opts.sort();
+  if (val && opts.indexOf(val) < 0) opts.unshift(val);
+  return '<select class="rpt-sel rpt-fsel" ' + attr + (i != null ? ' data-i="' + i + '"' : "") + '><option value="">' + esc(ph || "Choose…") + "</option>" +
+    opts.map(function (o) { return '<option value="' + esc(o) + '"' + (o === val ? " selected" : "") + ">" + esc(rptNice(o)) + (o in RPT_DERIVED ? " (calculated)" : "") + "</option>"; }).join("") + "</select>";
+}
 function rptFld(attr, val, ph, i) { return '<input class="rpt-fin" list="rpt-fields" ' + attr + (i != null ? ' data-i="' + i + '"' : "") + ' value="' + esc(val || "") + '" placeholder="' + (ph || "column") + '" autocomplete="off">'; }
 function rptWinControls() {
   var c = REP.win.cfg, h = "";
-  h += '<div class="rpt-sec"><span class="lbl">Rows</span><div class="rpt-chips">' + (c.rows || []).map(function (f, i) { return '<span class="rpt-chip">' + esc(f) + ' <button data-rptdo="rowdel" data-i="' + i + '" title="Remove">&times;</button></span>'; }).join("") +
-    rptFld('data-rptin="rowadd"', "", "+ add a column") + "</div></div>";
-  h += '<div class="rpt-sec"><span class="lbl">Columns</span><div class="rpt-chips">' + rptFld('data-rptin="cols"', c.cols, "none (optional)") + "</div></div>";
-  h += '<div class="rpt-sec"><span class="lbl">Values</span><div>' + c.vals.map(function (v, i) {
+  h += '<div class="rpt-sec"><div class="rpt-t">Group by</div><div class="rpt-chips">' + (c.rows || []).map(function (f, i) {
+    return '<span class="rpt-chip">' + esc(rptNice(f)) + ' <button data-rptdo="rowdel" data-i="' + i + '" title="Remove">&times;</button></span>'; }).join("") +
+    rptFldSel('data-rptin="rowadd"', "", "+ Add") + "</div></div>";
+  h += '<div class="rpt-sec"><div class="rpt-t">Split into columns by</div><div class="rpt-chips">' + rptFldSel('data-rptin="cols"', c.cols, "None") + "</div></div>";
+  h += '<div class="rpt-sec"><div class="rpt-t">Show</div><div>' + c.vals.map(function (v, i) {
     return '<div class="rpt-line"><select class="rpt-sel" data-rptin="vagg" data-i="' + i + '">' + Object.keys(RPT_AGG).map(function (a) { return '<option value="' + a + '"' + (v.agg === a ? " selected" : "") + ">" + RPT_AGG[a] + "</option>"; }).join("") + "</select>" +
-      (v.agg === "count" ? "<span class=\"rpt-note\">rows</span>" : rptFld('data-rptin="vf"', v.f, "column", i) + (v.agg === "ratio" ? '<span class="rpt-note">&divide;</span>' + rptFld('data-rptin="vf2"', v.f2, "column", i) : "")) +
+      (v.agg === "count" ? "<span class=\"rpt-note\">of orders</span>" : rptFldSel('data-rptin="vf"', v.f, "column", i) + (v.agg === "ratio" ? '<span class="rpt-note">&divide;</span>' + rptFldSel('data-rptin="vf2"', v.f2, "column", i) : "")) +
       (c.vals.length > 1 ? ' <button class="rpt-x" data-rptdo="valdel" data-i="' + i + '" title="Remove">&times;</button>' : "") + "</div>"; }).join("") +
-    '<button class="btn sm" data-rptdo="valadd">+ Value</button></div></div>';
-  h += '<div class="rpt-sec"><span class="lbl">Filters</span><div>' + (c.filters || []).map(function (f, i) {
-    return '<div class="rpt-line">' + rptFld('data-rptin="ff"', f.f, "column", i) + '<select class="rpt-sel" data-rptin="fop" data-i="' + i + '">' + Object.keys(RPT_OPS).map(function (o) { return '<option value="' + o + '"' + (f.op === o ? " selected" : "") + ">" + RPT_OPS[o] + "</option>"; }).join("") + "</select>" +
+    '<button class="rpt-add" data-rptdo="valadd">+ Add</button></div></div>';
+  h += '<div class="rpt-sec"><div class="rpt-t">Only include</div><div>' + (c.filters || []).map(function (f, i) {
+    return '<div class="rpt-line">' + rptFldSel('data-rptin="ff"', f.f, "column", i) + '<select class="rpt-sel" data-rptin="fop" data-i="' + i + '">' + Object.keys(RPT_OPS).map(function (o) { return '<option value="' + o + '"' + (f.op === o ? " selected" : "") + ">" + RPT_OPS[o] + "</option>"; }).join("") + "</select>" +
       (f.op === "blank" || f.op === "notblank" ? "" : '<input class="rpt-fin" data-rptin="fv" data-i="' + i + '" value="' + esc(f.v == null ? "" : f.v) + '" placeholder="value">') +
       ' <button class="rpt-x" data-rptdo="fdel" data-i="' + i + '" title="Remove">&times;</button></div>'; }).join("") +
-    '<button class="btn sm" data-rptdo="fadd">+ Filter</button></div></div>';
+    '<button class="rpt-add" data-rptdo="fadd">+ Add</button></div></div>';
   var r = c.per === "dash" ? rptDashRange() : rptRange(c.per, c.from, c.to);
-  h += '<div class="rpt-sec"><span class="lbl">Period</span><div class="rpt-line"><select class="rpt-sel" data-rptin="per">' + RPT_PER.map(function (x) { return '<option value="' + x[0] + '"' + (c.per === x[0] ? " selected" : "") + ">" + x[1] + "</option>"; }).join("") + "</select>" +
-    (c.per === "all" ? "" : '<span class="rpt-note">on</span>' + rptFld('data-rptin="datef"', c.dateF, "date column")) +
-    (c.per === "custom" ? '<input type="text" inputmode="numeric" data-smartdate data-rptwfrom class="rpt-date" data-last-iso="' + c.from + '" value="' + esc(isoToMdy(c.from)) + '"><span class="rpt-note">to</span><input type="text" inputmode="numeric" data-smartdate data-rptwto class="rpt-date" data-last-iso="' + c.to + '" value="' + esc(isoToMdy(c.to)) + '">' : (c.per === "all" ? "" : '<span class="rpt-note">' + esc(isoToMdy(r.from) + " – " + isoToMdy(r.to)) + "</span>")) +
-    '<label class="rpt-chk"><input type="checkbox" data-rptin="bars"' + (c.bars ? " checked" : "") + "> Bars</label></div></div>";
+  h += '<div class="rpt-sec"><div class="rpt-t">Period</div><div class="rpt-line"><select class="rpt-sel" data-rptin="per">' + RPT_PER.map(function (x) { return '<option value="' + x[0] + '"' + (c.per === x[0] ? " selected" : "") + ">" + x[1] + "</option>"; }).join("") + "</select>" +
+    (c.per === "all" ? "" : '<span class="rpt-note">by</span>' + rptFldSel('data-rptin="datef"', c.dateF, "date column")) + "</div>" +
+    (c.per === "custom" ? '<div class="rpt-line"><input type="text" inputmode="numeric" data-smartdate data-rptwfrom class="rpt-date" data-last-iso="' + c.from + '" value="' + esc(isoToMdy(c.from)) + '"><span class="rpt-note">to</span><input type="text" inputmode="numeric" data-smartdate data-rptwto class="rpt-date" data-last-iso="' + c.to + '" value="' + esc(isoToMdy(c.to)) + '"></div>' : "") +
+    '<label class="rpt-chk"><input type="checkbox" data-rptin="bars"' + (c.bars ? " checked" : "") + "> Show bars</label></div>";
   $("#rpt-ctlbox").innerHTML = h;
 }
 function rptWinRun() {
@@ -5091,8 +5447,8 @@ function rptWinUpdate() {
   var bigCol = dc.length - 1, mx = 0;
   d.rows.forEach(function (r) { var x = dc[bigCol].get(r); if (x != null && x > mx) mx = x; });
   var h = '<div class="rpt-meta">' + res.count.toLocaleString() + " orders · " + d.rows.length.toLocaleString() + " rows" + (res.cols.length >= 40 ? " · first 40 columns" : "") + '</div><div class="grid-wrap rpt-tbl"><table class="data"><thead><tr>' +
-    (res.rf.length ? res.rf.map(function (f, i) { return '<th data-rptsort="-1">' + esc(f) + (i === 0 ? arrow(-1) : "") + "</th>"; }).join("") : "<th>All orders</th>") +
-    dc.map(function (x, i) { return '<th class="r" data-rptsort="' + i + '">' + esc(x.head) + arrow(i) + "</th>"; }).join("") + "</tr></thead><tbody>";
+    (res.rf.length ? res.rf.map(function (f, i) { return '<th data-rptsort="-1">' + esc(rptNice(f)) + (i === 0 ? arrow(-1) : "") + "</th>"; }).join("") : "<th>All orders</th>") +
+    dc.map(function (x, i) { return '<th class="r" data-rptsort="' + i + '">' + esc(rptNice(x.head)) + arrow(i) + "</th>"; }).join("") + "</tr></thead><tbody>";
   d.rows.slice(0, 500).forEach(function (r, ri) {
     h += '<tr class="rpt-row">' + (res.rf.length ? r.labels.map(function (l) { return '<td data-rptcell="' + ri + '|-1">' + esc(l) + "</td>"; }).join("") : '<td data-rptcell="' + ri + '|-1">All</td>') +
       dc.map(function (x, i) { var v = x.get(r), bar = c.bars && i === bigCol && mx > 0 && v != null && v > 0 ? '<span class="rpt-bar" style="width:' + Math.max(2, Math.round(v / mx * 80)) + 'px"></span>' : "";
@@ -5245,9 +5601,13 @@ function settingsAppearance() {
         '<button class="btn sm pri" data-accent-save="1">Save color</button></div>' +
       '<div class="setting-help" id="accent-status">Hard-to-read colors are blocked automatically.</div></div>' : '') + '</div></section>';
   h += '<section class="set-card set-type"><div class="set-title"><div><div class="set-h">Typography</div>' +
-    '<p>Interface font.</p></div></div>' +
+    '<p>Interface font, and the font for labels and numbers.</p></div></div>' +
     '<label class="setting-field font-field"><span>Interface font</span><select id="pref-font-select">' +
       FONTS.map(function (f) { return '<option value="' + esc(f[0]) + '"' + ((PREFS.font || "") === f[0] ? " selected" : "") +
+        ' style="font-family:' + (f[0] || "inherit") + '">' + esc(f[1]) + "</option>"; }).join("") +
+    '</select></label>' +
+    '<label class="setting-field font-field"><span>Label and number font</span><select id="pref-mono-select">' +
+      MONO_FONTS.map(function (f) { return '<option value="' + esc(f[0]) + '"' + ((PREFS.monoFont || "") === f[0] ? " selected" : "") +
         ' style="font-family:' + (f[0] || "inherit") + '">' + esc(f[1]) + "</option>"; }).join("") +
     '</select></label><div class="font-sample" style="font-family:' + (PREFS.font || "inherit") + '">' +
       '<span>' + esc(fontName) + '</span><strong>SAMPLE CUSTOMER</strong>' +
@@ -5436,17 +5796,13 @@ function reorderStagedRow(draggedId, targetId) {
    not the triangle glyph: "i dont like the little triangle thing"). */
 function internalFreightRateHtml() {
   var cfg = DB.internal_freight_rate || { rate_per_mile: 0, minimum_charge: 0 };
-  var action = (IFR_OPEN ? "Hide" : "Show") + " internal rate settings";
-  var toggle = '<button class="ifr-arrow" id="ifr-toggle" title="' +
-    action + '" aria-label="' + action + '">' + (IFR_OPEN ? "&gt;" : "&lt;") + "</button>";
-  if (!IFR_OPEN) return toggle;
-  return toggle +
-    '<span class="lbl" style="margin:0 4px 0 6px">Internal rate $/mi</span>' +
+  return '<span class="ifr-bar' + (IFR_OPEN ? "" : " closed") + '" id="ifr-bar"><button class="rail-toggle-icon" id="ifr-toggle" title="' + (IFR_OPEN ? "Hide" : "Show") +
+    ' internal rate" aria-label="Internal rate settings" aria-expanded="' + IFR_OPEN + '">' + (IFR_OPEN ? "&gt;" : "&lt;") + '</button><span class="ifr-body"><span class="lbl">Internal Rate $/Mi</span>' +
     '<input type="number" step="0.01" min="0" id="ifr-rate" class="rate-inp" placeholder="0.00" value="' +
       (cfg.rate_per_mile ? esc(String(cfg.rate_per_mile)) : "") + '" title="Internal freight rate per mile">' +
-    '<span class="lbl" style="margin:0 4px">Min $</span>' +
+    '<span class="lbl">Min $</span>' +
     '<input type="number" step="0.01" min="0" id="ifr-min" class="rate-inp" placeholder="0.00" value="' +
-      (cfg.minimum_charge ? esc(String(cfg.minimum_charge)) : "") + '" title="Minimum internal freight charge — 0 means no minimum, always miles × rate">';
+      (cfg.minimum_charge ? esc(String(cfg.minimum_charge)) : "") + '" title="Minimum internal freight charge — 0 means no minimum, always miles × rate"></span></span>';
 }
 /* The IFR rate arrow + Sync mileage/Sync delivery dates buttons used to live
    embedded in the retired .subs tab bar (D200 removed it — Nate: "the order
@@ -5725,6 +6081,7 @@ function render() {
   var railEl = $("#rail"), railTop = railEl ? railEl.scrollTop : 0;
   var navEl = $("#sidenav-body"), navTop = navEl ? navEl.scrollTop : 0;
   LAST_VIEW_KEY = viewKey;
+  if (!keepScroll) requestAnimationFrame(function () { [].forEach.call(main.querySelectorAll(".grid-wrap, .rpt-page"), function (el) { el.classList.add("page-in"); }); });
   main.innerHTML = ""; applyZoom();
   if (SEC === "database") main.insertAdjacentHTML("beforeend", databaseTabsHtml());
   if (SEC === "settings") main.insertAdjacentHTML("beforeend", settingsTabsHtml());
@@ -5737,6 +6094,7 @@ function render() {
     if (!schedNode) { schedNode = buildScheduler(); if (SCHED_KEEP) schedNeedsScroll = false; }
     SCHED_KEEP = false;
     main.appendChild(schedNode);
+    requestAnimationFrame(function () { requestAnimationFrame(function () { SCHED_STAT.day = schedTopDay(); schedStatsPaint(); }); });
     /* On a fresh build, land the viewport on today once it's in the DOM (D53).
        Reusing the cached node instead just restores wherever it was (D141). */
     if (schedNeedsScroll) {
@@ -7669,7 +8027,7 @@ document.addEventListener("click", function (e) {
     "[data-managecols],[data-colup],[data-coldown],[data-adddb]," +
     "#theme,#sync-all,#jump-btn,#today-jump,#logo-home,#add-truck," +
     "#add-pickdrop,#add-department,#new-order,#xfer-add,#xfer-bulk,#xfer-save-bulk,#dw-close,#group-btn,#scrim,#nav-scrim,#int-add,#int-bulk,#int-save-bulk,#push-driver-tabs," +
-    "#modal-cancel,#modal-save,#modal-save-loc,#modal-save-dept,#modal-save-truck,#col-save,#col-delete,#condfmt-save,#field-save,#field-options-save,#db-save,#confirm-del,#confirm-customer-archive,#ifr-toggle," +
+    "#modal-cancel,#modal-save,#modal-save-loc,#modal-save-dept,#modal-save-truck,#col-save,#col-delete,#condfmt-save,#field-save,#field-options-save,#db-save,#confirm-del,#confirm-customer-archive,#ss-toggle,#ifr-toggle,[data-sbpin],[data-rptper]," +
     "#profile-btn,[data-profile],[data-setpref],[data-showsched],[data-screc],[data-screset],[data-scresetall]," +
     "[data-cw-step],[data-schedsize-step],[data-schedsize-reset],[data-accent-pick],[data-accent-save],[data-accent-forget],[data-custom-accent-toggle],[data-numbering-save]," +
     "#navtoggle,[data-navto],[data-navsec],[data-navcycle],[data-bill-done],[data-bill-dl],[data-reopen-bill]," +
@@ -8225,8 +8583,32 @@ document.addEventListener("click", function (e) {
     }, "Unpin Report");
     return;
   }
+  if (t.dataset.rptper) {
+    var rv = t.dataset.rptper; REP.per = rv;
+    if (rv !== "custom") { REP.from = ""; REP.to = ""; try { localStorage.setItem("dept12RepPer", rv); } catch (x) {} }
+    render(); return;
+  }
+  if (t.dataset.sbpin) {
+    var pk = t.dataset.sbpin, pins = sbPins().slice(), pi = pins.indexOf(pk);
+    if (pi >= 0) pins.splice(pi, 1);
+    else { if (pins.length >= SB_MAX) { toast("The Scheduler bar holds " + SB_MAX + ". Unpin one first.", true); return; } pins.push(pk); }
+    sbSetPins(pins);
+    [].forEach.call(document.querySelectorAll(".rpt-tog[data-sbpin]"), function (b) { var on = pins.indexOf(b.dataset.sbpin) >= 0; b.classList.toggle("on", on); b.setAttribute("aria-checked", on); });
+    render();
+    return;
+  }
+  if (t.id === "ss-toggle") {
+    var sw = document.getElementById("sched-statwrap"), open = sw.classList.toggle("closed") === false;
+    SCHED_RATES_OPEN = open;
+    try { localStorage.setItem("schedRatesOpen", open ? "1" : "0"); } catch (x) {}
+    t.setAttribute("aria-expanded", open); t.title = open ? "Hide pinned numbers" : "Show pinned numbers"; t.textContent = open ? ">" : "<";
+    return;
+  }
   if (t.id === "ifr-toggle") {
-    IFR_OPEN = !IFR_OPEN; localStorage.setItem("ifrOpen", IFR_OPEN ? "1" : "0"); render();
+    var ib = document.getElementById("ifr-bar"), iopen = ib.classList.toggle("closed") === false;
+    IFR_OPEN = iopen;
+    try { localStorage.setItem("ifrOpen", iopen ? "1" : "0"); } catch (x) {}
+    t.setAttribute("aria-expanded", iopen); t.title = (iopen ? "Hide" : "Show") + " internal rate"; t.textContent = iopen ? ">" : "<";
     return;
   }
   if (t.dataset.frreset) {
@@ -8248,7 +8630,7 @@ document.addEventListener("click", function (e) {
         // chips over to the truck's driver-color tint (pushColorFor); reload so
         // the Scheduler/Current Week/Driver Tabs show it right away.
         return reload().then(function () {
-          DRIVER_SIG = "x"; loadDriverActivity();
+          DRIVER_SIG = "x"; loadDriverActivity(); PUB.at = 0; PUB.n = 0;
           toast("Schedule published · " + r.pushed.length + " driver tab(s)");
         });
       })
@@ -8334,7 +8716,7 @@ document.addEventListener("click", function (e) {
     // reopening a group always starts back at one page, not wherever
     // "Show more" had grown it to.
     if (!TRACKER_COLLAPSED_OPEN[tck]) delete TRACKER_COLLAPSED_SHOWN[tck];
-    render(); return;
+    motionCollapse(t, tck, !TRACKER_COLLAPSED_OPEN[tck]); return;
   }
   if (t.dataset.trackerCollapseMore) {
     var tcm = t.dataset.trackerCollapseMore;
@@ -8512,6 +8894,9 @@ document.addEventListener("change", function (e) {
   }
   if (e.target.id === "pref-font-select") {
     setPref("font", e.target.value); render();
+  }
+  if (e.target.id === "pref-mono-select") {
+    setPref("monoFont", e.target.value); render();
   }
   if (e.target.id === "pref-accent-wheel" || e.target.id === "pref-accent-hex") {
     var accentValue = normalizeHex(e.target.value);
@@ -10504,7 +10889,7 @@ function renderFmtBar() {
       '<button class="fb-fs-b" data-fb="fs-inc" title="Increase font size" tabindex="-1">+</button>' +
     "</span>" +
     '<span style="flex:1"></span>' +
-    (SEC === "orders" ? '<div class="fmt-ifr">' + internalFreightRateHtml() + "</div>" : "");
+    '<div class="fmt-ifr">' + internalFreightRateHtml() + "</div>";
 }
 /* Font picker (D78) — a custom popover, not a native <select>, because browsers
    ignore font-family on <option> (macOS especially). Each row previews in its own

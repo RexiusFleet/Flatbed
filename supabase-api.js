@@ -243,6 +243,7 @@ var HISTORY_LABELS = {
   "freight": "Edit freight", "motive/sync-miles": "Sync Motive mileage",
   "internal-freight-rate": "Change internal freight rate",
   "internal-freight-rate/calculate": "Calculate internal freight charges",
+  "transfer/create": "Mark transfer done", "transfer/delete": "Undo transfer",
   "sync-delivery-dates": "Sync delivery dates", "driver": "Add driver",
   "truck": "Add truck", "assign-truck": "Assign truck",
   "truck/driver": "Change truck driver", "location": "Add location",
@@ -671,6 +672,10 @@ var ROUTES = {
   "motive/days": function (d) { return edgeFunction("motive-days", d || {}); },
   "motive/days-save": function (d) { return rpc("api_motive_days_save", { d: d || {} }); },
   "motive/days-list": function (d) { return rpc("api_motive_days_list", { d: d || {} }); },
+  "transfer/list": function (d) { return rpc("api_transfer_list", { d: d || {} }); },
+  "transfer/lines": function (d) { return rpc("api_transfer_lines", { d: d || {} }); },
+  "transfer/create": viaRpc("api_transfer_create"),
+  "transfer/delete": viaRpc("api_transfer_delete"),
   "motive/sync-miles": function (d, route) { return edgeFunction("motive-sync", d, histHeaders(route, d)); },
   // Publish Schedule: builds what drivers and the bag plant see (the same data the
   // old Google push built, now read-only) and saves it as the latest published copy.
