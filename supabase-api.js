@@ -669,7 +669,7 @@ var ROUTES = {
   "saved-report": viaRpc("api_saved_report_save"),
   "saved-report/delete": viaRpc("api_saved_report_delete"),
   // Motive truck-days: pull from Motive (Edge Function motive-days), save to / read from Supabase (motive_daily).
-  "motive/days": function (d) { return edgeFunction("motive-days", d || {}); },
+  "motive/days": function (d) { return edgeFunction("motive-sync", Object.assign({ mode: "days" }, d || {})); },
   "motive/days-save": function (d) { return rpc("api_motive_days_save", { d: d || {} }); },
   "motive/days-list": function (d) { return rpc("api_motive_days_list", { d: d || {} }); },
   "transfer/list": function (d) { return rpc("api_transfer_list", { d: d || {} }); },

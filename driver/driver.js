@@ -381,7 +381,7 @@ function toolbarHtml(title) {
     (S.source === "published" ? '<span class="lbl" style="color:var(--good)">Last updated ' + esc(dateTimeLabel(S.loadedAt)) + "</span>" +
         '<span class="lbl">|</span><span class="lbl">Last refreshed ' + esc(timeLabel(S.refreshedAt)) + "</span>" :
       S.source === "live" ? '<span class="lbl" style="color:var(--good)">Updated ' + esc(timeLabel(S.loadedAt)) + "</span>" : "") +
-    '<button class="btn pri" id="refresh"' + (S.loading ? " disabled" : "") + ">" + SYNC_ICON + (S.loading ? "Refreshing" : "Refresh") + "</button></div>";
+    (BAG_PLANT ? "" : '<button class="btn pri" id="refresh"' + (S.loading ? " disabled" : "") + ">" + SYNC_ICON + (S.loading ? "Refreshing" : "Refresh") + "</button>") + "</div>";
 }
 function noticeHtml() {
   if (DEMO) return '<div class="drv-note"><b>Demo data.</b> Built-in sample schedule for testing the layout.</div>';
@@ -726,8 +726,8 @@ function renderInner() {
   if (!DEMO && !S.payload) {
     document.body.classList.remove("drv-signed-out");
     var msg = S.loading && !S.loadedAt ? "<b>Loading the schedule…</b>"
-      : S.error ? "<b>Couldn't load the schedule.</b> " + esc(S.error) + ' <button class="btn pri" id="refresh">Refresh</button>'
-      : '<b>Nothing has been published yet.</b> Check back once dispatch publishes the schedule. <button class="btn pri" id="refresh">Refresh</button>';
+      : S.error ? "<b>Couldn't load the schedule.</b> " + esc(S.error) + (BAG_PLANT ? " Trying again automatically." : ' <button class="btn pri" id="refresh">Refresh</button>')
+      : '<b>Nothing has been published yet.</b> Check back once dispatch publishes the schedule.' + (BAG_PLANT ? "" : ' <button class="btn pri" id="refresh">Refresh</button>');
     $("#main").innerHTML = '<div class="drv-note">' + msg + "</div>";
     return;
   }
@@ -819,6 +819,21 @@ function retryIfEmpty() {
 document.addEventListener("visibilitychange", function () { if (!document.hidden) retryIfEmpty(); });
 window.addEventListener("pageshow", retryIfEmpty);
 setInterval(retryIfEmpty, 60000);
+// Bag plant screen: no Refresh button. Every 2 minutes (and when the screen wakes) it asks when the schedule was last published
+// and loads it again only if that is newer than what is showing. The drivers' page does not do this: they press Refresh themselves.
+var CHECK_MS = 2 * 60 * 1000;
+function checkPublished() {
+  if (!BAG_PLANT || DEMO || S.loading || S.noteKey) return;
+  rpcPublic("public_published_at", {}).then(function (ts) {
+    var t = ts ? Date.parse(ts) : 0;
+    if (t && (!S.loadedAt || t > S.loadedAt.getTime()) && !S.loading && !S.noteKey) { S.keepScroll = true; load(); }
+  }, function () { /* not set up yet, or offline: the 45-minute refresh still runs */ });
+}
+if (BAG_PLANT) {
+  setInterval(checkPublished, CHECK_MS);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) checkPublished(); });
+  window.addEventListener("pageshow", checkPublished);
+}
 document.addEventListener("input", function (e) {
   if (e.target.id === "login-driver") { $("#login-go").disabled = !e.target.value.trim(); $("#login-err").textContent = ""; }
 });
