@@ -414,9 +414,9 @@ function paint() {
       " ready. Hit Done, or add another page.</span>" : "";
   } else if (ST.step === "live") {
     stage.innerHTML = '<div class="scan-live"><div class="scan-vwrap" id="scan-vwrap"><video id="scan-video" playsinline muted autoplay></video>' +
-      '<svg class="scan-ov" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon id="scan-poly" points="" /></svg><div class="scan-guide"></div></div></div>';
+      '<svg class="scan-ov" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon id="scan-poly" points="" /></svg></div></div>';
     bar.innerHTML = '<button class="btn drv-hbtn" data-sc="liveback">Back</button><span class="scan-tip" id="scan-status">Starting the camera…</span>' +
-      '<button class="btn pri drv-hbtn" data-sc="shutter">Capture</button>';
+      '<button class="btn drv-hbtn" data-sc="findpage">Find Page</button><button class="btn pri drv-hbtn" data-sc="shutter">Capture</button>';
   } else if (ST.step === "busy") {
     stage.innerHTML = '<div class="scan-capture"><div class="scan-hint"><b>' + esc(ST.busyText || "Scanning…") + "</b></div></div>";
     bar.innerHTML = "";
@@ -484,7 +484,7 @@ function startCam() {
   var video = $("#scan-video");
   navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 4096 }, height: { ideal: 3072 } } }).then(function (stream) {
     if (!ST || ST.step !== "live") { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
-    var cam = ST.cam = { stream: stream, on: true, last: null, still: 0, timer: 0, fit: null };
+    var cam = ST.cam = { stream: stream, on: true, timer: 0, fit: null, corners: null, hs: [], hunting: false, guesses: 0, tries: 0 };
     // Widest view the camera offers, when the browser lets a page choose.
     try {
       var tr = stream.getVideoTracks()[0], caps = tr.getCapabilities ? tr.getCapabilities() : {};
@@ -497,7 +497,10 @@ function startCam() {
     };
     window.addEventListener("resize", cam.fit);
     video.srcObject = stream;
-    var go = function () { cam.fit(); liveStatus("Hold the page in the box · " + video.videoWidth + "×" + video.videoHeight); watch(); };
+    var go = function () {
+      cam.fit(); cam.corners = defaultCorners(video); liveHandles(cam); liveDraw(cam);
+      liveStatus("Finding the page… · " + video.videoWidth + "×" + video.videoHeight); findPage(cam);
+    };
     video.onloadedmetadata = function () { video.play().then(go, go); };
   }, function (err) {
     if (!ST) return;
@@ -505,38 +508,66 @@ function startCam() {
     alertIn(err && err.name === "NotAllowedError" ? "Camera is blocked. Allow it for this site in Settings, or use Upload Photo." : "Couldn't open the camera. Use Upload Photo.");
   });
 }
-// Look at the picture a few times a second; green outline when a page is found, shoot when it holds still.
+/* The page outline you adjust, as 0..1 corners over the picture. The finder guesses a few times, then the outline
+   stays where it is until you drag a corner (it never moves under your finger) or tap Find Page to guess again. */
+function defaultCorners(video) {
+  var ar = video.videoWidth / video.videoHeight, hw = Math.min(0.42, 0.88 * (8.5 / 11) / ar / 2);
+  return [[0.5 - hw, 0.06], [0.5 + hw, 0.06], [0.5 + hw, 0.94], [0.5 - hw, 0.94]];
+}
+function liveDraw(cam) {
+  var poly = $("#scan-poly"); if (!poly) return;
+  poly.setAttribute("points", cam.corners.map(function (p) { return (p[0] * 100).toFixed(1) + "," + (p[1] * 100).toFixed(1); }).join(" "));
+  cam.hs.forEach(function (hd, i) { hd.style.left = (cam.corners[i][0] * 100) + "%"; hd.style.top = (cam.corners[i][1] * 100) + "%"; });
+}
+function liveHandles(cam) {
+  var wrap = $("#scan-vwrap"); if (!wrap) return;
+  wrap.style.touchAction = "none"; cam.hs = [];
+  var clamp01 = function (v) { return Math.max(0, Math.min(1, v)); };
+  [0, 1, 2, 3].forEach(function (i) {
+    var hd = document.createElement("div"); hd.className = "scan-handle"; wrap.appendChild(hd); cam.hs.push(hd);
+    hd.addEventListener("pointerdown", function (e) {
+      hd.setPointerCapture(e.pointerId); e.preventDefault();
+      cam.hunting = false; clearTimeout(cam.timer);
+      var res = $("#scan-video") ? $("#scan-video").videoWidth + "×" + $("#scan-video").videoHeight : "";
+      liveStatus("Drag the corners onto the paper, then tap Capture · " + res);
+      var move = function (ev) { var r = wrap.getBoundingClientRect(); cam.corners[i] = [clamp01((ev.clientX - r.left) / r.width), clamp01((ev.clientY - r.top) / r.height)]; liveDraw(cam); };
+      var up = function () { hd.removeEventListener("pointermove", move); hd.removeEventListener("pointerup", up); hd.removeEventListener("pointercancel", up); };
+      hd.addEventListener("pointermove", move); hd.addEventListener("pointerup", up); hd.addEventListener("pointercancel", up);
+    });
+  });
+}
+function findPage(cam) { cam.hunting = true; cam.guesses = 0; cam.tries = 0; clearTimeout(cam.timer); watch(); }
+// Capture: a few frames with the corners where they are now; the sharpest one is used.
+function shutter() {
+  var cam = ST && ST.cam; if (!cam || cam.burst || !cam.corners) return;
+  cam.hunting = false; clearTimeout(cam.timer);
+  cam.burst = { fixed: true, n: 0, miss: 0, qs: [], best: -1, canvas: null, spare: null, t0: performance.now() };
+  liveStatus("Capturing… hold still"); watch();
+}
+// Guess the page a few times, drawing each guess; then stop and hand the outline to the user.
 function watch() {
   var cam = ST && ST.cam; if (!cam || !cam.on) return;
-  var video = $("#scan-video"), poly = $("#scan-poly");
-  var t0 = performance.now();
-  if (video && video.readyState >= 2 && video.videoWidth) {
-    // The finder works on a 320px copy anyway, so draw exactly that (one canvas, reused).
-    var k = 320 / Math.max(video.videoWidth, video.videoHeight), w = Math.round(video.videoWidth * k), h = Math.round(video.videoHeight * k);
-    var c = cam.probe || (cam.probe = document.createElement("canvas"));
-    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
-    c.getContext("2d").drawImage(video, 0, 0, w, h);
-    var q = detectCorners(c, w, h);
-    var full = q.every(function (p, i) { return Math.abs(p[0] - [0, w, w, 0][i]) < 2 && Math.abs(p[1] - [0, 0, h, h][i]) < 2; });
-    var area = full ? 0 : polyArea(q) / (w * h), edgeTouch = q.some(function (p) { return p[0] < 2 || p[1] < 2 || p[0] > w - 2 || p[1] > h - 2; });
-    if (cam.burst) {
-      if (burstSample(cam, video, q, w, h, !full && area >= 0.05 && !edgeTouch)) return;
-      liveStatus("Hold still… capturing · " + video.videoWidth + "×" + video.videoHeight);
-      cam.timer = setTimeout(watch, Math.max(10, 80 - (performance.now() - t0))); return;
-    }
-    if (full || area < 0.05) {
-      cam.last = null; cam.still = 0; poly.setAttribute("points", "");
-      liveStatus(full ? "Looking for the page… · " + video.videoWidth + "×" + video.videoHeight : "Move a little closer · " + video.videoWidth + "×" + video.videoHeight);
-    } else {
-      poly.setAttribute("points", q.map(function (p) { return (p[0] / w * 100).toFixed(1) + "," + (p[1] / h * 100).toFixed(1); }).join(" "));
-      var move = cam.last ? Math.max.apply(null, q.map(function (p, i) { return Math.hypot(p[0] - cam.last[i][0], p[1] - cam.last[i][1]) / Math.max(w, h); })) : 1;
-      cam.last = q; cam.still = move < 0.03 ? cam.still + 1 : 0;
-      if (edgeTouch) { cam.still = 0; liveStatus("Back up a little, the whole page has to fit"); }
-      else if (cam.still >= 3) { cam.burst = { n: 0, miss: 0, qs: [], best: -1, canvas: null, spare: null, t0: performance.now() }; cam.still = 0; }
-      else liveStatus(cam.still ? "Hold still…" : "Page found · hold still");
-    }
+  var video = $("#scan-video");
+  if (!video || video.readyState < 2 || !video.videoWidth) { cam.timer = setTimeout(watch, 100); return; }
+  var t0 = performance.now(), res = video.videoWidth + "×" + video.videoHeight;
+  if (cam.burst) {
+    if (burstSample(cam, video, cam.corners, 1, 1, true)) return;
+    cam.timer = setTimeout(watch, 40); return;
   }
-  cam.timer = setTimeout(watch, Math.max(25, 100 - (performance.now() - t0)));
+  if (!cam.hunting) return;
+  var k = 320 / Math.max(video.videoWidth, video.videoHeight), w = Math.round(video.videoWidth * k), h = Math.round(video.videoHeight * k);
+  var c = cam.probe || (cam.probe = document.createElement("canvas"));
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  c.getContext("2d").drawImage(video, 0, 0, w, h);
+  var q = detectCorners(c, w, h), full = q.every(function (p, i) { return Math.abs(p[0] - [0, w, w, 0][i]) < 2 && Math.abs(p[1] - [0, 0, h, h][i]) < 2; });
+  cam.tries++;
+  if (!full && polyArea(q) / (w * h) >= 0.05) { cam.corners = q.map(function (p) { return [p[0] / w, p[1] / h]; }); cam.guesses++; liveDraw(cam); }
+  if (cam.guesses >= 4 || cam.tries >= 9) {
+    cam.hunting = false;
+    liveStatus((cam.guesses ? "Adjust the corners if needed, then tap Capture" : "Couldn't find the page, drag the corners onto it, then tap Capture") + " · " + res);
+    return;
+  }
+  cam.timer = setTimeout(watch, Math.max(25, 120 - (performance.now() - t0)));
 }
 /* The first steady frame is often still out of focus, and one frame can be fooled by a shadow edge. So once the page is
    steady it takes a short burst (about a second): every frame gets its own page outline and a sharpness score, the corners
@@ -573,8 +604,8 @@ function burstSample(cam, video, q, w, h, ok) {
       b.spare = b.canvas; b.canvas = c;
     }
   } else b.miss++;
-  if (b.n < 7 && performance.now() - b.t0 < 1700) return false;
-  if (b.qs.length < 5 || !b.canvas) { cam.burst = null; cam.last = null; cam.still = 0; liveStatus("Lost the page, hold it steady"); return false; }
+  if (b.n < (b.fixed ? 4 : 7) && performance.now() - b.t0 < 1700) return false;
+  if (b.qs.length < (b.fixed ? 2 : 5) || !b.canvas) { cam.burst = null; cam.last = null; cam.still = 0; liveStatus("Lost the page, hold it steady"); return false; }
   finishBurst(cam, b); return true;
 }
 function finishBurst(cam, b) {
@@ -589,19 +620,6 @@ function finishBurst(cam, b) {
   later(function () {
     try { addPage(c, corners); ST.step = "review"; paint(); }
     catch (err) { ST.step = "capture"; paint(); alertIn("That didn't scan. Try again."); }
-  });
-}
-function snap() {
-  var cam = ST && ST.cam, video = $("#scan-video"); if (!cam || !video || !video.videoWidth) return;
-  var W = video.videoWidth, H = video.videoHeight, k = Math.min(1, MAX_SRC / Math.max(W, H));
-  var c = document.createElement("canvas"); c.width = Math.round(W * k); c.height = Math.round(H * k);
-  c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
-  stopCam();
-  ST.step = "busy"; ST.busyText = "Scanning…"; paint();
-  later(function () {
-    try {
-      addPage(c, detectCorners(c, c.width, c.height)); ST.step = "review"; paint();
-    } catch (err) { ST.step = "capture"; paint(); alertIn("That didn't scan. Try again."); }
   });
 }
 /* ── Adjust Edges: the photo with four corner handles to drag onto the paper's corners, then Apply redoes the page. ── */
@@ -689,7 +707,8 @@ function onClick(e) {
   if (a === "cancel") close();
   else if (a === "live") startCam();
   else if (a === "liveback") { stopCam(); ST.step = "capture"; paint(); }
-  else if (a === "shutter") snap();
+  else if (a === "shutter") shutter();
+  else if (a === "findpage") { if (ST.cam) { liveStatus("Finding the page…"); findPage(ST.cam); } }
   else if (a === "library") $("#scan-lib").click();
   else if (a === "redo") { ST.pages.pop(); ST.last = null; ST.step = "capture"; paint(); }
   else if (a === "adjust") { ST.step = "adjust"; paint(); }
