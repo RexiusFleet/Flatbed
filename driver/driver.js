@@ -87,13 +87,26 @@ function rpcPublic(fn, args) {
   if (!SB_URL || !SB_KEY) return Promise.reject(new Error("The schedule isn't connected yet."));
   return fetch(SB_URL + "/rest/v1/rpc/" + fn, {
     method: "POST", headers: { "apikey": SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(args || {})
-  }).then(function (r) {
+  }).catch(function (e) { e.network = true; throw e; }).then(function (r) {   // no answer at all (Safari says "Load failed")
     return r.text().then(function (t) {
       var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) { /* plain text */ }
       if (!r.ok) throw new Error((j && j.message) || ("Request failed (" + r.status + ")"));
       return j;
     });
   });
+}
+/* Reading is safe to repeat. Safari on an iPad often drops the very first request after a page reload or a wake from sleep
+   ("Load failed") and answers the next one fine, so a read that got no answer is tried again a moment later, up to three times.
+   Writes (notes, scans, views) are never repeated this way, so nothing can be saved twice. */
+function rpcPublicRead(fn, args) {
+  var delays = [400, 1500, 4000], i = 0;
+  function go() {
+    return rpcPublic(fn, args).catch(function (e) {
+      if (!e || !e.network || i >= delays.length) throw e;
+      return new Promise(function (ok) { setTimeout(ok, delays[i++]); }).then(go);
+    });
+  }
+  return go();
 }
 // S.who: null (sign-in screen) | {role:"driver", truck, name} | {role:"bagplant"} on the bag plant page
 var S = {
@@ -139,7 +152,7 @@ function load() {
       return sampleRpc(fn, a).then(function (r) { if (fn === "driver_week_data") raw = r; return r; });
     }).then(function (p) { S.payload = p; S.source = "sample"; S.loadedAt = new Date(); S.refreshedAt = new Date(); S.error = ""; });
   } else {
-    first = rpcPublic("public_published_schedule", {}).then(function (pub) {
+    first = rpcPublicRead("public_published_schedule", {}).then(function (pub) {
       if (!pub) { S.payload = null; S.source = ""; S.error = ""; return; }   // nothing published yet
       S.payload = pub.payload; raw = pub.raw; S.source = "published";
       S.loadedAt = new Date(pub.published_at); S.refreshedAt = new Date(); S.error = "";
@@ -180,7 +193,7 @@ function loadActivity() {
   if (DEMO || !S.orders || !S.who) return;
   var ids = Object.keys(S.orders);
   if (!ids.length) return;
-  rpcPublic("public_driver_activity", { p_order_ids: ids }).then(function (a) {
+  rpcPublicRead("public_driver_activity", { p_order_ids: ids }).then(function (a) {
     S.serverNotes = {}; S.serverScans = {};
     (a.notes || []).forEach(function (n) { (S.serverNotes[n.order_id] = S.serverNotes[n.order_id] || []).push({ id: n.id, truck: n.truck, driver: n.driver, text: n.body, at: n.created_at }); });
     (a.scans || []).forEach(function (x) { if (!S.serverScans[x.order_id]) S.serverScans[x.order_id] = { pages: x.pages, at: x.created_at }; });
@@ -824,7 +837,7 @@ setInterval(retryIfEmpty, 60000);
 var CHECK_MS = 2 * 60 * 1000;
 function checkPublished() {
   if (!BAG_PLANT || DEMO || S.loading || S.noteKey) return;
-  rpcPublic("public_published_at", {}).then(function (ts) {
+  rpcPublicRead("public_published_at", {}).then(function (ts) {
     var t = ts ? Date.parse(ts) : 0;
     if (t && (!S.loadedAt || t > S.loadedAt.getTime()) && !S.loading && !S.noteKey) { S.keepScroll = true; load(); }
   }, function () { /* not set up yet, or offline: the 45-minute refresh still runs */ });
