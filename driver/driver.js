@@ -38,7 +38,8 @@ function toast(m, bad) {
   clearTimeout(t._h); t._h = setTimeout(function () { t.className = ""; }, 3200);
 }
 
-/* ── Appearance: same pref_* keys the dashboard writes (01-core) ───────── */
+/* ── Appearance: the driver and bag plant pages keep their own look. The dashboard's accent color and font setting do NOT apply here
+   (they used to, because both pages share the same browser storage). Only the scheduler size settings are still read from the dashboard. ── */
 function rgbOf(hex) { var x = String(hex || "").replace("#", ""); return [0, 2, 4].map(function (i) { return parseInt(x.slice(i, i + 2), 16) || 0; }); }
 function lum(hex) {
   return rgbOf(hex).map(function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); })
@@ -48,8 +49,7 @@ function contrast(a, b) { var x = lum(a), y = lum(b); return (Math.max(x, y) + 0
 function applyPrefs() {
   // Light theme only (the dashboard's own theme setting does not apply here).
   var root = document.documentElement, theme = "light";   // these pages are light only
-  var accent = store("pref_accent") || "#3F7D3A", font = store("pref_font") || "";
-  if (!/^#[0-9a-f]{6}$/i.test(accent)) accent = "#3F7D3A";
+  var accent = "#3F7D3A", font = "";
   if (theme === "light" || theme === "dark") root.setAttribute("data-theme", theme); else root.removeAttribute("data-theme");
   var rgb = rgbOf(accent);
   root.style.setProperty("--brand", accent);
