@@ -52,7 +52,6 @@ body.drv-signed-out .header-row{display:none}
 
 /* Current Week: same grid as the dashboard; cells open the driver's tab. */
 .driver-app table.grid thead th.trkcol{cursor:pointer}
-.driver-app table.grid thead th.trkcol.mine{box-shadow:inset 0 -3px 0 var(--brand)}
 .driver-app table.grid tr.dstart>td{border-top:3px solid var(--rule-2)}
 .driver-app .cell{cursor:default}
 .driver-app .chip{cursor:pointer;--edge:var(--rule-2)}

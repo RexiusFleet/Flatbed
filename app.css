@@ -1884,3 +1884,11 @@ details[open]::details-content{block-size:auto}
 /* Dashboard Current Week: the same, the whole Load Info text and no department line (the Scheduler keeps its one-line chip) */
 #main .grid-wrap:not(#sched-wrap) .chip.xfer .who{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;line-height:1.25}
 #main .grid-wrap:not(#sched-wrap) .chip.xfer .meta{display:none}
+
+/* Column headers (Scheduler, Current Week, driver and bag plant pages): the driver's name at 16px, the header tinted with the driver's color,
+   and a thick line of that color along the bottom */
+table.grid thead th .drv{font-size:16px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.grid thead th.has-dc{background:color-mix(in srgb,var(--dc) 16%,var(--panel-2));border-bottom:5px solid var(--dc)}
+table.grid thead th.has-dc .drv{padding-left:0}
+table.grid thead th.has-dc .drv::before{display:none}
+table.grid thead th .trk{font-size:var(--fs-body-sm);margin-top:1px;display:block}

@@ -413,7 +413,7 @@ function vCurrentWeek() {
     '<th class="corner"><span class="lbl">Date</span></th>';
   cw.forEach(function (t) {
     var open = allowedTab(String(t.truck));
-    h += '<th class="trkcol' + (String(t.truck) === mine ? " mine" : "") + '" style="width:var(--col-w,150px)' + (open ? "" : ";cursor:default") + '"' +
+    h += '<th class="trkcol' + (t.driver_color ? " has-dc" : "") + '" style="' + (t.driver_color ? "--dc:" + esc(/^#[0-9a-f]{8}$/i.test(t.driver_color) ? t.driver_color.slice(0, 7) : t.driver_color) + ";" : "") + 'width:var(--col-w,150px)' + (open ? "" : ";cursor:default") + '"' +
       (open ? ' data-tab="' + esc(t.truck) + '" title="Open ' + esc(t.driver || t.truck) + '\'s tab"' : "") + ">" +
       '<span class="drv"' + (t.driver_color ? ' style="--dc:' + esc(t.driver_color) + '"' : "") + ">" + esc(t.driver || "— unassigned —") + "</span>" +
       '<span class="trk">' + esc(t.truck) + " " + esc(t.equipment_type || "") + "</span></th>";
@@ -697,7 +697,7 @@ function vDriverGrid(d) {
       var key = d.truck_id + "|" + ds + "|" + (s + 1), isLoad = !!S.loadKeys[key];   // typed cells: text only
       S.chipTitle[key] = String(r.chip || "").split("\n")[0];
       if (!r.chip && !r.notes) return;
-      if (!isLoad) { h += '<div class="dvx-note-row"><span class="dvx-note-tag">Note</span>' + esc(r.chip) + "</div>"; return; }
+      if (!isLoad) { h += '<div class="dvx-note-row">' + esc(r.chip) + "</div>"; return; }
       h += '<div><div class="load-txt' + (r.color ? "" : " unfilled") + '" style="' + fillStyle(r.color) + '">' + tabChipHtml(key, r) +
         '<div class="chip-scan">' + storeMapBtn(key) + scanBtn(key) + scanHtml(key) + "</div></div></div>" +
         '<div class="mono">' + esc(rexiusOrderNo(key)) + "</div>" +
@@ -723,7 +723,7 @@ function vDriverCards(d) {
       any = true;
       var key = d.truck_id + "|" + ds + "|" + (s + 1), isLoad = !!S.loadKeys[key];   // typed cells: text only
       S.chipTitle[key] = String(r.chip || "").split("\n")[0];
-      if (!isLoad) { h += '<div class="drv-card dvx-note-card"><span class="dvx-note-tag">Note</span>' + esc(r.chip) + "</div>"; return; }
+      if (!isLoad) { h += '<div class="drv-card dvx-note-card">' + esc(r.chip) + "</div>"; return; }
       var fields = [["Rexius Order #", rexiusOrderNo(key)], ["PO / PU #", r.po_number],
         ["Delivery #", r.delivery_number], ["Load #", loadNo(key)]].filter(function (f) { return f[1]; });
       h += '<div class="drv-card"><div class="load-txt' + (r.color ? "" : " unfilled") + '" style="' + fillStyle(r.color) + '">' + tabChipHtml(key, r) + "</div>" +

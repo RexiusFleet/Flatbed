@@ -2698,6 +2698,11 @@ function billBatch() {
 /* ── Views ───────────────────────────────────────────────────────────────── */
 /* Truck is the Scheduler column's identity (D32); driver is the current
    occupant, shown secondary and tinted with their color if set. */
+// The column header takes the driver's color (a tint with a thick line along the bottom), see .has-dc in app.css.
+// A saved driver color can carry see-through (8 digit hex); the header line and tint use the solid color.
+function dcSolid(c) { c = String(c || ""); return /^#[0-9a-f]{8}$/i.test(c) ? c.slice(0, 7) : c; }
+function dcClass(t) { return t.driver_color ? " has-dc" : ""; }
+function dcStyle(t) { return t.driver_color ? "--dc:" + esc(dcSolid(t.driver_color)) + ";" : ""; }
 function truckColHeader(t) {
   var dc = t.driver_color ? ' style="--dc:' + esc(t.driver_color) + '"' : "";
   return '<span class="drv"' + dc + '>' + esc(t.driver_name || "— unassigned —") + "</span>" +
@@ -2941,7 +2946,7 @@ function buildScheduler() {
   var h = '<table class="grid" id="sched-table" style="width:' + (88 + cols * PREFS.colWidth) + 'px"><thead><tr>' +
        '<th class="corner"><span class="lbl">Date</span></th>';
   DB.trucks.forEach(function (t) {
-    h += '<th class="trkcol" draggable="true" data-truckid="' + t.id + '" style="width:var(--col-w,150px)">' +
+    h += '<th class="trkcol' + dcClass(t) + '" draggable="true" data-truckid="' + t.id + '" style="' + dcStyle(t) + 'width:var(--col-w,150px)">' +
       truckColHeader(t) + "</th>";
   });
   // Outside-carrier lane (D115) is always last, not part of DB.trucks and
@@ -3358,7 +3363,7 @@ function vCurrentWeek() {
   h += '<div class="grid-wrap"><table class="grid" style="width:' +
     (88 + DB.trucks.length * PREFS.colWidth) + 'px"><thead><tr><th class="corner"><span class="lbl">Date</span></th>';
   DB.trucks.forEach(function (t) {
-    h += '<th style="width:var(--col-w,150px)">' + truckColHeader(t) + "</th>";
+    h += '<th class="' + dcClass(t).trim() + '" style="' + dcStyle(t) + 'width:var(--col-w,150px)">' + truckColHeader(t) + "</th>";
   });
   h += "</tr></thead><tbody>";
   for (var i = 0; i < dates.length; i++) {
