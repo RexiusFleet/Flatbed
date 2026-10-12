@@ -1169,8 +1169,12 @@ function loadDriverActivity() {
     if (!first && !typing) { try { render(); } catch (e) { /* mid-load */ } }
   }).catch(function () { /* offline or not signed in yet: try again next minute */ });
 }
-setInterval(function () { if (!document.hidden) loadDriverActivity(); }, 60000);
-document.addEventListener("visibilitychange", function () { if (!document.hidden) loadDriverActivity(); });
+// Every 15 seconds while the dashboard is in front, and right away when you come back to it.
+var ACT_BUSY = false;
+function actPoll() { if (document.hidden || ACT_BUSY) return; ACT_BUSY = true; loadDriverActivity().then(function () { ACT_BUSY = false; }, function () { ACT_BUSY = false; }); }
+setInterval(actPoll, 15000);
+document.addEventListener("visibilitychange", actPoll);
+window.addEventListener("focus", actPoll);
 /* Driver scans section in the order drawer. A scan always stays on file on
    the load it was scanned on; dispatch picks whether it bills, and with
    which load (a BOL scanned on the wrong load, paperwork you don't bill). */
@@ -1676,6 +1680,7 @@ function parseRateCon(text, filename) {
   }
   function shape(s) { return s ? { name: s.name, address: s.address, city: s.city, state: s.state, zip: s.zip, appt: s.appt, conf: s.conf } : null; }
   out.pickup = shape(rc.pickup); out.delivery = shape(rc.delivery);
+  out.note = rc.note || "";
   out.stops = rc.stops.map(function (s) { var x = shape(s); x.stop_type = s.type; return x; });
   if (out.load_no) out.source.push("load #");
   if (out.po) out.source.push("PO");
@@ -2207,7 +2212,8 @@ function afApply(o, p) {
   }
   simple("broker_load_no", p.load_no, c.load_no);
   simple("po_number", p.po, c.po);
-  simple("rexius_order_no", p.solomon, "ok", true);   // rate cons never carry it, so no "not found" tag
+  simple("rexius_order_no", p.solomon, "ok", true);
+  if (p.note) simple("driver_note", p.note, "check", true);   // rate cons never carry it, so no "not found" tag
   if (created && o.broker_party_id && p.broker_id && o.broker_party_id === p.broker_id) mark("broker_party_id", p.broker_conf || "check", p.broker_id);
   else if (!(o.broker_party_id)) { if (p.broker_id) { body.broker_party_id = p.broker_id; mark("broker_party_id", p.broker_conf || "check", p.broker_id); } else mark("broker_party_id", "missing"); }
   if (o.external_rate == null || o.external_rate === "") {
@@ -3186,6 +3192,10 @@ function pubPaint() {
   var r = $(".hdr-right"); if (!r) return;
   var el = $("#hdr-pub");
   if (!el) { el = document.createElement("span"); el.id = "hdr-pub"; el.className = "hdr-pub"; r.insertBefore(el, $("#hdr-seen") || null); }
+  if (!$("#push-driver-tabs")) {
+    var pb = document.createElement("button"); pb.className = "btn sm pri hdr-pubbtn"; pb.id = "push-driver-tabs"; pb.type = "button";
+    pb.innerHTML = icon("sync") + "Publish Schedule"; r.insertBefore(pb, $("#hdr-seen") || null);
+  }
   var base = lastPushMs();
   el.title = base ? "Schedule last published " + new Date(base).toLocaleString() : "The schedule has not been published yet";
   var ch = PUB.n == null ? "" : PUB.n ? '<b class="pub-n">' + PUB.n + (PUB.more ? "+" : "") + " change" + (PUB.n === 1 && !PUB.more ? "" : "s") + "</b>" : '<span class="pub-ok">Up to date</span>';
@@ -3356,8 +3366,7 @@ function vCurrentWeek() {
         '<button class="fb-fs-b" data-cw-step="-1" title="Show one fewer day"' + (CW_DAYS <= 1 ? " disabled" : "") + '>&minus;</button>' +
         '<input class="fb-fs-inp" type="text" inputmode="numeric" id="cw-days" value="' + CW_DAYS + '" title="Days shown (1–14)">' +
         '<button class="fb-fs-b" data-cw-step="1" title="Show one more day"' + (CW_DAYS >= 14 ? " disabled" : "") + '>+</button>' +
-      "</span></span>",
-    primary: '<button class="btn pri" id="push-driver-tabs">' + icon("sync") + 'Publish Schedule</button>'
+      "</span></span>"
   });
   var dates = currentWeekDates();
   h += '<div class="grid-wrap"><table class="grid" style="width:' +
@@ -3601,8 +3610,7 @@ function vDriverView() {
         '<button class="fb-fs-b" data-cw-step="-1" title="Show one fewer day"' + (CW_DAYS <= 1 ? " disabled" : "") + '>&minus;</button>' +
         '<input class="fb-fs-inp" type="text" inputmode="numeric" id="cw-days" value="' + CW_DAYS + '" title="Days shown (1–14)">' +
         '<button class="fb-fs-b" data-cw-step="1" title="Show one more day"' + (CW_DAYS >= 14 ? " disabled" : "") + '>+</button>' +
-      "</span></span>",
-    primary: '<button class="btn pri" id="push-driver-tabs">' + icon("sync") + 'Publish Schedule</button>'
+      "</span></span>"
   });
   h += '<div style="flex:1;min-height:0;overflow:auto;padding:10px 14px 14px">';
   // The same big tabs a driver sees on their page, one per truck.
@@ -9386,6 +9394,13 @@ function scheduleNote(key, text) {
     // clearing text keeps fmt/category (Sheets parity), dropping the entry only
     // when the cell is truly bare.
     var prev = CELLS[key] || {};
+    // Current Week and Driver Tabs rebuild their cells from DB.notes, so keep it in step with the board.
+    (function () {
+      var p = key.split("|"), list = DB.notes || (DB.notes = []);
+      var hit = list.filter(function (n) { return n.truck_id === p[0] && String(n.scheduled_date).slice(0, 10) === p[1] && +n.slot === +p[2]; })[0];
+      if (text) { if (hit) hit.body = text; else list.push({ truck_id: p[0], scheduled_date: p[1], slot: +p[2], body: text, fmt: prev.fmt || {}, cat_color: prev.cat || "", category_id: prev.catId || "" }); }
+      else if (hit) DB.notes = list.filter(function (n) { return n !== hit; });
+    })();
     var keepFmt = (prev.fmt && Object.keys(prev.fmt).length) || prev.catId;
     if (text) CELLS[key] = { text: text, fmt: prev.fmt, cat: prev.cat, catId: prev.catId };
     else if (keepFmt) CELLS[key] = { text: "", fmt: prev.fmt, cat: prev.cat, catId: prev.catId };

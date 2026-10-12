@@ -1796,6 +1796,8 @@ details[open]::details-content{block-size:auto}
 .hdr-pub .pub-when{font-variant-numeric:tabular-nums}
 .hdr-pub .pub-n{color:var(--warn);font-weight:700}
 .hdr-pub .pub-ok{color:var(--good)}
+.hdr-pubbtn{flex:0 0 auto;white-space:nowrap}
+.hdr-right{gap:12px}
 @media(max-width:900px){.hdr-pub{display:none}}
 
 /* Reports dashboard: one grid of cards (each with a pin), period strip under the tabs */

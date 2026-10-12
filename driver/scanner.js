@@ -9,8 +9,8 @@
 (function () {
 "use strict";
 
-var MAX_SRC = 2000;      // longest side of the photo we work from, px
-var MAX_OUT = 1800;      // longest side of a finished page, px
+var MAX_SRC = 3400;      // longest side of the photo we work from, px (was 2000: that alone made text soft)
+var MAX_OUT = 2200;      // longest side of a finished page: 2200px = 200 dpi on a letter page
 var $ = function (s, r) { return (r || document).querySelector(s); };
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
@@ -299,6 +299,11 @@ function renderPage(srcCanvas, corners, mode) {
   for (i = 0; i < n; i += 97) dev.push(Math.abs(L0[i] - L[i]));
   dev.sort(function (a, b) { return a - b; });
   var grain = 1.4826 * dev[dev.length >> 1] / 3;   // what's left after the smoothing
+  // Sharpen the fine detail (unsharp mask) so small print stays crisp after the warp; the smoothed copy is only
+  // used to measure the paper's brightness.
+  var Lb = boxBlur(L0, ow, oh, 2), Ls = new Float32Array(n);
+  for (i = 0; i < n; i++) { var sv = L0[i] + 0.9 * (L0[i] - Lb[i]); Ls[i] = sv < 0 ? 0 : sv > 255 ? 255 : sv; }
+  Lb = null;
   var B = 20, gw = Math.ceil(ow / B), gh = Math.ceil(oh / B), grid = new Float32Array(gw * gh);
   for (var gy = 0; gy < gh; gy++) for (var gx = 0; gx < gw; gx++) {
     var sum = 0, cnt = 0, xs = gx * B, ys = gy * B, xe = Math.min(ow, xs + B), ye = Math.min(oh, ys + B);
@@ -327,9 +332,9 @@ function renderPage(srcCanvas, corners, mode) {
         // Where the paper is dark (shadow, night) the grain is a bigger share
         // of the signal, so "white" starts lower there.
         var white = Math.max(0.62, Math.min(0.88, 1 - 3.2 * grain / bg)), black = white - 0.56;
-        var r = L[y * ow + x] / bg, val;
+        var r = Ls[y * ow + x] / bg, val;
         if (r >= white) val = 255;
-        else { var tt = Math.max(0, (r - black) / (white - black)); val = 255 * Math.pow(tt, 1.6); }
+        else { var tt = Math.max(0, (r - black) / (white - black)); val = 255 * Math.pow(tt, 1.25); }
         o[i] = o[i + 1] = o[i + 2] = val;
       } else {
         var gain = 245 / bg;
@@ -393,7 +398,7 @@ function paint() {
     bar.innerHTML = "";
   } else if (ST.step === "review") {
     var pg = ST.pages[ST.pages.length - 1];
-    stage.innerHTML = '<div class="scan-review"><img alt="Scanned page ' + ST.pages.length + '" src="' + pg.out.toDataURL("image/jpeg", 0.85) + '"></div>';
+    stage.innerHTML = '<div class="scan-review"><img alt="Scanned page ' + ST.pages.length + '" src="' + pg.out.toDataURL("image/jpeg", 0.9) + '"></div>';
     bar.innerHTML = '<button class="btn drv-hbtn" data-sc="redo">Retake</button><span class="scan-tip"></span>' +
       '<button class="btn drv-hbtn" data-sc="more">Add Page</button>';
   }
@@ -449,7 +454,7 @@ function finish() {
     P.PDFDocument.create().then(function (doc) {
       return pages.reduce(function (chain, p) {
         return chain.then(function () {
-          return doc.embedJpg(p.out.toDataURL("image/jpeg", 0.8)).then(function (jpg) {
+          return doc.embedJpg(p.out.toDataURL("image/jpeg", 0.9)).then(function (jpg) {
             // Letter-size pages (landscape for wide paperwork), the scan fit
             // inside with a small margin. Tickets and notes just sit centered.
             var wide = jpg.width > jpg.height * 1.1, PW = wide ? 792 : 612, PH = wide ? 612 : 792, m = 18, k = Math.min((PW - 2 * m) / jpg.width, (PH - 2 * m) / jpg.height);

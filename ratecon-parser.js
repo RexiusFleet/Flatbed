@@ -76,13 +76,15 @@ function detectFamily(t, filename) {
   if (/VANPORT/.test(u)) return "vanport";
   if (/INLAND TRANSPORT/.test(u) || /BMCA/.test(u)) return "inland";
   if (/ALLTRAN/.test(u)) return "alltran";
+  // a customer's own dispatch screen pasted from an email (Bright Wood: "Dispatched 09/22/26", "Cust PO. #", "Fuel Surcharge")
+  if (/DISPATCHED\s+\d{2}\/\d{2}\/\d{2}/.test(u) && /CUST\s*PO/.test(u)) return "dispatchscreen";
   return "generic";
 }
 
 var FAMILY_BROKER = {
   tradewinds: "Tradewinds", nationwide: "Nationwide Transport Services", aaronwilson: "Aaron Wilson",
   openroad: "OpenRoad", iosco: "Iosco Transportation", its: "", oasis: "Oasis Freight Transport",
-  vanport: "Vanport Transportation", inland: "Inland Transport", alltran: "AllTran Logistics"
+  vanport: "Vanport Transportation", inland: "Inland Transport", alltran: "AllTran Logistics", dispatchscreen: ""
 };
 
 /* ------------------------------------------------------------- labeled pulls */
@@ -376,6 +378,29 @@ function stopsGeneric(t) {
 }
 
 // Letterhead, footer and table-header text that the readers sometimes mistake for a stop.
+/* A customer dispatch screen: "From Eugene To CULVER, OR" is the lane (Rexius loads at its own yard), and the
+   consignee sits under the first "Ship to:" as name, street, city line. */
+function stopsDispatchScreen(t) {
+  var L = lines(t), out = [], fm = new RegExp("\\bFrom\\s+([A-Za-z][A-Za-z .'\\-]{1,28}?)\\s+To\\s+([A-Za-z][A-Za-z .'\\-]{1,28}?)\\s*,\\s*(" + ST + ")\\b", "i").exec(t);
+  if (fm) { var p = stop("pickup", { name: "Rexius", city: fm[1], state: fm[3].toUpperCase() }); p.keep = true; p.conf = "check"; out.push(p); }
+  for (var i = 0; i < L.length; i++) {
+    if (!/^Ship\s*to\s*:\s*$/i.test(L[i])) continue;
+    var n = nextLines(L, i, 3), csz = cityStateZip(n[2] || "") || {};
+    if (n[0] && n[1] && csz.state) { out.push(stop("delivery", { name: nameClean(n[0]), address: n[1], city: csz.city, state: csz.state, zip: csz.zip })); break; }
+  }
+  return out;
+}
+// Loose lines at the top of an email ("No tarp", "Call for loading and delivery") are instructions for the driver.
+function emailNotes(t) {
+  var L = lines(t), out = [];
+  for (var i = 0; i < L.length && out.length < 4; i++) {
+    var l = L[i]; if (!l) continue;
+    if (/^Ship\s*to\s*:|^Order\s*:/i.test(l)) break;
+    if (/^Load\s+\d/i.test(l)) continue;
+    out.push(l);
+  }
+  return out.join(". ");
+}
 function isJunk(s) {
   var x = (s.name + " " + s.address).toLowerCase();
   return /signature|invoice|unprocessed|conditions|carrier|facility phone|pallets|rexius|transportation,? llc|po box 426|\bmc\s*#|us mail|bill to|load number|^phone\b/.test(x) ||
@@ -386,6 +411,10 @@ function isJunk(s) {
 function loadAndPo(fam, t) {
   var r = { load_no: "", po: "", ok: true };
   switch (fam) {
+    case "dispatchscreen":
+      r.load_no = pull(t, /\bOrder\s*:\s*(\d{2}\s+\d{4,8}\s+\d{2,4})\b/i).replace(/\s+/g, " ");
+      r.po = pull(t, /\bCust(?:omer)?\s*PO\.?\s*#?\s*:?\s*([A-Z0-9][A-Z0-9\-]{2,})/i);
+      break;
     case "tradewinds":
       r.load_no = pull(t, new RegExp("freight\\s*bill\\s*#?\\s*:?\\s*" + NUM, "i"));
       r.po = pull(t, new RegExp("\\bPO\\s*#\\s*:?\\s*" + NUM, "i")) || pull(t, new RegExp("Billing\\s*Reference\\s*#\\s*[:;]?\\s*" + NUM, "i"));
@@ -441,8 +470,17 @@ var GENERIC_LOAD = [
 ];
 var GENERIC_PO = /\b(?:PO|P\.O\.|Purchase\s*Order)(?![A-Za-z])\s*(?:#|number|no\.?)?\s*[:\-]?\s*(?!BOX\b)(?=[A-Z0-9\-]*[0-9])([A-Z0-9\-]{3,})/i;
 
+// The order's total: the last two money amounts on the fuel surcharge line are the charge and the running total;
+// with no fuel line, the total of the line-haul line.
+function dispatchScreenRate(t) {
+  var m = /Fuel\s*Surcharge[^\n]*?([0-9][0-9,]*\.\d{2})\s+([0-9][0-9,]*\.\d{2})\s*$/im.exec(t);
+  if (m) return money(m[2]);
+  var h = /^\s*\w[\w ]{0,20}?\s+([0-9][0-9,]*\.\d{2})\s+([0-9][0-9,]*\.\d{2})\s*$/im.exec(t);
+  return h ? money(h[2]) : null;
+}
 function familyRate(fam, t) {
   switch (fam) {
+    case "dispatchscreen": return dispatchScreenRate(t);
     case "tradewinds": return rateIn(t, [new RegExp("total\\s*pay\\s*:?\\s*" + M, "i")]);
     case "nationwide": return rateIn(t, [new RegExp("surcharges?\\s*\\$\\s*\\$?\\s*" + MQ, "i"), new RegExp("surcharges?[^\\n]*\\$\\s*" + MQ, "i")]);
     case "aaronwilson": return rateIn(t, [new RegExp("net\\s*pay\\s*:?\\s*" + M, "i"), new RegExp("flat\\s*:?\\s*" + M, "i")]);
@@ -514,10 +552,11 @@ function parse(text, opts) {
     case "vanport": stops = stopsVanport(t); break;
     case "inland": stops = stopsInland(t); break;
     case "nationwide": stops = stopsNationwide(t); break;
+    case "dispatchscreen": stops = stopsDispatchScreen(t); break;
     default: stops = stopsLabeled(t);
   }
   var stopsC = "ok";
-  stops = stops.filter(function (s) { return (s.name || s.address || s.city) && !isJunk(s); });
+  stops = stops.filter(function (s) { return (s.name || s.address || s.city) && (s.keep || !isJunk(s)); });
   var hasP = stops.some(function (s) { return s.type === "pickup"; }), hasD = stops.some(function (s) { return s.type === "delivery"; });
   if (!stops.length) {
     var g = stopsInline(t);
@@ -546,8 +585,9 @@ function parse(text, opts) {
   }
   set("broker", hit, brokerC);
 
+  var note = fam === "dispatchscreen" ? emailNotes(t) : "";
   return {
-    family: fam, fields: fields, conf: conf, missing: missing,
+    note: note, family: fam, fields: fields, conf: conf, missing: missing,
     pickup: pickup, delivery: delivery, stops: stops
   };
 }
