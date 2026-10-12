@@ -382,17 +382,23 @@ function open(opts) {
   el.addEventListener("change", onFile);
   paint();
 }
-function close() { var el = $("#scan"); if (el) el.remove(); ST = null; }
+function close() { stopCam(); var el = $("#scan"); if (el) el.remove(); ST = null; }
 function paint() {
   var stage = $("#scan-stage"), bar = $("#scan-bar");
   $("#scan [data-sc=done]").disabled = !ST.pages.length || ST.step === "busy";
   if (ST.step === "capture") {
     stage.innerHTML = '<div class="scan-capture"><div class="scan-hint"><b>' + (ST.pages.length ? "Page " + (ST.pages.length + 1) : "Scan the POD / BOL") + "</b>" +
       "Lay it flat and get the whole page in the picture.</div>" +
-      '<button class="btn pri scan-big" data-sc="camera">Take Photo</button>' +
+      '<button class="btn pri scan-big" data-sc="live">Scan Page</button>' +
+      '<button class="btn scan-big" data-sc="camera">Take Photo With Camera App</button>' +
       '<button class="btn scan-big" data-sc="library">Upload Photo</button></div>';
     bar.innerHTML = ST.pages.length ? '<span class="scan-tip">' + ST.pages.length + " page" + (ST.pages.length > 1 ? "s" : "") +
       " ready. Hit Done, or add another page.</span>" : "";
+  } else if (ST.step === "live") {
+    stage.innerHTML = '<div class="scan-live"><div class="scan-vwrap" id="scan-vwrap"><video id="scan-video" playsinline muted autoplay></video>' +
+      '<svg class="scan-ov" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon id="scan-poly" points="" /></svg><div class="scan-guide"></div></div></div>';
+    bar.innerHTML = '<button class="btn drv-hbtn" data-sc="liveback">Back</button><span class="scan-tip" id="scan-status">Starting the camera…</span>' +
+      '<button class="btn pri drv-hbtn" data-sc="shutter">Capture</button>';
   } else if (ST.step === "busy") {
     stage.innerHTML = '<div class="scan-capture"><div class="scan-hint"><b>' + esc(ST.busyText || "Scanning…") + "</b></div></div>";
     bar.innerHTML = "";
@@ -435,6 +441,84 @@ function scanPhoto(file) {
     ST.pages.push({ out: out, thumb: thumbOf(out) });
   });
 }
+/* ── Live camera: a viewfinder inside the page with a guide box. It outlines the page it finds and takes the shot
+   by itself once the page is in view and held steady (the Capture button works any time). ─────────────── */
+function stopCam() {
+  var c = ST && ST.cam; if (!c) return;
+  c.on = false; clearTimeout(c.timer);
+  try { (c.stream.getTracks() || []).forEach(function (t) { t.stop(); }); } catch (e) { /* already stopped */ }
+  window.removeEventListener("resize", c.fit); ST.cam = null;
+}
+function liveStatus(msg, cls) { var el = $("#scan-status"); if (el) { el.textContent = msg; el.className = "scan-tip" + (cls ? " " + cls : ""); } }
+function startCam() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { alertIn("This browser can't open the camera here. Use Take Photo With Camera App."); return; }
+  ST.step = "live"; paint();
+  var video = $("#scan-video");
+  navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 4096 }, height: { ideal: 3072 } } }).then(function (stream) {
+    if (!ST || ST.step !== "live") { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+    var cam = ST.cam = { stream: stream, on: true, last: null, still: 0, timer: 0, fit: null };
+    // Widest view the camera offers, when the browser lets a page choose.
+    try {
+      var tr = stream.getVideoTracks()[0], caps = tr.getCapabilities ? tr.getCapabilities() : {};
+      if (caps.zoom && caps.zoom.min != null) tr.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] }).catch(function () {});
+    } catch (e) { /* no zoom control on this device */ }
+    cam.fit = function () {
+      var st = $("#scan-stage"), w = $("#scan-vwrap"); if (!st || !w || !video.videoWidth) return;
+      var ar = video.videoWidth / video.videoHeight, sw = st.clientWidth, sh = st.clientHeight, fw = Math.min(sw, sh * ar);
+      w.style.width = Math.round(fw) + "px"; w.style.height = Math.round(fw / ar) + "px";
+    };
+    window.addEventListener("resize", cam.fit);
+    video.srcObject = stream;
+    var go = function () { cam.fit(); liveStatus("Put the page in the box · " + video.videoWidth + "×" + video.videoHeight); watch(); };
+    video.onloadedmetadata = function () { video.play().then(go, go); };
+  }, function (err) {
+    if (!ST) return;
+    ST.step = "capture"; paint();
+    alertIn(err && err.name === "NotAllowedError" ? "Camera is blocked. Allow it for this site in Settings, or use Take Photo With Camera App." : "Couldn't open the camera. Use Take Photo With Camera App.");
+  });
+}
+// Look at the picture a few times a second; green outline when a page is found, shoot when it holds still.
+function watch() {
+  var cam = ST && ST.cam; if (!cam || !cam.on) return;
+  var video = $("#scan-video"), poly = $("#scan-poly");
+  var t0 = performance.now();
+  if (video && video.readyState >= 2 && video.videoWidth) {
+    // The finder works on a 320px copy anyway, so draw exactly that (one canvas, reused).
+    var k = 320 / Math.max(video.videoWidth, video.videoHeight), w = Math.round(video.videoWidth * k), h = Math.round(video.videoHeight * k);
+    var c = cam.probe || (cam.probe = document.createElement("canvas"));
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    c.getContext("2d").drawImage(video, 0, 0, w, h);
+    var q = detectCorners(c, w, h);
+    var full = q.every(function (p, i) { return Math.abs(p[0] - [0, w, w, 0][i]) < 2 && Math.abs(p[1] - [0, 0, h, h][i]) < 2; });
+    var area = full ? 0 : polyArea(q) / (w * h), edgeTouch = q.some(function (p) { return p[0] < 2 || p[1] < 2 || p[0] > w - 2 || p[1] > h - 2; });
+    if (full || area < 0.15) {
+      cam.last = null; cam.still = 0; poly.setAttribute("points", "");
+      liveStatus(full ? "Looking for the page… put it in the box · " + video.videoWidth + "×" + video.videoHeight : "Move closer, fill the box · " + video.videoWidth + "×" + video.videoHeight);
+    } else {
+      poly.setAttribute("points", q.map(function (p) { return (p[0] / w * 100).toFixed(1) + "," + (p[1] / h * 100).toFixed(1); }).join(" "));
+      var move = cam.last ? Math.max.apply(null, q.map(function (p, i) { return Math.hypot(p[0] - cam.last[i][0], p[1] - cam.last[i][1]) / Math.max(w, h); })) : 1;
+      cam.last = q; cam.still = move < 0.02 ? cam.still + 1 : 0;
+      if (edgeTouch) { cam.still = 0; liveStatus("Back up a little, the whole page has to fit"); }
+      else if (cam.still >= 3) { liveStatus("Got it"); snap(); return; }
+      else liveStatus(cam.still ? "Hold still…" : "Page found · hold still");
+    }
+  }
+  cam.timer = setTimeout(watch, Math.max(25, 100 - (performance.now() - t0)));
+}
+function snap() {
+  var cam = ST && ST.cam, video = $("#scan-video"); if (!cam || !video || !video.videoWidth) return;
+  var W = video.videoWidth, H = video.videoHeight, k = Math.min(1, MAX_SRC / Math.max(W, H));
+  var c = document.createElement("canvas"); c.width = Math.round(W * k); c.height = Math.round(H * k);
+  c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+  stopCam();
+  ST.step = "busy"; ST.busyText = "Scanning…"; paint();
+  later(function () {
+    try {
+      var out = renderPage(c, detectCorners(c, c.width, c.height), "bw");
+      ST.pages.push({ out: out, thumb: thumbOf(out) }); ST.step = "review"; paint();
+    } catch (err) { ST.step = "capture"; paint(); alertIn("That didn't scan. Try again."); }
+  });
+}
 function onFile(e) {
   var files = [].slice.call(e.target.files || []); e.target.value = "";
   if (!files.length || !ST) return;
@@ -473,6 +557,9 @@ function onClick(e) {
   var b = e.target.closest("[data-sc]"); if (!b || !ST) return;
   var a = b.getAttribute("data-sc");
   if (a === "cancel") close();
+  else if (a === "live") startCam();
+  else if (a === "liveback") { stopCam(); ST.step = "capture"; paint(); }
+  else if (a === "shutter") snap();
   else if (a === "camera") $("#scan-cam").click();
   else if (a === "library") $("#scan-lib").click();
   else if (a === "redo") { ST.pages.pop(); ST.step = "capture"; paint(); }
