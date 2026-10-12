@@ -395,28 +395,24 @@ function open(opts) {
     '<div class="scan-title"><b>Scan POD / BOL</b><span>' + esc(ST.title) + "</span></div>" +
     '<button class="btn pri drv-hbtn" data-sc="done" disabled>Done</button></div>' +
     '<div class="scan-stage" id="scan-stage"></div><div class="scan-bar" id="scan-bar"></div><div class="scan-pages" id="scan-pages"></div>' +
+    '<input type="file" id="scan-cam" accept="image/*" capture="environment" hidden>' +
     '<input type="file" id="scan-lib" accept="image/*" multiple hidden>';
   document.body.appendChild(el);
   el.addEventListener("click", onClick);
   el.addEventListener("change", onFile);
   paint();
 }
-function close() { stopCam(); var el = $("#scan"); if (el) el.remove(); ST = null; }
+function close() { var el = $("#scan"); if (el) el.remove(); ST = null; }
 function paint() {
   var stage = $("#scan-stage"), bar = $("#scan-bar");
   $("#scan [data-sc=done]").disabled = !ST.pages.length || ST.step === "busy";
   if (ST.step === "capture") {
     stage.innerHTML = '<div class="scan-capture"><div class="scan-hint"><b>' + (ST.pages.length ? "Page " + (ST.pages.length + 1) : "Scan the POD / BOL") + "</b>" +
       "Lay it flat and get the whole page in the picture.</div>" +
-      '<button class="btn pri scan-big" data-sc="live">Scan Page</button>' +
+      '<button class="btn pri scan-big" data-sc="camera">Take Photo</button>' +
       '<button class="btn scan-big" data-sc="library">Upload Photo</button></div>';
     bar.innerHTML = ST.pages.length ? '<span class="scan-tip">' + ST.pages.length + " page" + (ST.pages.length > 1 ? "s" : "") +
       " ready. Hit Done, or add another page.</span>" : "";
-  } else if (ST.step === "live") {
-    stage.innerHTML = '<div class="scan-live"><div class="scan-vwrap" id="scan-vwrap"><video id="scan-video" playsinline muted autoplay></video>' +
-      '<svg class="scan-ov" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon id="scan-poly" points="" /></svg></div></div>';
-    bar.innerHTML = '<button class="btn drv-hbtn" data-sc="liveback">Back</button><span class="scan-tip" id="scan-status">Starting the camera…</span>' +
-      '<button class="btn drv-hbtn" data-sc="findpage">Find Page</button><button class="btn pri drv-hbtn" data-sc="shutter">Capture</button>';
   } else if (ST.step === "busy") {
     stage.innerHTML = '<div class="scan-capture"><div class="scan-hint"><b>' + esc(ST.busyText || "Scanning…") + "</b></div></div>";
     bar.innerHTML = "";
@@ -428,8 +424,9 @@ function paint() {
       '<button class="btn drv-hbtn" data-sc="more">Add Page</button>';
   } else if (ST.step === "adjust") {
     stage.innerHTML = '<div class="scan-live"><div class="scan-vwrap" id="scan-awrap"></div></div>';
-    bar.innerHTML = '<button class="btn drv-hbtn" data-sc="adjcancel">Cancel</button><span class="scan-tip">Drag the corners to the corners of the paper.</span>' +
-      '<button class="btn pri drv-hbtn" data-sc="adjapply">Apply</button>';
+    bar.innerHTML = '<button class="btn drv-hbtn" data-sc="adjcancel">' + (ST.adjTarget && ST.adjTarget.redo ? "Cancel" : "Retake") + '</button>' +
+      '<span class="scan-tip">Drag each corner onto a corner of the paper.' + (ST.queue && ST.queue.length ? " " + ST.queue.length + " more photo" + (ST.queue.length > 1 ? "s" : "") + " after this one." : "") + '</span>' +
+      '<button class="btn pri drv-hbtn" data-sc="adjapply">' + (ST.adjTarget && ST.adjTarget.redo ? "Apply" : "Scan") + '</button>';
     adjustSetup();
   }
   $("#scan-pages").innerHTML = ST.pages.map(function (p, i) {
@@ -458,10 +455,6 @@ function loadPhoto(file) {
     img.src = url;
   });
 }
-// Photo → find the page → straighten + clean. No corners to drag.
-function scanPhoto(file) {
-  return loadPhoto(file).then(function (c) { addPage(c, detectCorners(c, c.width, c.height)); });
-}
 // Straighten + clean a photo with these corners and add it as the next page. The photo and corners are kept for the
 // page being reviewed, so Adjust Edges can redo it.
 function addPage(src, corners) {
@@ -469,213 +462,90 @@ function addPage(src, corners) {
   ST.pages.push({ out: out, thumb: thumbOf(out) });
   ST.last = { src: src, corners: corners };
 }
-/* ── Live camera: a viewfinder inside the page with a guide box. It outlines the page it finds and takes the shot
-   by itself once the page is in view and held steady (the Capture button works any time). ─────────────── */
-function stopCam() {
-  var c = ST && ST.cam; if (!c) return;
-  c.on = false; clearTimeout(c.timer);
-  try { (c.stream.getTracks() || []).forEach(function (t) { t.stop(); }); } catch (e) { /* already stopped */ }
-  window.removeEventListener("resize", c.fit); ST.cam = null;
-}
-function liveStatus(msg, cls) { var el = $("#scan-status"); if (el) { el.textContent = msg; el.className = "scan-tip" + (cls ? " " + cls : ""); } }
-function startCam() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { alertIn("This browser can't open the camera here. Use Upload Photo."); return; }
-  ST.step = "live"; paint();
-  var video = $("#scan-video");
-  navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 4096 }, height: { ideal: 3072 } } }).then(function (stream) {
-    if (!ST || ST.step !== "live") { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
-    var cam = ST.cam = { stream: stream, on: true, timer: 0, fit: null, corners: null, hs: [], hunting: false, guesses: 0, tries: 0 };
-    // Widest view the camera offers, when the browser lets a page choose.
-    try {
-      var tr = stream.getVideoTracks()[0], caps = tr.getCapabilities ? tr.getCapabilities() : {};
-      if (caps.zoom && caps.zoom.min != null) tr.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] }).catch(function () {});
-    } catch (e) { /* no zoom control on this device */ }
-    cam.fit = function () {
-      var st = $("#scan-stage"), w = $("#scan-vwrap"); if (!st || !w || !video.videoWidth) return;
-      var ar = video.videoWidth / video.videoHeight, sw = st.clientWidth, sh = st.clientHeight, fw = Math.min(sw, sh * ar);
-      w.style.width = Math.round(fw) + "px"; w.style.height = Math.round(fw / ar) + "px";
-    };
-    window.addEventListener("resize", cam.fit);
-    video.srcObject = stream;
-    var go = function () {
-      cam.fit(); cam.corners = defaultCorners(video); liveHandles(cam); liveDraw(cam);
-      liveStatus("Finding the page… · " + video.videoWidth + "×" + video.videoHeight); findPage(cam);
-    };
-    video.onloadedmetadata = function () { video.play().then(go, go); };
-  }, function (err) {
-    if (!ST) return;
-    ST.step = "capture"; paint();
-    alertIn(err && err.name === "NotAllowedError" ? "Camera is blocked. Allow it for this site in Settings, or use Upload Photo." : "Couldn't open the camera. Use Upload Photo.");
-  });
-}
-/* The page outline you adjust, as 0..1 corners over the picture. The finder guesses a few times, then the outline
-   stays where it is until you drag a corner (it never moves under your finger) or tap Find Page to guess again. */
-function defaultCorners(video) {
-  var ar = video.videoWidth / video.videoHeight, hw = Math.min(0.42, 0.88 * (8.5 / 11) / ar / 2);
-  return [[0.5 - hw, 0.06], [0.5 + hw, 0.06], [0.5 + hw, 0.94], [0.5 - hw, 0.94]];
-}
-function liveDraw(cam) {
-  var poly = $("#scan-poly"); if (!poly) return;
-  poly.setAttribute("points", cam.corners.map(function (p) { return (p[0] * 100).toFixed(1) + "," + (p[1] * 100).toFixed(1); }).join(" "));
-  cam.hs.forEach(function (hd, i) { hd.style.left = (cam.corners[i][0] * 100) + "%"; hd.style.top = (cam.corners[i][1] * 100) + "%"; });
-}
-function liveHandles(cam) {
-  var wrap = $("#scan-vwrap"); if (!wrap) return;
-  wrap.style.touchAction = "none"; cam.hs = [];
-  var clamp01 = function (v) { return Math.max(0, Math.min(1, v)); };
-  [0, 1, 2, 3].forEach(function (i) {
-    var hd = document.createElement("div"); hd.className = "scan-handle"; wrap.appendChild(hd); cam.hs.push(hd);
-    hd.addEventListener("pointerdown", function (e) {
-      hd.setPointerCapture(e.pointerId); e.preventDefault();
-      cam.hunting = false; clearTimeout(cam.timer);
-      var res = $("#scan-video") ? $("#scan-video").videoWidth + "×" + $("#scan-video").videoHeight : "";
-      liveStatus("Drag the corners onto the paper, then tap Capture · " + res);
-      var move = function (ev) { var r = wrap.getBoundingClientRect(); cam.corners[i] = [clamp01((ev.clientX - r.left) / r.width), clamp01((ev.clientY - r.top) / r.height)]; liveDraw(cam); };
-      var up = function () { hd.removeEventListener("pointermove", move); hd.removeEventListener("pointerup", up); hd.removeEventListener("pointercancel", up); };
-      hd.addEventListener("pointermove", move); hd.addEventListener("pointerup", up); hd.addEventListener("pointercancel", up);
-    });
-  });
-}
-function findPage(cam) { cam.hunting = true; cam.guesses = 0; cam.tries = 0; clearTimeout(cam.timer); watch(); }
-// Capture: a few frames with the corners where they are now; the sharpest one is used.
-function shutter() {
-  var cam = ST && ST.cam; if (!cam || cam.burst || !cam.corners) return;
-  cam.hunting = false; clearTimeout(cam.timer);
-  cam.burst = { fixed: true, n: 0, miss: 0, qs: [], best: -1, canvas: null, spare: null, t0: performance.now() };
-  liveStatus("Capturing… hold still"); watch();
-}
-// Guess the page a few times, drawing each guess; then stop and hand the outline to the user.
-function watch() {
-  var cam = ST && ST.cam; if (!cam || !cam.on) return;
-  var video = $("#scan-video");
-  if (!video || video.readyState < 2 || !video.videoWidth) { cam.timer = setTimeout(watch, 100); return; }
-  var t0 = performance.now(), res = video.videoWidth + "×" + video.videoHeight;
-  if (cam.burst) {
-    if (burstSample(cam, video, cam.corners, 1, 1, true)) return;
-    cam.timer = setTimeout(watch, 40); return;
-  }
-  if (!cam.hunting) return;
-  var k = 320 / Math.max(video.videoWidth, video.videoHeight), w = Math.round(video.videoWidth * k), h = Math.round(video.videoHeight * k);
-  var c = cam.probe || (cam.probe = document.createElement("canvas"));
-  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
-  c.getContext("2d").drawImage(video, 0, 0, w, h);
-  var q = detectCorners(c, w, h), full = q.every(function (p, i) { return Math.abs(p[0] - [0, w, w, 0][i]) < 2 && Math.abs(p[1] - [0, 0, h, h][i]) < 2; });
-  cam.tries++;
-  if (!full && polyArea(q) / (w * h) >= 0.05) { cam.corners = q.map(function (p) { return [p[0] / w, p[1] / h]; }); cam.guesses++; liveDraw(cam); }
-  if (cam.guesses >= 4 || cam.tries >= 9) {
-    cam.hunting = false;
-    liveStatus((cam.guesses ? "Adjust the corners if needed, then tap Capture" : "Couldn't find the page, drag the corners onto it, then tap Capture") + " · " + res);
-    return;
-  }
-  cam.timer = setTimeout(watch, Math.max(25, 120 - (performance.now() - t0)));
-}
-/* The first steady frame is often still out of focus, and one frame can be fooled by a shadow edge. So once the page is
-   steady it takes a short burst (about a second): every frame gets its own page outline and a sharpness score, the corners
-   used are the middle (median) of all the outlines, and the picture used is the sharpest frame. */
-function sharpOf(cam, video, q, w, h) {
-  var k = 960 / Math.max(video.videoWidth, video.videoHeight), cw = Math.round(video.videoWidth * k), ch = Math.round(video.videoHeight * k);
-  var c = cam.shp || (cam.shp = document.createElement("canvas")); if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
-  var g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(video, 0, 0, cw, ch);
-  var xs = q.map(function (p) { return p[0] / w * cw; }), ys = q.map(function (p) { return p[1] / h * ch; });
-  var x0 = Math.max(2, Math.round(Math.min.apply(null, xs) + cw * 0.04)), x1 = Math.min(cw - 3, Math.round(Math.max.apply(null, xs) - cw * 0.04));
-  var y0 = Math.max(2, Math.round(Math.min.apply(null, ys) + ch * 0.04)), y1 = Math.min(ch - 3, Math.round(Math.max.apply(null, ys) - ch * 0.04));
-  if (x1 - x0 < 20 || y1 - y0 < 20) return 0;
-  var d = g.getImageData(x0 - 1, y0 - 1, x1 - x0 + 2, y1 - y0 + 2).data, bw = x1 - x0 + 2, bh = y1 - y0 + 2, sum = 0, sq = 0, cnt = 0, mean = 0, x, y;
-  var gray = new Float32Array(bw * bh);
-  for (var i = 0; i < gray.length; i++) { gray[i] = d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114; mean += gray[i]; }
-  mean /= gray.length;
-  for (y = 1; y < bh - 1; y += 1) for (x = 1; x < bw - 1; x += 1) {
-    var j = y * bw + x, lap = 4 * gray[j] - gray[j - 1] - gray[j + 1] - gray[j - bw] - gray[j + bw]; sum += lap; sq += lap * lap; cnt++;
-  }
-  return (sq / cnt - Math.pow(sum / cnt, 2)) / (mean * mean + 25);
-}
-function medianOf(a) { a = a.slice().sort(function (x, y) { return x - y; }); var m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; }
-// One burst frame. Returns true when the burst is over (the scan has been made or the page was lost).
-function burstSample(cam, video, q, w, h, ok) {
-  var b = cam.burst; b.n++;
-  if (ok) {
-    b.qs.push(q.map(function (p) { return [p[0] / w, p[1] / h]; }));
-    var sh = sharpOf(cam, video, q, w, h);
-    if (sh > b.best) {
-      b.best = sh;
-      var W = video.videoWidth, H = video.videoHeight, k = Math.min(1, MAX_SRC / Math.max(W, H)), cw = Math.round(W * k), ch = Math.round(H * k);
-      var c = b.spare || document.createElement("canvas"); c.width = cw; c.height = ch;
-      c.getContext("2d").drawImage(video, 0, 0, cw, ch);
-      b.spare = b.canvas; b.canvas = c;
-    }
-  } else b.miss++;
-  if (b.n < (b.fixed ? 4 : 7) && performance.now() - b.t0 < 1700) return false;
-  if (b.qs.length < (b.fixed ? 2 : 5) || !b.canvas) { cam.burst = null; cam.last = null; cam.still = 0; liveStatus("Lost the page, hold it steady"); return false; }
-  finishBurst(cam, b); return true;
-}
-function finishBurst(cam, b) {
-  function med(list) { return [0, 1, 2, 3].map(function (i) { return [medianOf(list.map(function (q) { return q[i][0]; })), medianOf(list.map(function (q) { return q[i][1]; }))]; }); }
-  var m = med(b.qs);
-  // drop outlines that disagree with the middle one (a shadow edge caught in one frame), then take the middle again
-  var good = b.qs.filter(function (q) { return Math.max.apply(null, q.map(function (p, i) { return Math.hypot(p[0] - m[i][0], p[1] - m[i][1]); })) < 0.03; });
-  if (good.length >= 3) m = med(good);
-  var c = b.canvas, corners = m.map(function (p) { return [p[0] * c.width, p[1] * c.height]; });
-  stopCam();
-  ST.step = "busy"; ST.busyText = "Scanning…"; paint();
-  later(function () {
-    try { addPage(c, corners); ST.step = "review"; paint(); }
-    catch (err) { ST.step = "capture"; paint(); alertIn("That didn't scan. Try again."); }
-  });
-}
-/* ── Adjust Edges: the photo with four corner handles to drag onto the paper's corners, then Apply redoes the page. ── */
+/* ── Set the edges: every photo goes through this before it is scanned. The finder's guess is drawn on the photo with a
+   handle on each corner; drag them onto the paper's corners (a magnifier shows the spot under your finger), then Scan.
+   The same screen is used by Adjust Edges on a page that is already scanned. ── */
 function adjustSetup() {
-  var L = ST.last, wrap = $("#scan-awrap"), st = $("#scan-stage"); if (!L || !wrap) return;
-  var W = L.src.width, H = L.src.height, sw = st.clientWidth - 24, sh = st.clientHeight - 24, f = Math.min(sw / W, sh / H);
-  wrap.style.width = Math.round(W * f) + "px"; wrap.style.height = Math.round(H * f) + "px";
+  var T = ST.adjTarget, wrap = $("#scan-awrap"), st = $("#scan-stage"); if (!T || !wrap) return;
+  var W = T.src.width, H = T.src.height, sw = st.clientWidth - 24, sh = st.clientHeight - 24, f = Math.min(sw / W, sh / H);
+  wrap.style.width = Math.round(W * f) + "px"; wrap.style.height = Math.round(H * f) + "px"; wrap.style.touchAction = "none";
   var disp = document.createElement("canvas"); disp.width = Math.round(W * f * 2); disp.height = Math.round(H * f * 2);
-  disp.getContext("2d").drawImage(L.src, 0, 0, disp.width, disp.height);
+  disp.getContext("2d").drawImage(T.src, 0, 0, disp.width, disp.height);
   var img = document.createElement("img"); img.src = disp.toDataURL("image/jpeg", 0.85); img.alt = "Photo"; img.className = "scan-aimg";
   wrap.innerHTML = ""; wrap.appendChild(img);
   var NS = "http://www.w3.org/2000/svg", svg = document.createElementNS(NS, "svg"); svg.setAttribute("viewBox", "0 0 " + W + " " + H);
   svg.setAttribute("preserveAspectRatio", "none"); svg.setAttribute("class", "scan-ov");
   var poly = document.createElementNS(NS, "polygon"); svg.appendChild(poly); wrap.appendChild(svg);
-  ST.adj = { corners: L.corners.map(function (p) { return [p[0], p[1]]; }), W: W, H: H, poly: poly, wrap: wrap, hs: [] };
+  var loupe = document.createElement("canvas"); loupe.className = "scan-loupe"; loupe.width = loupe.height = 220; loupe.hidden = true; wrap.appendChild(loupe);
+  ST.adj = { corners: T.corners.map(function (p) { return [p[0], p[1]]; }), W: W, H: H, poly: poly, wrap: wrap, hs: [], loupe: loupe };
   ST.adj.corners.forEach(function (p, i) {
     var hd = document.createElement("div"); hd.className = "scan-handle"; hd.setAttribute("data-i", i); wrap.appendChild(hd); ST.adj.hs.push(hd);
     hd.addEventListener("pointerdown", function (e) {
-      hd.setPointerCapture(e.pointerId); e.preventDefault();
+      try { hd.setPointerCapture(e.pointerId); } catch (err) { /* not a live pointer */ } e.preventDefault();
       var move = function (ev) {
         var r = wrap.getBoundingClientRect();
         ST.adj.corners[i] = [Math.max(0, Math.min(W, (ev.clientX - r.left) / r.width * W)), Math.max(0, Math.min(H, (ev.clientY - r.top) / r.height * H))];
-        adjustDraw();
+        adjustDraw(i);
       };
-      var up = function () { hd.removeEventListener("pointermove", move); hd.removeEventListener("pointerup", up); hd.removeEventListener("pointercancel", up); };
+      var up = function () { loupe.hidden = true; hd.removeEventListener("pointermove", move); hd.removeEventListener("pointerup", up); hd.removeEventListener("pointercancel", up); };
       hd.addEventListener("pointermove", move); hd.addEventListener("pointerup", up); hd.addEventListener("pointercancel", up);
+      move(e);
     });
   });
   adjustDraw();
 }
-function adjustDraw() {
+function adjustDraw(active) {
   var A = ST && ST.adj; if (!A) return;
   A.poly.setAttribute("points", A.corners.map(function (p) { return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" "));
   A.hs.forEach(function (hd, i) { hd.style.left = (A.corners[i][0] / A.W * 100) + "%"; hd.style.top = (A.corners[i][1] / A.H * 100) + "%"; });
+  if (active == null) return;
+  // magnifier: 3x of the photo around the corner being dragged, shown above it (below it near the top edge)
+  var T = ST.adjTarget, lp = A.loupe, g = lp.getContext("2d"), cx = A.corners[active][0], cy = A.corners[active][1], span = A.W * 0.07;
+  g.clearRect(0, 0, 220, 220); g.save(); g.beginPath(); g.arc(110, 110, 108, 0, Math.PI * 2); g.clip();
+  g.fillStyle = "#222"; g.fillRect(0, 0, 220, 220); g.drawImage(T.src, cx - span, cy - span, span * 2, span * 2, 0, 0, 220, 220); g.restore();
+  g.strokeStyle = "#7BD36F"; g.lineWidth = 3; g.beginPath(); g.arc(110, 110, 107, 0, Math.PI * 2); g.stroke();
+  g.lineWidth = 1.5; g.beginPath(); g.moveTo(110, 90); g.lineTo(110, 130); g.moveTo(90, 110); g.lineTo(130, 110); g.stroke();
+  var px = cx / A.W * 100, py = cy / A.H * 100, above = py > 28;
+  lp.style.left = Math.max(12, Math.min(88, px)) + "%"; lp.style.top = (above ? py : py) + "%";
+  lp.style.transform = "translate(-50%," + (above ? "-135%" : "35%") + ")"; lp.hidden = false;
 }
+// Apply the corners: scan the photo (a new one, or Adjust Edges on a finished page) and move on.
 function adjustApply() {
-  var A = ST && ST.adj, L = ST && ST.last; if (!A || !L) return;
-  var q = A.corners.map(function (p) { return [p[0], p[1]]; });
-  if (!angleOk(orderQuad(q)) || polyArea(q) < A.W * A.H * 0.02) { alertIn("Those corners don't make a page. Drag them onto the paper's corners."); return; }
+  var A = ST && ST.adj, T = ST && ST.adjTarget; if (!A || !T) return;
+  var q = orderQuad(A.corners.map(function (p) { return [p[0], p[1]]; }));
+  if (!angleOk(q) || polyArea(q) < A.W * A.H * 0.02) { alertIn("Those corners don't make a page. Drag them onto the paper's corners."); return; }
   ST.step = "busy"; ST.busyText = "Scanning…"; paint();
   later(function () {
     try {
-      var out = renderPage(L.src, orderQuad(q), "bw"), pg = ST.pages[ST.pages.length - 1];
-      pg.out = out; pg.thumb = thumbOf(out); L.corners = orderQuad(q); ST.adj = null; ST.step = "review"; paint();
-    } catch (err) { ST.step = "review"; paint(); alertIn("That didn't scan. Try again."); }
+      if (T.redo) {
+        var out = renderPage(T.src, q, "bw"), pg = ST.pages[ST.pages.length - 1];
+        pg.out = out; pg.thumb = thumbOf(out); ST.last.corners = q;
+      } else addPage(T.src, q);
+      ST.adj = null; ST.adjTarget = null;
+      if (!T.redo && ST.queue && ST.queue.length) nextPhoto(); else { ST.step = "review"; paint(); }
+    } catch (err) { ST.adj = null; ST.step = ST.pages.length ? "review" : "capture"; paint(); alertIn("That didn't scan. Try again."); }
+  });
+}
+// Photos picked or taken: one at a time, each one through the corner screen.
+function nextPhoto() {
+  var f = ST.queue.shift();
+  ST.step = "busy"; ST.busyText = "Finding the page…"; paint();
+  later(function () {
+    loadPhoto(f).then(function (c) {
+      var q = detectCorners(c, c.width, c.height), W = c.width, H = c.height;
+      // nothing found: start from a box a little inside the photo so every handle can be grabbed
+      var full = q.every(function (p, i) { return Math.abs(p[0] - [0, W, W, 0][i]) < 2 && Math.abs(p[1] - [0, 0, H, H][i]) < 2; });
+      if (full) q = [[W * 0.08, H * 0.06], [W * 0.92, H * 0.06], [W * 0.92, H * 0.94], [W * 0.08, H * 0.94]];
+      ST.adjTarget = { src: c, corners: q, redo: false }; ST.step = "adjust"; paint();
+    }, function (err) {
+      ST.step = ST.pages.length ? "review" : "capture"; paint(); alertIn(err.message);
+    });
   });
 }
 function onFile(e) {
   var files = [].slice.call(e.target.files || []); e.target.value = "";
   if (!files.length || !ST) return;
-  ST.step = "busy"; ST.busyText = files.length > 1 ? "Scanning " + files.length + " pages…" : "Scanning…"; paint();
-  later(function () {
-    files.reduce(function (chain, f) { return chain.then(function () { return scanPhoto(f); }); }, Promise.resolve())
-      .then(function () { if (ST) { ST.step = "review"; paint(); } },
-            function (err) { if (ST) { ST.step = ST.pages.length ? "review" : "capture"; paint(); alertIn(err.message); } });
-  });
+  ST.queue = files; nextPhoto();
 }
 function finish() {
   var pages = ST.pages.slice(), done = ST.onDone;
@@ -705,14 +575,16 @@ function onClick(e) {
   var b = e.target.closest("[data-sc]"); if (!b || !ST) return;
   var a = b.getAttribute("data-sc");
   if (a === "cancel") close();
-  else if (a === "live") startCam();
-  else if (a === "liveback") { stopCam(); ST.step = "capture"; paint(); }
-  else if (a === "shutter") shutter();
-  else if (a === "findpage") { if (ST.cam) { liveStatus("Finding the page…"); findPage(ST.cam); } }
+  else if (a === "camera") $("#scan-cam").click();
   else if (a === "library") $("#scan-lib").click();
   else if (a === "redo") { ST.pages.pop(); ST.last = null; ST.step = "capture"; paint(); }
-  else if (a === "adjust") { ST.step = "adjust"; paint(); }
-  else if (a === "adjcancel") { ST.step = "review"; paint(); }
+  else if (a === "adjust") { ST.adjTarget = { src: ST.last.src, corners: ST.last.corners, redo: true }; ST.step = "adjust"; paint(); }
+  else if (a === "adjcancel") {
+    var wasRedo = ST.adjTarget && ST.adjTarget.redo; ST.adj = null; ST.adjTarget = null;
+    if (wasRedo) { ST.step = "review"; paint(); }
+    else if (ST.queue && ST.queue.length) nextPhoto();
+    else { ST.step = "capture"; paint(); $("#scan-cam").click(); }   // Retake: straight back to the camera
+  }
   else if (a === "adjapply") adjustApply();
   else if (a === "more") { ST.last = null; ST.step = "capture"; paint(); }
   else if (a === "done") finish();
@@ -721,5 +593,5 @@ document.addEventListener("keydown", function (e) { if (e.key === "Escape" && ST
 
 window.Dept12Scanner = { open: open, close: close,
   // For the local test bench (.claude/scan-bench.html) only.
-  _test: { detectCorners: detectCorners, renderPage: renderPage, last: function () { return ST && ST.last; } } };
+  _test: { detectCorners: detectCorners, renderPage: renderPage, last: function () { return ST && ST.last; }, adj: function () { return ST && ST.adj; } } };
 })();
