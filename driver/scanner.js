@@ -375,7 +375,6 @@ function open(opts) {
     '<div class="scan-title"><b>Scan POD / BOL</b><span>' + esc(ST.title) + "</span></div>" +
     '<button class="btn pri drv-hbtn" data-sc="done" disabled>Done</button></div>' +
     '<div class="scan-stage" id="scan-stage"></div><div class="scan-bar" id="scan-bar"></div><div class="scan-pages" id="scan-pages"></div>' +
-    '<input type="file" id="scan-cam" accept="image/*" capture="environment" hidden>' +
     '<input type="file" id="scan-lib" accept="image/*" multiple hidden>';
   document.body.appendChild(el);
   el.addEventListener("click", onClick);
@@ -390,7 +389,6 @@ function paint() {
     stage.innerHTML = '<div class="scan-capture"><div class="scan-hint"><b>' + (ST.pages.length ? "Page " + (ST.pages.length + 1) : "Scan the POD / BOL") + "</b>" +
       "Lay it flat and get the whole page in the picture.</div>" +
       '<button class="btn pri scan-big" data-sc="live">Scan Page</button>' +
-      '<button class="btn scan-big" data-sc="camera">Take Photo With Camera App</button>' +
       '<button class="btn scan-big" data-sc="library">Upload Photo</button></div>';
     bar.innerHTML = ST.pages.length ? '<span class="scan-tip">' + ST.pages.length + " page" + (ST.pages.length > 1 ? "s" : "") +
       " ready. Hit Done, or add another page.</span>" : "";
@@ -451,7 +449,7 @@ function stopCam() {
 }
 function liveStatus(msg, cls) { var el = $("#scan-status"); if (el) { el.textContent = msg; el.className = "scan-tip" + (cls ? " " + cls : ""); } }
 function startCam() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { alertIn("This browser can't open the camera here. Use Take Photo With Camera App."); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { alertIn("This browser can't open the camera here. Use Upload Photo."); return; }
   ST.step = "live"; paint();
   var video = $("#scan-video");
   navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 4096 }, height: { ideal: 3072 } } }).then(function (stream) {
@@ -469,12 +467,12 @@ function startCam() {
     };
     window.addEventListener("resize", cam.fit);
     video.srcObject = stream;
-    var go = function () { cam.fit(); liveStatus("Put the page in the box · " + video.videoWidth + "×" + video.videoHeight); watch(); };
+    var go = function () { cam.fit(); liveStatus("Hold the page in the box · " + video.videoWidth + "×" + video.videoHeight); watch(); };
     video.onloadedmetadata = function () { video.play().then(go, go); };
   }, function (err) {
     if (!ST) return;
     ST.step = "capture"; paint();
-    alertIn(err && err.name === "NotAllowedError" ? "Camera is blocked. Allow it for this site in Settings, or use Take Photo With Camera App." : "Couldn't open the camera. Use Take Photo With Camera App.");
+    alertIn(err && err.name === "NotAllowedError" ? "Camera is blocked. Allow it for this site in Settings, or use Upload Photo." : "Couldn't open the camera. Use Upload Photo.");
   });
 }
 // Look at the picture a few times a second; green outline when a page is found, shoot when it holds still.
@@ -491,13 +489,13 @@ function watch() {
     var q = detectCorners(c, w, h);
     var full = q.every(function (p, i) { return Math.abs(p[0] - [0, w, w, 0][i]) < 2 && Math.abs(p[1] - [0, 0, h, h][i]) < 2; });
     var area = full ? 0 : polyArea(q) / (w * h), edgeTouch = q.some(function (p) { return p[0] < 2 || p[1] < 2 || p[0] > w - 2 || p[1] > h - 2; });
-    if (full || area < 0.15) {
+    if (full || area < 0.05) {
       cam.last = null; cam.still = 0; poly.setAttribute("points", "");
-      liveStatus(full ? "Looking for the page… put it in the box · " + video.videoWidth + "×" + video.videoHeight : "Move closer, fill the box · " + video.videoWidth + "×" + video.videoHeight);
+      liveStatus(full ? "Looking for the page… · " + video.videoWidth + "×" + video.videoHeight : "Move a little closer · " + video.videoWidth + "×" + video.videoHeight);
     } else {
       poly.setAttribute("points", q.map(function (p) { return (p[0] / w * 100).toFixed(1) + "," + (p[1] / h * 100).toFixed(1); }).join(" "));
       var move = cam.last ? Math.max.apply(null, q.map(function (p, i) { return Math.hypot(p[0] - cam.last[i][0], p[1] - cam.last[i][1]) / Math.max(w, h); })) : 1;
-      cam.last = q; cam.still = move < 0.02 ? cam.still + 1 : 0;
+      cam.last = q; cam.still = move < 0.03 ? cam.still + 1 : 0;
       if (edgeTouch) { cam.still = 0; liveStatus("Back up a little, the whole page has to fit"); }
       else if (cam.still >= 3) { liveStatus("Got it"); snap(); return; }
       else liveStatus(cam.still ? "Hold still…" : "Page found · hold still");
@@ -560,7 +558,6 @@ function onClick(e) {
   else if (a === "live") startCam();
   else if (a === "liveback") { stopCam(); ST.step = "capture"; paint(); }
   else if (a === "shutter") snap();
-  else if (a === "camera") $("#scan-cam").click();
   else if (a === "library") $("#scan-lib").click();
   else if (a === "redo") { ST.pages.pop(); ST.step = "capture"; paint(); }
   else if (a === "more") { ST.step = "capture"; paint(); }
