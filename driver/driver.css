@@ -280,7 +280,6 @@ body.driver-app.drv-bagplant .chip.bp-bag{border:2px solid var(--ink)}
   border-bottom:1px solid var(--rule-2);box-shadow:none!important;position:static}
 .dvx-hd .dwk,.drv-day-hd .dwk{font-family:var(--mono);font-size:var(--fs-body);letter-spacing:.14em;color:var(--ink-2);font-weight:650}
 .dvx-hd .dnum,.drv-day-hd .dnum{font-size:26px;font-weight:750;line-height:1;color:var(--ink)}
-.dcount{margin-left:auto;font-size:var(--fs-body-sm);color:var(--ink-2)}
 .driver-app .dvx-body{border:0;border-radius:0;min-width:0}
 .dvx-day .off-cell{height:64px;display:flex;align-items:center;justify-content:center}
 .drv-day{display:flex;flex-direction:column;gap:0;padding-bottom:0}

@@ -675,7 +675,7 @@ function dayHeadHtml(ds, today, cls, loadCount) {
   var dp = dParts(ds);
   return '<div class="' + cls + '" id="d-' + ds + '"><span class="dwk">' + dp.dow.toUpperCase() +
     '</span><span class="dnum">' + dp.md + "</span>" + (ds === today ? '<span class="today-tag">Today</span>' : "") +
-    (loadCount ? '<span class="dcount">' + loadCount + (loadCount === 1 ? " load" : " loads") + "</span>" : "") + "</div>";
+    "</div>";
 }
 // Real loads on this truck-day (a typed cell like "Load SPI NOTI" is a note, not a load).
 function dayLoadKeys(d, ds, rows) {
