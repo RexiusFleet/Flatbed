@@ -5105,8 +5105,9 @@ function motDownloadAll() {
 // Pull whatever is missing in view; when nothing is missing on a single finished day, pull that day again (Motive sometimes corrects a day).
 function motPullVisible() {
   var r = MOT.view === "week" ? motWeekRange() : { from: MOT.day, to: MOT.day }, days = motMissing(r.from, r.to), again = false;
-  if (!days.length && MOT.view === "day" && MOT.day <= motYesterday()) { days = [MOT.day]; again = true; }
-  if (!days.length) { toast(MOT.view === "week" ? "Everything in view is already saved." : "That day isn't finished yet.", MOT.view !== "week"); return; }
+  // everything in view is already saved: pull the finished days again (picks up any fields saved before)
+  if (!days.length) { days = motDaysBetween(r.from, r.to < motYesterday() ? r.to : motYesterday()); again = true; }
+  if (!days.length) { toast("That day isn't finished yet.", true); return; }
   busyStart("Pulling from Motive…");
   motPull(days).then(function (n) { busyEnd(); toast((again ? "Refreshed " : "Saved ") + n + " truck-day" + (n === 1 ? "" : "s") + " from Motive"); MOT.calKey = ""; render(); },
     function (e) { busyEnd(); toast("Motive: " + e.message, true); });
