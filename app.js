@@ -1021,6 +1021,19 @@ function applyOrderFkDenorm(o, field, value) {
   else if (field === "transfer_department_id")
     o.transfer_department_name = value ? (departmentById(value) || {}).name || null : null;
 }
+/* An edit shows on the chips the moment the save comes back: the saved row goes into the page's copy of the order, the names that
+   come from other tables are recomputed, and every chip for that order (Scheduler, Current Week, Driver Tabs, the drawer preview)
+   is repainted. The full reload that still follows only catches what the server derives. */
+function patchOrderLocal(oid, row) {
+  var o = order(oid); if (!o) return null;
+  if (row) {
+    for (var k in row) o[k] = row[k];
+    ["customer_party_id", "broker_party_id", "transfer_department_id"].forEach(function (f) { if (f in row) applyOrderFkDenorm(o, f, row[f]); });
+  }
+  Object.keys(CELLS || {}).forEach(function (key) { if (CELLS[key] && CELLS[key].oid === oid) repaintCell(key); });
+  if (DRAWER_OID === oid && typeof refreshDrawerChipPreview === "function") refreshDrawerChipPreview();
+  return o;
+}
 /* Every order currently sitting on the outside-carrier lane (D115), keyed by
    order id -> {carrierId, carrierCost}. Same one-map-per-render convention
    as placement(). Keyed off is_carrier (D122), not carrier_party_id — a
@@ -1309,7 +1322,7 @@ function apptGet(oid, which) {
 function apptSet(oid, which, text) {
   var body = { id: oid }; body[APPT_TEXT[which]] = text || "";
   return api("order/update", body).then(function (row) {
-    var o = order(oid); if (o && row) for (var k in row) o[k] = row[k];
+    patchOrderLocal(oid, row);
     return row;
   });
 }
@@ -2308,7 +2321,7 @@ function handleLocPick(opt) {
     inp.value = l ? l.name : ""; inp.dataset.locid = opt.dataset.locpick;
     if (/^stop:/.test(field)) { drawerStopPick(oid, field, opt.dataset.locpick); return; }
     body[field] = opt.dataset.locpick;
-    api("order/update", body).then(reload).then(function () { if (DRAWER_OID === oid) routeReopen(oid); }).catch(function (e) { toast(e.message, true); });
+    api("order/update", body).then(function (row) { patchOrderLocal(oid, row); }).then(reload).then(function () { if (DRAWER_OID === oid) routeReopen(oid); }).catch(function (e) { toast(e.message, true); });
   } else {
     // A real fill-out form, not a guessed comma-split (Nate: "add locations
     // to my pick and drop list right then and there") — same popup the
@@ -2373,7 +2386,7 @@ function handlePartyPick(opt) {
   var pid = opt.dataset.partypick, p = party(pid);
   inp.value = p ? p.name : ""; inp.dataset.partyid = pid;
   var body = { id: oid }; body[field] = pid;
-  api("order/update", body).then(reload).catch(function (e) { toast(e.message, true); });
+  api("order/update", body).then(function (row) { patchOrderLocal(oid, row); }).then(reload).catch(function (e) { toast(e.message, true); });
 }
 
 /* Internal Freight drawer (D127) — mirrors openInternalOrder's simpler shape
@@ -2555,6 +2568,7 @@ document.addEventListener("change", function (e) {
   if (prev === n) { el.value = rateText(n); return; }
   api("order/update", { id: oid, external_rate: n === null ? "" : n, external_rate_source: n === null ? "" : "typed" }).then(function (row) {
     if (row) for (var k in row) o[k] = row[k];
+    patchOrderLocal(oid, null);
     [].forEach.call(document.querySelectorAll('[data-rate="' + oid + '"]'), function (x) { x.value = rateText(o.external_rate); });
     histPush("edit rate",
       function () { return api("order/update", { id: oid, external_rate: prev === null ? "" : prev, external_rate_source: prev === null ? "" : "typed" }).then(function (r2) { if (r2) for (var k2 in r2) o[k2] = r2[k2]; render(); }); },
@@ -3412,7 +3426,7 @@ function dvChip(o, v, truck, day) {
   if (!o) return { html: v && v.text ? esc(v.text) : "", color: v && v.fmt && v.fmt.fill || (v && v.cat) || null };
   if (o.is_transfer) {
     var dept = departmentById(o.transfer_department_id);
-    return { html: esc([o.driver_note, o.transfer_department_name || "(no department)"].filter(Boolean).join("\n")),
+    return { html: esc([o.notes, o.driver_note].filter(Boolean).join("\n") || "(no load info)"),
              color: dept && dept.color && dept.color.charAt(0) === "#" ? dept.color : null };
   }
   if (isExt(o)) {
@@ -8796,7 +8810,7 @@ document.addEventListener("change", function (e) {
       // Update the local model in place instead of reload() — a full re-render on
       // every field blur destroyed the input you were tabbing INTO, so tab-through
       // was broken (D84). The typed value already shows; the model stays in sync.
-      var o = order(ov.id); if (o && row) { for (var rk in row) o[rk] = row[rk]; }
+      var o = order(ov.id); if (o && row) { for (var rk in row) o[rk] = row[rk]; patchOrderLocal(ov.id, null); }
       applyOrderFkDenorm(o, ofield, onext);
       // Repaint just the STAGED rail (its own DOM subtree, untouched by the
       // tracker grid) so a chip already visible there picks up the new name
@@ -8991,7 +9005,7 @@ document.addEventListener("blur", function (e) {
   var saveOid = DRAWER_OID, v = {}; v.id = saveOid; v[field] = next;
   if (String(prev) === String(next)) return;
   if (i.dataset.of.charAt(0) === "_") return;             // future Motive fields
-  queueDrawerSave(function () { return api("order/update", v); }).then(reload).then(function () {
+  queueDrawerSave(function () { return api("order/update", v); }).then(function (row) { patchOrderLocal(saveOid, row); }).then(reload).then(function () {
     refreshOrderDrawerAfterSave(saveOid);
     histPush("edit " + field,
       function () { return orderFieldSet(saveOid, field, prev); },
@@ -9066,6 +9080,7 @@ document.addEventListener("blur", function (e) {
   queueDrawerSave(function () { return api("order/update", { id: oid, transfer_department_id: next }); })
     .then(function (row) {
       var o = order(oid); if (o && row) for (var k in row) o[k] = row[k];
+      patchOrderLocal(oid, row);
       render(); refreshDrawerChipPreview(); refreshDrawerTitle(oid);
       histPush("edit department",
         function () { return orderFieldSet(oid, "transfer_department_id", prev); },
@@ -9402,6 +9417,7 @@ function orderPoDeliverySet(oid, field, value) {
   var body = { id: oid }; body[field] = value;
   return api("order/update", body).then(function (row) {
     var o = order(oid); if (o && row) o[field] = row[field];
+    patchOrderLocal(oid, null);
   });
 }
 /* Patches an in-memory row in place instead of a full reload() (D87) — the
@@ -9440,6 +9456,7 @@ function orderFieldSet(oid, field, value) {
   return api("order/update", body).then(function (row) {
     var o = order(oid); if (o && row) for (var k in row) o[k] = row[k];
     applyOrderFkDenorm(o, field, value);
+    patchOrderLocal(oid, null);
     render(); refreshDrawerChipPreview();
   });
 }

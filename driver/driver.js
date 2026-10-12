@@ -465,8 +465,8 @@ function flagsHtml(flags) {
 function dashChipHtml(o, r, attrs, cls, dcolor) {
   var ext = o.kind !== "internal" && !o.is_transfer, flags = [], title, meta;
   if (o.is_transfer) {
-    title = o.notes || o.driver_note || "(no load info)";
-    meta = '<div class="meta"><span>Internal Freight · ' + esc(o.transfer_department_name || "") + "</span></div>";
+    title = o.notes || o.driver_note || "(no load info)";   // the whole Load Info box, not the department
+    meta = "";
   } else if (ext) {
     // Broker and City → City only: the order and load numbers are on the
     // driver's own tab, and too much here is confusing.
@@ -483,7 +483,7 @@ function dashChipHtml(o, r, attrs, cls, dcolor) {
       '<span class="nowrap">' + esc(ordNo(o) || "no order #") + "</span></div>";
     flags = bagFlags(o);
   }
-  var note = o.driver_note ? '<div class="dnote">&#9998; ' + esc(o.driver_note) + "</div>" : "";
+  var note = o.driver_note && !(o.is_transfer && !o.notes) ? '<div class="dnote">&#9998; ' + esc(o.driver_note) + "</div>" : "";
   if (ext) {
     // Every load a driver sees has been pushed, so it wears the pushed look:
     // a soft tint of the driver's color with the solid color as the edge.
@@ -495,7 +495,7 @@ function dashChipHtml(o, r, attrs, cls, dcolor) {
       (appt ? '<span class="appt-ind">APPT</span>' : "") + '<div class="who">' + esc(title) + "</div>" + meta + note + "</div>";
   }
   var edge2 = r.color || (o.cust_timing === "early" ? "var(--early)" : "var(--anytime)");
-  return '<div class="chip' + (r.color ? " filled" : "") + (cls ? " " + cls : "") + '" style="--edge:' + edge2 + ";" + fillStyle(r.color) + '"' + (attrs || "") + ">" +
+  return '<div class="chip' + (r.color ? " filled" : "") + (o.is_transfer ? " xfer" : "") + (cls ? " " + cls : "") + '" style="--edge:' + edge2 + ";" + fillStyle(r.color) + '"' + (attrs || "") + ">" +
     '<div class="who">' + esc(title) + "</div>" + meta +
     (flags.length ? '<div class="flags">' + flags.map(function (x) { return '<span class="flag">' + esc(x) + "</span>"; }).join("") + "</div>" : "") +
     note + "</div>";

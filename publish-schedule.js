@@ -47,8 +47,9 @@ function internalChipText(o, pallets = null) {
   if (pallets !== null && pallets !== void 0) orderLine += ` - ${pallets} PAL`;
   return [customer, info.trim(), orderLine].filter(Boolean).join("\n");
 }
+// An internal freight load shows its Load Info box (the whole text), then any driver note. The department is not shown.
 function transferChipText(o) {
-  return [o.driver_note, o.transfer_department_name || "(no department)"].filter(Boolean).join("\n");
+  return [o.notes, o.driver_note].filter(Boolean).join("\n") || "(no load info)";
 }
 function driverChipText(o, pallets, stops) {
   if (o.is_transfer) return transferChipText(o);

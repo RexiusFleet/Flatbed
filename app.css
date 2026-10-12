@@ -1878,3 +1878,6 @@ details[open]::details-content{block-size:auto}
 .trf-mini td:first-child{text-align:left}
 .trf-md td{font-weight:650}
 .trf-sum{margin:0 0 12px;line-height:1.5}
+
+/* An internal freight load shows its whole Load Info text on the driver pages, wrapped, not cut off with an ellipsis */
+.chip.xfer .who{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;line-height:1.25}
