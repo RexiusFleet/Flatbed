@@ -3192,10 +3192,6 @@ function pubPaint() {
   var r = $(".hdr-right"); if (!r) return;
   var el = $("#hdr-pub");
   if (!el) { el = document.createElement("span"); el.id = "hdr-pub"; el.className = "hdr-pub"; r.insertBefore(el, $("#hdr-seen") || null); }
-  if (!$("#push-driver-tabs")) {
-    var pb = document.createElement("button"); pb.className = "btn sm pri hdr-pubbtn"; pb.id = "push-driver-tabs"; pb.type = "button";
-    pb.innerHTML = icon("sync") + "Publish Schedule"; r.insertBefore(pb, $("#hdr-seen") || null);
-  }
   var base = lastPushMs();
   el.title = base ? "Schedule last published " + new Date(base).toLocaleString() : "The schedule has not been published yet";
   var ch = PUB.n == null ? "" : PUB.n ? '<b class="pub-n">' + PUB.n + (PUB.more ? "+" : "") + " change" + (PUB.n === 1 && !PUB.more ? "" : "s") + "</b>" : '<span class="pub-ok">Up to date</span>';
@@ -3361,12 +3357,7 @@ function vScheduler() {
 function vCurrentWeek() {
   var h = toolbarHtml("Current Week", {
     className: "cw-toolbar",
-    context: '<span class="lbl">First day drivers see</span><input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate id="cw-start" data-last-iso="' + esc(CW_START) + '" value="' + esc(isoToMdy(CW_START)) + '">' +
-      '<span class="cw-daysshown"><span class="lbl" style="margin-left:6px">Days shown</span><span class="fb-fs" aria-label="Days shown">' +
-        '<button class="fb-fs-b" data-cw-step="-1" title="Show one fewer day"' + (CW_DAYS <= 1 ? " disabled" : "") + '>&minus;</button>' +
-        '<input class="fb-fs-inp" type="text" inputmode="numeric" id="cw-days" value="' + CW_DAYS + '" title="Days shown (1–14)">' +
-        '<button class="fb-fs-b" data-cw-step="1" title="Show one more day"' + (CW_DAYS >= 14 ? " disabled" : "") + '>+</button>' +
-      "</span></span>"
+    context: ""
   });
   var dates = currentWeekDates();
   h += '<div class="grid-wrap"><table class="grid" style="width:' +
@@ -3605,12 +3596,7 @@ function vDriverView() {
   // means the two views' controls are the same control, not a synced copy.
   var h = toolbarHtml("Driver Tabs", {
     className: "cw-toolbar",
-    context: '<span class="lbl">First day drivers see</span><input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate id="cw-start" data-last-iso="' + esc(CW_START) + '" value="' + esc(isoToMdy(CW_START)) + '">' +
-      '<span class="cw-daysshown"><span class="lbl" style="margin-left:6px">Days shown</span><span class="fb-fs" aria-label="Days shown">' +
-        '<button class="fb-fs-b" data-cw-step="-1" title="Show one fewer day"' + (CW_DAYS <= 1 ? " disabled" : "") + '>&minus;</button>' +
-        '<input class="fb-fs-inp" type="text" inputmode="numeric" id="cw-days" value="' + CW_DAYS + '" title="Days shown (1–14)">' +
-        '<button class="fb-fs-b" data-cw-step="1" title="Show one more day"' + (CW_DAYS >= 14 ? " disabled" : "") + '>+</button>' +
-      "</span></span>"
+    context: ""
   });
   h += '<div style="flex:1;min-height:0;overflow:auto;padding:10px 14px 14px">';
   // The same big tabs a driver sees on their page, one per truck.
@@ -10932,8 +10918,17 @@ function renderFmtBar() {
         (fs.size || 10) + '" title="Font size">' +
       '<button class="fb-fs-b" data-fb="fs-inc" title="Increase font size" tabindex="-1">+</button>' +
     "</span>" +
+    '<span class="fb-sep"></span>' +
+    '<div class="fmt-pub"><span class="lbl">Drivers See From</span><input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate id="cw-start" data-last-iso="' + esc(CW_START) + '" value="' + esc(isoToMdy(CW_START)) + '" title="The first day drivers see on their Current Week">' +
+      '<span class="cw-daysshown"><span class="lbl">Days</span><span class="fb-fs" aria-label="Days shown">' +
+        '<button class="fb-fs-b" data-cw-step="-1" title="Show one fewer day"' + (CW_DAYS <= 1 ? " disabled" : "") + '>&minus;</button>' +
+        '<input class="fb-fs-inp" type="text" inputmode="numeric" id="cw-days" value="' + CW_DAYS + '" title="Days shown (1–14)">' +
+        '<button class="fb-fs-b" data-cw-step="1" title="Show one more day"' + (CW_DAYS >= 14 ? " disabled" : "") + '>+</button>' +
+      '</span></span></div>' +
     '<span style="flex:1"></span>' +
-    '<div class="fmt-ifr">' + internalFreightRateHtml() + "</div>";
+    '<div class="fmt-ifr">' + internalFreightRateHtml() + "</div>" +
+    '<div class="fmt-pubgo"><span class="fb-sep"></span>' +
+      '<button class="btn sm pri" id="push-driver-tabs" type="button" title="Save what drivers and the bag plant see">' + icon("sync") + "Publish Schedule</button></div>";
 }
 /* Font picker (D78) — a custom popover, not a native <select>, because browsers
    ignore font-family on <option> (macOS especially). Each row previews in its own

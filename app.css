@@ -177,6 +177,8 @@ header{display:flex;align-items:center;gap:12px;height:52px;padding:0 14px;backg
 .rate-inp:focus{outline:none;border-color:var(--focus)}
 /* D205 returns the Internal rate toggle to the plain angle glyph Nate prefers.
    It lives at the far right of the global formatting toolbar on Orders pages. */
+.fmt-pub{display:flex;align-items:center;gap:6px;flex:0 0 auto;white-space:nowrap}
+.fmt-pub #cw-start{width:104px}
 .fmt-ifr{display:flex;align-items:center;gap:4px;min-width:0}
 .ifr-arrow{display:inline-flex;align-items:center;justify-content:center;width:16px;height:24px;
   border:0;background:none;margin:0 2px;padding:0;color:var(--ink-2);
@@ -1796,7 +1798,6 @@ details[open]::details-content{block-size:auto}
 .hdr-pub .pub-when{font-variant-numeric:tabular-nums}
 .hdr-pub .pub-n{color:var(--warn);font-weight:700}
 .hdr-pub .pub-ok{color:var(--good)}
-.hdr-pubbtn{flex:0 0 auto;white-space:nowrap}
 .hdr-right{gap:12px}
 @media(max-width:900px){.hdr-pub{display:none}}
 
@@ -1894,3 +1895,24 @@ table.grid thead th.has-dc{background:color-mix(in srgb,var(--dc) 16%,var(--pane
 table.grid thead th.has-dc .drv{padding-left:0}
 table.grid thead th.has-dc .drv::before{display:none}
 table.grid thead th .trk{font-size:var(--fs-body-sm);margin-top:1px;display:block}
+
+/* Main toolbar stays one row on every page; when it runs out of room it scrolls sideways. */
+.fmtbar{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+.fmtbar::-webkit-scrollbar{display:none}
+.fmtbar>*{flex:0 0 auto}
+.fmtbar .fb-fs{position:static;transform:none}
+.fmtbar .fb-font{min-width:0;width:96px}
+.fmtbar .fb-font .fb-font-lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fmt-pub #cw-start{width:92px}
+.fmt-pub{gap:5px}
+.fmtbar .fb-font{width:84px}
+.fmt-pub .cw-daysshown{display:inline-flex;align-items:center;gap:5px;margin-left:8px}
+.fmt-pub .cw-daysshown .fb-fs{position:static;transform:none;margin:0}
+.fmt-pub .lbl{line-height:1}
+.fmt-pub .btn{margin-left:8px}
+/* Publish Schedule sits at the far right and stays in view when the toolbar scrolls. */
+.fmt-pubgo{display:flex;align-items:center;flex:0 0 auto;position:sticky;right:-10px;background:var(--panel);padding-right:10px;margin-right:-10px;z-index:2}
+.fmt-pub .btn,.fmt-pubgo .btn{margin-left:0}
+.fmt-pub{margin-right:4px}
+.fmt-pub #cw-start{background:var(--paper);color:var(--ink);border:1px solid var(--rule-2);border-radius:var(--r-sm);padding:3px 7px;font-size:var(--fs-body-sm);box-sizing:border-box;height:var(--ctl-h)}
+.fmt-pub #cw-start:focus{outline:none;border-color:var(--focus)}
