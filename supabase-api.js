@@ -125,6 +125,8 @@ function rest(method, tableQuery, body, hist, prefer) {
     method: method, headers: h, body: body === undefined ? undefined : JSON.stringify(body)
   }).then(jsonOf);
 }
+// A REST insert or update returns a list of rows; most callers want just the first one.
+function one(rows) { return Array.isArray(rows) ? (rows[0] || null) : rows; }
 function edgeFunction(name, body, hist) {
   return sbFetch("/functions/v1/" + name, {
     method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, hist || {}),
