@@ -5105,11 +5105,10 @@ function motDownloadAll() {
 // Pull whatever is missing in view; when nothing is missing on a single finished day, pull that day again (Motive sometimes corrects a day).
 function motPullVisible() {
   var r = MOT.view === "week" ? motWeekRange() : { from: MOT.day, to: MOT.day }, days = motMissing(r.from, r.to), again = false;
-  // everything in view is already saved: pull the finished days again (picks up any fields saved before)
-  if (!days.length) { days = motDaysBetween(r.from, r.to < motYesterday() ? r.to : motYesterday()); again = true; }
-  if (!days.length) { toast("That day isn't finished yet.", true); return; }
-  busyStart("Pulling from Motive…");
-  motPull(days).then(function (n) { busyEnd(); toast((again ? "Refreshed " : "Saved ") + n + " truck-day" + (n === 1 ? "" : "s") + " from Motive"); MOT.calKey = ""; render(); },
+  if (!days.length && MOT.view === "day" && MOT.day <= motYesterday()) { days = [MOT.day]; again = true; }
+  if (!days.length) { toast(MOT.view === "week" ? "Everything in view is already saved." : "That day isn't finished yet.", MOT.view !== "week"); return; }
+  busyStart("Pulling from Motive…"); MOT.shopLast = 0;
+  motPull(days).then(function (n) { busyEnd(); toast((again ? "Refreshed " : "Saved ") + n + " truck-day" + (n === 1 ? "" : "s") + " from Motive" + (MOT.shopLast ? " · gave " + MOT.shopLast + " shop trip" + (MOT.shopLast === 1 ? "" : "s") + " to the shop drivers" : "")); MOT.calKey = ""; render(); },
     function (e) { busyEnd(); toast("Motive: " + e.message, true); });
 }
 
@@ -5847,6 +5846,15 @@ function motMissing(from, to) {
   return from > to ? [] : motDaysBetween(from, to).filter(function (d) { return !MOT.pulled[d]; });
 }
 // Pull the given days from Motive (31 at a time) and save them. force = true re-pulls days already saved.
+// Trips on the fleet's trucks with no driver logged in go to the shop drivers (Shop Mechanic 1, or 2 when 1 is busy).
+// Runs with every Motive pull, finished days only, fleet trucks only; it never stops a pull when it can't run.
+function motAssignShop(from, to) {
+  var fleet = (DB.trucks || []).filter(function (t) { return t.active !== false && t.number; }).map(function (t) { return String(t.number); });
+  if (!fleet.length) return Promise.resolve(0);
+  return api("motive/unidentified", { start: from, end: to, trucks: fleet, apply: true, apply_all: true }).then(function (r) {
+    var n = ((r && r.applied) || []).filter(function (x) { return x.ok; }).length; MOT.shopLast = (MOT.shopLast || 0) + n; return n;
+  }, function () { return 0; });
+}
 function motPull(days) {
   if (!days.length) return Promise.resolve(0);
   days = days.slice().sort();
@@ -5860,7 +5868,7 @@ function motPull(days) {
   return chunks.reduce(function (p, ch) {
     return p.then(function () {
       var set = {}; ch.forEach(function (d) { set[d] = 1; });
-      return api("motive/days", { start: ch[0], end: ch[ch.length - 1] }).then(function (res) {
+      return motAssignShop(ch[0], ch[ch.length - 1]).then(function () { return api("motive/days", { start: ch[0], end: ch[ch.length - 1] }); }).then(function (res) {
         var rows = (res.days || []).filter(function (r) { return set[String(r.day).slice(0, 10)]; });
         return api("motive/days-save", { rows: rows, days: ch }).then(function () { saved += rows.length; });
       });

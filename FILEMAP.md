@@ -26,8 +26,10 @@ button, or a word, and it points you to the file and the part of the file.
    │    └─ public_* functions  → what the driver and bag plant pages call (no sign-in, read the
    │                             published schedule, add notes, register scans, log views)
    ├─ Edge Functions ─── code that holds private keys, runs on Supabase's servers
-   │    ├─ motive-days         → reads Motive's truck-days (miles, odometers, first on / last off, hours)
-   │    ├─ motive-sync         → old per-order mileage pull (no longer called by the dashboard)
+   │    ├─ motive-sync         → ONE function, three jobs picked by `mode` in the request:
+   │    │                          (no mode)       old per-order mileage fill
+   │    │                          "days"         truck-days (miles, odometers, first on / last off, hours worked)
+   │    │                          "unidentified" gives shop yard-move trips to Shop Mechanic 1 / 2 (see §8)
    │    └─ sheets-push         → RETIRED, delete it in Supabase (see §6)
    ├─ Edge Function Secrets ─ MOTIVE_API_KEY (GOOGLE_SERVICE_ACCOUNT_JSON is retired, delete it)
    └─ Storage ────────── "documents" bucket (private) for PDFs dropped in the app and driver scans
@@ -53,8 +55,8 @@ and with their Refresh button.
 | save anything (then refresh) | same `api("bootstrap")` | `api_bootstrap_since` — only rows changed since the last fetch, found through the History log |
 | scroll / jump / search back past ~90 days | `app.js` → `ensureHistory()` | `api_bootstrap_history` — the older history, once per session |
 | change anything | `app.js` → `api("<route>", {...})` | `supabase-api.js` → `ROUTES["<route>"]` → a Database function or table |
-| click **Sync Delivery Dates** | `app.js` → `runSyncAll` → `api("sync-delivery-dates")`, then `motEnsure` (pulls only Motive days not saved yet), then `mrvOpen` (the mileage review window: miles and cost per delivered order, Save confirms) | `api_sync_delivery_dates`; Edge Function `motive-days` → Motive; `api_motive_days_save` / `_list` (table `motive_daily`); `api_freight`; `orders.miles_confirmed_at` |
-| open **Reports → Motive** | `vMotiveTab`, `motWeekHtml`, `motPull` | `api_motive_days_list`; Pull From Motive → `motive-days` → `api_motive_days_save` |
+| click **Sync Delivery Dates** | `app.js` → `runSyncAll` → `api("sync-delivery-dates")`, then `motEnsure` (pulls only Motive days not saved yet), then `mrvOpen` (the mileage review window: miles and cost per delivered order, Save confirms) | `api_sync_delivery_dates`; Edge Function `motive-sync` (mode "days") → Motive; `api_motive_days_save` / `_list` (table `motive_daily`); `api_freight`; `orders.miles_confirmed_at` |
+| open **Reports → Motive** | `vMotiveTab`, `motWeekHtml`, `motPull` | `api_motive_days_list`; Pull From Motive → `motive-sync` (mode "days") → `api_motive_days_save` |
 | click **Publish Schedule** | `api("sheets/push-driver-tabs")` (the route keeps its old name) → `publish-schedule.js` | `driver_week_dates` / `driver_week_data`, then `api_publish_schedule` |
 | drop / view a PDF | `api("document")`, `openViewer`, `fetchStoredFile` | Storage bucket `documents` + `api_document_save` |
 | open Reports | `vReports` → `api("report-rows")` | `api_report_rows` (falls back to `api_report` "dump" if that function is missing); saved/pinned reports use `api_saved_report_*` |
@@ -157,7 +159,7 @@ jump there, e.g. ⌘F `═══ 04-views`.
 |---|---|
 | **Table Editor** | The data. Main tables: `orders`, `loads`, `load_orders` (which order is on which load), `schedule_notes` (text in Scheduler cells), `truck_off_days`, `day_notes`, `parties` (customers + brokers + carriers), `locations` (Pick/Drop list + bagger stores), `trucks`, `drivers`, `driver_truck_assignments`, `departments`, `order_stops` / `load_stops` (multi-stop routes), `documents`, `categories` (cell colors), `entities` / `fields` / `records` (custom databases), `sheets` / `sheet_cells` (custom sheets), `audit_events` / `audit_changes` (History), `published_schedules` (what Publish Schedule saves), `driver_notes`, driver scan/view activity, `saved_reports` (pinned reports). |
 | **Database → Functions** | Every `api_…` function (the business rules), plus `dept12_…` helpers. Source copy: backup folder → `supabase/migrations/20260924000002_api_functions.sql`. |
-| **Edge Functions** | `motive-sync` (in use). `sheets-push` is retired: delete it. Source copy: backup folder → `supabase/functions/`. |
+| **Edge Functions** | `motive-sync` (in use: mileage, truck-days, shop trips). `sheets-push` is retired: delete it. The source is pasted into Supabase by hand (Edge Functions → motive-sync → Deploy); the owner's local copy is `supabase/functions/motive-sync/index.ts`, which is not in git. |
 | **Edge Functions → Secrets** | `MOTIVE_API_KEY` (needs an admin to add). |
 | **Authentication → Users** | The logins. Add people here (sign-ups off), then add their email to `dept12_private.allowed_logins`. |
 | **Storage → documents** | Uploaded PDFs, in folders named by order ID. |
@@ -187,3 +189,22 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | Delete rules for orders | `app.js` → `canDeleteOrder` (and the matching `api_order_delete` rules in Supabase) |
 | Report columns | Supabase → `api_report_rows` / `api_report`; headers in `supabase-api.js` → `REPORT_LABELS` |
 | Who can sign in | Supabase → Authentication → Users, plus `dept12_private.allowed_logins` (approved emails) |
+
+---
+
+## 8. Shop trips: giving "Yard Move in shop" trips to the shop drivers (Motive)
+
+Happens **inside the Edge Function `motive-sync` (mode `"unidentified"`)**, and the dashboard triggers it from `app.js` → `motAssignShop(from, to)`, which `motPull` calls
+before it reads each chunk of truck-days. So it runs on **every Pull From Motive** (and on Sync Delivery Dates, which pulls missing days through `motPull`). There is no separate button.
+
+What it does, exactly:
+
+1. Asks Motive for the **driving periods that have no driver** (`GET /v1/driving_periods?assigned_to_driver=false`) for the days being pulled.
+2. **Fleet only.** The dashboard sends the truck numbers of the active trucks in the Fleet table (`DB.trucks`). A trip on any other vehicle is ignored completely. Without a fleet list the function refuses to assign in bulk.
+3. **Only trips whose Motive note is exactly `Yard Move in shop`** (the note Motive's geofence puts on the trip; compared ignoring case and extra spaces). Trips with any other note, or no note, are never assigned.
+4. **The note is never changed.** The assign call sends only the driver (`PUT /v1/driving_periods/{id}?driver_id=…`) and no `notes`.
+5. Assigned to **Shop Mechanic 1**; if Mechanic 1 is already driving something at that time, to **Shop Mechanic 2**; if both are busy the trip is **skipped** (left unidentified). Both are Motive drivers in exempt mode (Motive only lets exempt drivers be assigned this way).
+6. Also left alone: trips that are not finished (still in progress), trips that start **today (Pacific time)**, and trips within **15 minutes** of a real driver's own trip on the same truck (a driver rolling the truck just before logging in).
+7. Without `apply: true` plus either `only_ids` or `apply_all` + the fleet list, the function only reports the plan and changes nothing in Motive. Debug requests (`debug: true`) also return the first raw Motive records and the shop drivers' own trips, so the note field and its exact text can be checked against real data.
+
+After a pull the dashboard says how many trips were handed over ("gave N shop trips to the shop drivers"). Motive does not document an undo for an assignment; fix a wrong one in Motive's own screen.
