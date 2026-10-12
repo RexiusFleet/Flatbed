@@ -670,56 +670,70 @@ function closeStoreMap() {
 }
 document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeStoreMap(); });
 function noteButtons(key, big) { return storeMapBtn(key, big) + noteBtn(key, big) + scanBtn(key, big); }
-function dayBarHtml(ds, today, cls) {
+/* The driver's own tab: each day is a rounded box with a big date; the loads inside it are hard-edged boxes. A line divides one day from the next. */
+function dayHeadHtml(ds, today, cls, loadCount) {
   var dp = dParts(ds);
-  return '<div class="' + cls + (ds === today ? " today" : "") + '" id="d-' + ds + '"><span class="dwk">' + dp.dow.toUpperCase() +
-    '</span><span class="dnum">' + dp.md + "</span>" + (ds === today ? '<span class="today-tag">Today</span>' : "") + "</div>";
+  return '<div class="' + cls + '" id="d-' + ds + '"><span class="dwk">' + dp.dow.toUpperCase() +
+    '</span><span class="dnum">' + dp.md + "</span>" + (ds === today ? '<span class="today-tag">Today</span>' : "") +
+    (loadCount ? '<span class="dcount">' + loadCount + (loadCount === 1 ? " load" : " loads") + "</span>" : "") + "</div>";
+}
+// Real loads on this truck-day (a typed cell like "Load SPI NOTI" is a note, not a load).
+function dayLoadKeys(d, ds, rows) {
+  var out = [];
+  rows.forEach(function (r, s) { var key = d.truck_id + "|" + ds + "|" + (s + 1); if (r.chip && S.loadKeys[key]) out.push(key); });
+  return out;
 }
 function vDriverGrid(d) {
   var p = S.payload, today = todayIso();
-  var h = '<div class="drv-scroll"><div class="drv-pad" style="padding-top:10px"><div class="dv">' +
-    '<div class="hd">' + esc(d.driver || "Load") + '</div><div class="hd">Rexius Order #</div><div class="hd">Dispatch Notes</div><div class="hd">PO / PU #</div>' +
-    '<div class="hd">Delivery #</div><div class="hd">Load #</div><div class="hd">Driver Notes</div>';
+  var h = '<div class="drv-scroll"><div class="drv-pad" style="padding-top:10px">' +
+    '<div class="dv dv-head"><div class="hd">' + esc(d.driver || "Load") + '</div><div class="hd">Rexius Order #</div><div class="hd">Dispatch Notes</div><div class="hd">PO / PU #</div>' +
+    '<div class="hd">Delivery #</div><div class="hd">Load #</div><div class="hd">Driver Notes</div></div>';
   p.dates.forEach(function (ds, di) {
-    h += dayBarHtml(ds, today, "day-bar");
-    var rows = d.rows.slice(di * p.slots_per_day, (di + 1) * p.slots_per_day);
-    if (rows.some(function (r) { return r.off; })) { h += '<div class="off-cell off-hatch"><div class="off-label">OFF</div></div>'; return; }
+    var rows = d.rows.slice(di * p.slots_per_day, (di + 1) * p.slots_per_day), keys = dayLoadKeys(d, ds, rows), total = keys.length;
+    h += '<div class="dvx-wrap"><section class="dvx-day">' + dayHeadHtml(ds, today, "dvx-hd", total);
+    if (rows.some(function (r) { return r.off; })) { h += '<div class="off-cell off-hatch"><div class="off-label">OFF</div></div></section></div>'; return; }
+    h += '<div class="dv dvx-body">';
     rows.forEach(function (r, s) {
       var key = d.truck_id + "|" + ds + "|" + (s + 1), isLoad = !!S.loadKeys[key];   // typed cells: text only
       S.chipTitle[key] = String(r.chip || "").split("\n")[0];
-      h += "<div>" + (r.chip ? '<div class="load-txt' + (r.color ? "" : " unfilled") + '" style="' + fillStyle(r.color) + '">' + tabChipHtml(key, r) +
-        (isLoad ? '<div class="chip-scan">' + storeMapBtn(key) + scanBtn(key) + scanHtml(key) + "</div>" : "") + "</div>" : "") + "</div>" +
+      if (!r.chip && !r.notes) return;
+      if (!isLoad) { h += '<div class="dvx-note-row"><span class="dvx-note-tag">Note</span>' + esc(r.chip) + "</div>"; return; }
+      h += '<div><div class="load-txt' + (r.color ? "" : " unfilled") + '" style="' + fillStyle(r.color) + '">' + tabChipHtml(key, r) +
+        '<div class="chip-scan">' + storeMapBtn(key) + scanBtn(key) + scanHtml(key) + "</div></div></div>" +
         '<div class="mono">' + esc(rexiusOrderNo(key)) + "</div>" +
-        "<div>" + esc(r.notes || "") + "</div>" +
+        '<div class="dvx-note">' + esc(r.notes || "") + "</div>" +
         '<div class="mono">' + esc(r.po_number || "") + "</div>" +
         '<div class="mono">' + esc(r.delivery_number || "") + "</div>" +
         '<div class="mono">' + esc(loadNo(key)) + "</div>" +
-        "<div>" + (isLoad ? '<div class="pod-btns">' + noteBtn(key) + "</div>" + notesHtml(key) : "") + "</div>";
+        '<div><div class="pod-btns">' + noteBtn(key) + "</div>" + notesHtml(key) + "</div>";
     });
+    h += "</div></section></div>";
   });
-  return h + "</div></div></div>";
+  return h + "</div></div>";
 }
 function vDriverCards(d) {
   var p = S.payload, today = todayIso(), h = '<div class="drv-scroll"><div class="drv-pad"><div class="drv-days">';
   p.dates.forEach(function (ds, di) {
-    var rows = d.rows.slice(di * p.slots_per_day, (di + 1) * p.slots_per_day);
-    h += '<section class="drv-day' + (ds === today ? " today" : "") + '">' + dayBarHtml(ds, today, "drv-day-hd");
-    if (rows.some(function (r) { return r.off; })) { h += '<div class="drv-card off off-hatch"><div class="off-label">OFF</div></div></section>'; return; }
+    var rows = d.rows.slice(di * p.slots_per_day, (di + 1) * p.slots_per_day), keys = dayLoadKeys(d, ds, rows), total = keys.length;
+    h += '<div class="dvx-wrap"><section class="drv-day">' + dayHeadHtml(ds, today, "drv-day-hd", total);
+    if (rows.some(function (r) { return r.off; })) { h += '<div class="drv-card off off-hatch"><div class="off-label">OFF</div></div></section></div>'; return; }
     var any = false;
     rows.forEach(function (r, s) {
       if (!r.chip) return;
       any = true;
       var key = d.truck_id + "|" + ds + "|" + (s + 1), isLoad = !!S.loadKeys[key];   // typed cells: text only
       S.chipTitle[key] = String(r.chip || "").split("\n")[0];
-      var fields = [["Rexius Order #", rexiusOrderNo(key)], ["Dispatch Notes", r.notes], ["PO / PU #", r.po_number],
+      if (!isLoad) { h += '<div class="drv-card dvx-note-card"><span class="dvx-note-tag">Note</span>' + esc(r.chip) + "</div>"; return; }
+      var fields = [["Rexius Order #", rexiusOrderNo(key)], ["PO / PU #", r.po_number],
         ["Delivery #", r.delivery_number], ["Load #", loadNo(key)]].filter(function (f) { return f[1]; });
       h += '<div class="drv-card"><div class="load-txt' + (r.color ? "" : " unfilled") + '" style="' + fillStyle(r.color) + '">' + tabChipHtml(key, r) + "</div>" +
+        (r.notes ? '<div class="dvx-note dvx-note-card-line"><span class="dvx-note-tag">Note</span>' + esc(r.notes) + "</div>" : "") +
         (fields.length ? "<dl>" + fields.map(function (f) { return "<dt>" + f[0] + "</dt><dd>" + esc(f[1]) + "</dd>"; }).join("") + "</dl>" : "") +
-        (isLoad ? '<div class="links"><span class="sp"></span>' + noteButtons(key, true) + "</div>" : "") +
-        (isLoad ? '<div class="drv-card-notes">' + (scanInfo(key) ? '<div class="scan-row">' + scanHtml(key) + "</div>" : "") + notesHtml(key) + "</div>" : "") + "</div>";
+        '<div class="links"><span class="sp"></span>' + noteButtons(key, true) + "</div>" +
+        '<div class="drv-card-notes">' + (scanInfo(key) ? '<div class="scan-row">' + scanHtml(key) + "</div>" : "") + notesHtml(key) + "</div></div>";
     });
     if (!any) h += '<div class="drv-empty">Nothing scheduled</div>';
-    h += "</section>";
+    h += "</section></div>";
   });
   return h + "</div></div></div>";
 }

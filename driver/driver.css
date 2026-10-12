@@ -106,8 +106,6 @@ body.drv-signed-out .header-row{display:none}
 .drv-card .links .btn{text-decoration:none;padding:9px 14px;font-size:var(--fs-body)}
 .drv-card .links a.btn{color:var(--ink)}
 .drv-card .links .sp{flex:1}
-.drv-card-notes{padding:0 12px}
-.drv-card-notes:not(:empty){padding-bottom:10px}
 .drv-card .drv-note-item{font-size:var(--fs-body)}
 .drv-card.off{height:72px;border-color:color-mix(in srgb,var(--bad) 35%,transparent)}
 .drv-empty{color:var(--ink-3);font-size:var(--fs-body-sm);padding:4px 2px}
@@ -271,3 +269,31 @@ body.driver-app.drv-bagplant .chip.bp-bag{border:2px solid var(--ink)}
 /* Driver page header: just the title on the left, color code and Log Out on the right. */
 .drv-hdr.drv-hdr-two{grid-template-columns:1fr auto}
 .drv-hdr.drv-hdr-two .drv-title{font-size:var(--fs-h3)}
+
+/* ── Driver tab: every day is a rounded box with a big date, loads are hard-edged boxes inside it, a line divides the days ── */
+.driver-app .dv-head{position:sticky;top:0;z-index:5;margin-bottom:12px}
+.driver-app .dv-head .hd{position:static}
+.dvx-wrap+.dvx-wrap{border-top:2px solid var(--rule-2);margin-top:14px;padding-top:14px}
+.dvx-day,.drv-day{border:1.5px solid var(--rule-2);border-radius:12px;background:var(--panel);overflow:hidden;margin:0}
+.dvx-day{min-width:980px}
+.dvx-hd,.drv-day-hd{display:flex;align-items:baseline;gap:12px;background:var(--panel)!important;padding:10px 14px!important;margin:0!important;
+  border-bottom:1px solid var(--rule-2);box-shadow:none!important;position:static}
+.dvx-hd .dwk,.drv-day-hd .dwk{font-family:var(--mono);font-size:var(--fs-body);letter-spacing:.14em;color:var(--ink-2);font-weight:650}
+.dvx-hd .dnum,.drv-day-hd .dnum{font-size:26px;font-weight:750;line-height:1;color:var(--ink)}
+.dcount{margin-left:auto;font-size:var(--fs-body-sm);color:var(--ink-2)}
+.driver-app .dvx-body{border:0;border-radius:0;min-width:0}
+.dvx-day .off-cell{height:64px;display:flex;align-items:center;justify-content:center}
+.drv-day{display:flex;flex-direction:column;gap:0;padding-bottom:0}
+.drv-day>.drv-card,.drv-day>.drv-empty{margin:12px}
+.drv-day>.drv-empty{padding:2px 2px;color:var(--ink-3)}
+/* a load is a hard-edged box */
+.drv-card{border-radius:0;border:1px solid var(--ink)}
+.drv-card .load-txt{border-radius:0}
+/* notes: bigger and bolder */
+.dvx-note{font-size:var(--fs-body-lg);font-weight:650;line-height:1.35;white-space:pre-line;word-break:break-word}
+.dvx-note-card-line{padding:9px 12px 0;white-space:pre-line}
+.dvx-note-tag{font-family:var(--mono);font-size:var(--fs-caption);font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin-right:8px}
+.dvx-note-row{grid-column:1/-1;font-size:var(--fs-body-lg);font-weight:650;padding:10px 12px!important}
+.dvx-note-card{border:1px solid var(--ink);border-radius:0;padding:10px 12px;font-size:var(--fs-body-lg);font-weight:650}
+.dv .drv-note-item,.drv-card .drv-note-item{font-size:var(--fs-body-lg);font-weight:650}
+.dv .drv-note-item span,.drv-card .drv-note-item span{font-weight:500}
