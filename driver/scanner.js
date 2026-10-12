@@ -208,6 +208,13 @@ function detectCorners(img, W, H) {
   var P = new Float32Array(n); for (i = 0; i < n; i++) P[i] = L[i] - 1.1 * S[i];
   var m2 = new Uint8Array(n); t = otsu(P, n); for (i = 0; i < n; i++) m2[i] = P[i] > t ? 1 : 0;
   masks.push(m2);
+  // Paper is neutral (white/gray) wherever the light falls; wood, seats and dashboards are not. Shadows dim
+  // paper but don't tint it, so "how colorful" survives a hard shadow across the page.
+  var CS = new Float32Array(n);
+  for (i = 0; i < n; i++) { var mx = Math.max(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]), mn = Math.min(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]); CS[i] = (mx - mn) / (mx + 14); }
+  CS = boxBlur(CS, w, h, 1);
+  var m6 = new Uint8Array(n); t = otsu(CS, n); for (i = 0; i < n; i++) m6[i] = CS[i] < t ? 1 : 0;
+  masks.push(m6);
   // Brightness relative to the surroundings: paper beats a light seat even
   // when one side of the photo is lit and the other isn't.
   var Lbig = boxBlur(L, w, h, Math.round(Math.max(w, h) / 5)), N = new Float32Array(n);
@@ -264,6 +271,21 @@ function detectCorners(img, W, H) {
   });
 }
 
+// Separable max (dilate) or min (erode) filter of radius r.
+function morphGray(src, w, h, r, isMax) {
+  var tmp = new Float32Array(w * h), out = new Float32Array(w * h), x, y, k, v, u;
+  for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+    v = src[y * w + x];
+    for (k = Math.max(0, x - r); k <= Math.min(w - 1, x + r); k++) { u = src[y * w + k]; if (isMax ? u > v : u < v) v = u; }
+    tmp[y * w + x] = v;
+  }
+  for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+    v = tmp[y * w + x];
+    for (k = Math.max(0, y - r); k <= Math.min(h - 1, y + r); k++) { u = tmp[k * w + x]; if (isMax ? u > v : u < v) v = u; }
+    out[y * w + x] = v;
+  }
+  return out;
+}
 /* Straighten + clean one page. mode "bw" (document) or "color". */
 function renderPage(srcCanvas, corners, mode) {
   var W = srcCanvas.width, H = srcCanvas.height;
@@ -304,23 +326,21 @@ function renderPage(srcCanvas, corners, mode) {
   var Lb = boxBlur(L0, ow, oh, 2), Ls = new Float32Array(n);
   for (i = 0; i < n; i++) { var sv = L0[i] + 0.9 * (L0[i] - Lb[i]); Ls[i] = sv < 0 ? 0 : sv > 255 ? 255 : sv; }
   Lb = null;
-  var B = 20, gw = Math.ceil(ow / B), gh = Math.ceil(oh / B), grid = new Float32Array(gw * gh);
+  // Paper brightness under whatever light is on it. Average each 4x4 block, then "close" the picture: the biggest
+  // brightness within 28px, then the smallest of that. Print and pen strokes are thinner than the window, so they vanish
+  // and only the paper's own brightness is left, and a hard shadow edge stays a hard edge in the map (smoothing
+  // across it is what used to leave a gray streak along every shadow).
+  var B = 4, gw = Math.ceil(ow / B), gh = Math.ceil(oh / B), grid = new Float32Array(gw * gh);
   for (var gy = 0; gy < gh; gy++) for (var gx = 0; gx < gw; gx++) {
     var sum = 0, cnt = 0, xs = gx * B, ys = gy * B, xe = Math.min(ow, xs + B), ye = Math.min(oh, ys + B);
-    for (y = ys; y < ye; y += 2) for (x = xs; x < xe; x += 2) { sum += L[y * ow + x]; cnt++; }
-    var mean = sum / cnt, s2 = 0, c2 = 0;
-    for (y = ys; y < ye; y += 2) for (x = xs; x < xe; x += 2) { var lv = L[y * ow + x]; if (lv >= mean) { s2 += lv; c2++; } }
-    grid[gy * gw + gx] = c2 ? s2 / c2 : mean;
+    for (y = ys; y < ye; y++) for (x = xs; x < xe; x++) { sum += L[y * ow + x]; cnt++; }
+    grid[gy * gw + gx] = sum / cnt;
   }
-  var sm = new Float32Array(gw * gh);           // 3×3 smoothing of the paper estimate
-  for (gy = 0; gy < gh; gy++) for (gx = 0; gx < gw; gx++) {
-    var t = 0, m = 0;
-    for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
-      var yy = gy + dy, xx = gx + dx;
-      if (yy >= 0 && xx >= 0 && yy < gh && xx < gw) { t += grid[yy * gw + xx]; m++; }
-    }
-    sm[gy * gw + gx] = Math.max(25, t / m);
-  }
+  var sm = boxBlur(morphGray(morphGray(grid, gw, gh, 4, true), gw, gh, 4, false), gw, gh, 1);
+  // Shadows only dim paper to a third or so. Anything far darker than that is ink (a black bar with white lettering),
+  // so the paper map never goes below 12% of the page's brightest paper.
+  var srt = Array.prototype.slice.call(sm).sort(function (a, b) { return a - b; }), floor = Math.max(25, srt[Math.floor(srt.length * 0.9)] * 0.12);
+  for (i = 0; i < sm.length; i++) if (sm[i] < floor) sm[i] = floor;
   // 3. Divide out the paper, then set the look.
   for (y = 0; y < oh; y++) {
     var fyg = Math.min(gh - 1, Math.max(0, y / B - 0.5)), y0g = Math.floor(fyg), y1g = Math.min(gh - 1, y0g + 1), wy = fyg - y0g;
@@ -403,8 +423,14 @@ function paint() {
   } else if (ST.step === "review") {
     var pg = ST.pages[ST.pages.length - 1];
     stage.innerHTML = '<div class="scan-review"><img alt="Scanned page ' + ST.pages.length + '" src="' + pg.out.toDataURL("image/jpeg", 0.9) + '"></div>';
-    bar.innerHTML = '<button class="btn drv-hbtn" data-sc="redo">Retake</button><span class="scan-tip"></span>' +
+    bar.innerHTML = '<button class="btn drv-hbtn" data-sc="redo">Retake</button>' +
+      (ST.last ? '<button class="btn drv-hbtn" data-sc="adjust">Adjust Edges</button>' : "") + '<span class="scan-tip"></span>' +
       '<button class="btn drv-hbtn" data-sc="more">Add Page</button>';
+  } else if (ST.step === "adjust") {
+    stage.innerHTML = '<div class="scan-live"><div class="scan-vwrap" id="scan-awrap"></div></div>';
+    bar.innerHTML = '<button class="btn drv-hbtn" data-sc="adjcancel">Cancel</button><span class="scan-tip">Drag the corners to the corners of the paper.</span>' +
+      '<button class="btn pri drv-hbtn" data-sc="adjapply">Apply</button>';
+    adjustSetup();
   }
   $("#scan-pages").innerHTML = ST.pages.map(function (p, i) {
     return '<span class="scan-thumb"><img alt="Page ' + (i + 1) + '" src="' + p.thumb + '"><span>' + (i + 1) + "</span></span>";
@@ -434,10 +460,14 @@ function loadPhoto(file) {
 }
 // Photo → find the page → straighten + clean. No corners to drag.
 function scanPhoto(file) {
-  return loadPhoto(file).then(function (c) {
-    var out = renderPage(c, detectCorners(c, c.width, c.height), "bw");
-    ST.pages.push({ out: out, thumb: thumbOf(out) });
-  });
+  return loadPhoto(file).then(function (c) { addPage(c, detectCorners(c, c.width, c.height)); });
+}
+// Straighten + clean a photo with these corners and add it as the next page. The photo and corners are kept for the
+// page being reviewed, so Adjust Edges can redo it.
+function addPage(src, corners) {
+  var out = renderPage(src, corners, "bw");
+  ST.pages.push({ out: out, thumb: thumbOf(out) });
+  ST.last = { src: src, corners: corners };
 }
 /* ── Live camera: a viewfinder inside the page with a guide box. It outlines the page it finds and takes the shot
    by itself once the page is in view and held steady (the Capture button works any time). ─────────────── */
@@ -489,6 +519,11 @@ function watch() {
     var q = detectCorners(c, w, h);
     var full = q.every(function (p, i) { return Math.abs(p[0] - [0, w, w, 0][i]) < 2 && Math.abs(p[1] - [0, 0, h, h][i]) < 2; });
     var area = full ? 0 : polyArea(q) / (w * h), edgeTouch = q.some(function (p) { return p[0] < 2 || p[1] < 2 || p[0] > w - 2 || p[1] > h - 2; });
+    if (cam.burst) {
+      if (burstSample(cam, video, q, w, h, !full && area >= 0.05 && !edgeTouch)) return;
+      liveStatus("Hold still… capturing · " + video.videoWidth + "×" + video.videoHeight);
+      cam.timer = setTimeout(watch, Math.max(10, 80 - (performance.now() - t0))); return;
+    }
     if (full || area < 0.05) {
       cam.last = null; cam.still = 0; poly.setAttribute("points", "");
       liveStatus(full ? "Looking for the page… · " + video.videoWidth + "×" + video.videoHeight : "Move a little closer · " + video.videoWidth + "×" + video.videoHeight);
@@ -497,11 +532,64 @@ function watch() {
       var move = cam.last ? Math.max.apply(null, q.map(function (p, i) { return Math.hypot(p[0] - cam.last[i][0], p[1] - cam.last[i][1]) / Math.max(w, h); })) : 1;
       cam.last = q; cam.still = move < 0.03 ? cam.still + 1 : 0;
       if (edgeTouch) { cam.still = 0; liveStatus("Back up a little, the whole page has to fit"); }
-      else if (cam.still >= 3) { liveStatus("Got it"); snap(); return; }
+      else if (cam.still >= 3) { cam.burst = { n: 0, miss: 0, qs: [], best: -1, canvas: null, spare: null, t0: performance.now() }; cam.still = 0; }
       else liveStatus(cam.still ? "Hold still…" : "Page found · hold still");
     }
   }
   cam.timer = setTimeout(watch, Math.max(25, 100 - (performance.now() - t0)));
+}
+/* The first steady frame is often still out of focus, and one frame can be fooled by a shadow edge. So once the page is
+   steady it takes a short burst (about a second): every frame gets its own page outline and a sharpness score, the corners
+   used are the middle (median) of all the outlines, and the picture used is the sharpest frame. */
+function sharpOf(cam, video, q, w, h) {
+  var k = 960 / Math.max(video.videoWidth, video.videoHeight), cw = Math.round(video.videoWidth * k), ch = Math.round(video.videoHeight * k);
+  var c = cam.shp || (cam.shp = document.createElement("canvas")); if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+  var g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(video, 0, 0, cw, ch);
+  var xs = q.map(function (p) { return p[0] / w * cw; }), ys = q.map(function (p) { return p[1] / h * ch; });
+  var x0 = Math.max(2, Math.round(Math.min.apply(null, xs) + cw * 0.04)), x1 = Math.min(cw - 3, Math.round(Math.max.apply(null, xs) - cw * 0.04));
+  var y0 = Math.max(2, Math.round(Math.min.apply(null, ys) + ch * 0.04)), y1 = Math.min(ch - 3, Math.round(Math.max.apply(null, ys) - ch * 0.04));
+  if (x1 - x0 < 20 || y1 - y0 < 20) return 0;
+  var d = g.getImageData(x0 - 1, y0 - 1, x1 - x0 + 2, y1 - y0 + 2).data, bw = x1 - x0 + 2, bh = y1 - y0 + 2, sum = 0, sq = 0, cnt = 0, mean = 0, x, y;
+  var gray = new Float32Array(bw * bh);
+  for (var i = 0; i < gray.length; i++) { gray[i] = d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114; mean += gray[i]; }
+  mean /= gray.length;
+  for (y = 1; y < bh - 1; y += 1) for (x = 1; x < bw - 1; x += 1) {
+    var j = y * bw + x, lap = 4 * gray[j] - gray[j - 1] - gray[j + 1] - gray[j - bw] - gray[j + bw]; sum += lap; sq += lap * lap; cnt++;
+  }
+  return (sq / cnt - Math.pow(sum / cnt, 2)) / (mean * mean + 25);
+}
+function medianOf(a) { a = a.slice().sort(function (x, y) { return x - y; }); var m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; }
+// One burst frame. Returns true when the burst is over (the scan has been made or the page was lost).
+function burstSample(cam, video, q, w, h, ok) {
+  var b = cam.burst; b.n++;
+  if (ok) {
+    b.qs.push(q.map(function (p) { return [p[0] / w, p[1] / h]; }));
+    var sh = sharpOf(cam, video, q, w, h);
+    if (sh > b.best) {
+      b.best = sh;
+      var W = video.videoWidth, H = video.videoHeight, k = Math.min(1, MAX_SRC / Math.max(W, H)), cw = Math.round(W * k), ch = Math.round(H * k);
+      var c = b.spare || document.createElement("canvas"); c.width = cw; c.height = ch;
+      c.getContext("2d").drawImage(video, 0, 0, cw, ch);
+      b.spare = b.canvas; b.canvas = c;
+    }
+  } else b.miss++;
+  if (b.n < 7 && performance.now() - b.t0 < 1700) return false;
+  if (b.qs.length < 5 || !b.canvas) { cam.burst = null; cam.last = null; cam.still = 0; liveStatus("Lost the page, hold it steady"); return false; }
+  finishBurst(cam, b); return true;
+}
+function finishBurst(cam, b) {
+  function med(list) { return [0, 1, 2, 3].map(function (i) { return [medianOf(list.map(function (q) { return q[i][0]; })), medianOf(list.map(function (q) { return q[i][1]; }))]; }); }
+  var m = med(b.qs);
+  // drop outlines that disagree with the middle one (a shadow edge caught in one frame), then take the middle again
+  var good = b.qs.filter(function (q) { return Math.max.apply(null, q.map(function (p, i) { return Math.hypot(p[0] - m[i][0], p[1] - m[i][1]); })) < 0.03; });
+  if (good.length >= 3) m = med(good);
+  var c = b.canvas, corners = m.map(function (p) { return [p[0] * c.width, p[1] * c.height]; });
+  stopCam();
+  ST.step = "busy"; ST.busyText = "Scanning…"; paint();
+  later(function () {
+    try { addPage(c, corners); ST.step = "review"; paint(); }
+    catch (err) { ST.step = "capture"; paint(); alertIn("That didn't scan. Try again."); }
+  });
 }
 function snap() {
   var cam = ST && ST.cam, video = $("#scan-video"); if (!cam || !video || !video.videoWidth) return;
@@ -512,9 +600,53 @@ function snap() {
   ST.step = "busy"; ST.busyText = "Scanning…"; paint();
   later(function () {
     try {
-      var out = renderPage(c, detectCorners(c, c.width, c.height), "bw");
-      ST.pages.push({ out: out, thumb: thumbOf(out) }); ST.step = "review"; paint();
+      addPage(c, detectCorners(c, c.width, c.height)); ST.step = "review"; paint();
     } catch (err) { ST.step = "capture"; paint(); alertIn("That didn't scan. Try again."); }
+  });
+}
+/* ── Adjust Edges: the photo with four corner handles to drag onto the paper's corners, then Apply redoes the page. ── */
+function adjustSetup() {
+  var L = ST.last, wrap = $("#scan-awrap"), st = $("#scan-stage"); if (!L || !wrap) return;
+  var W = L.src.width, H = L.src.height, sw = st.clientWidth - 24, sh = st.clientHeight - 24, f = Math.min(sw / W, sh / H);
+  wrap.style.width = Math.round(W * f) + "px"; wrap.style.height = Math.round(H * f) + "px";
+  var disp = document.createElement("canvas"); disp.width = Math.round(W * f * 2); disp.height = Math.round(H * f * 2);
+  disp.getContext("2d").drawImage(L.src, 0, 0, disp.width, disp.height);
+  var img = document.createElement("img"); img.src = disp.toDataURL("image/jpeg", 0.85); img.alt = "Photo"; img.className = "scan-aimg";
+  wrap.innerHTML = ""; wrap.appendChild(img);
+  var NS = "http://www.w3.org/2000/svg", svg = document.createElementNS(NS, "svg"); svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  svg.setAttribute("preserveAspectRatio", "none"); svg.setAttribute("class", "scan-ov");
+  var poly = document.createElementNS(NS, "polygon"); svg.appendChild(poly); wrap.appendChild(svg);
+  ST.adj = { corners: L.corners.map(function (p) { return [p[0], p[1]]; }), W: W, H: H, poly: poly, wrap: wrap, hs: [] };
+  ST.adj.corners.forEach(function (p, i) {
+    var hd = document.createElement("div"); hd.className = "scan-handle"; hd.setAttribute("data-i", i); wrap.appendChild(hd); ST.adj.hs.push(hd);
+    hd.addEventListener("pointerdown", function (e) {
+      hd.setPointerCapture(e.pointerId); e.preventDefault();
+      var move = function (ev) {
+        var r = wrap.getBoundingClientRect();
+        ST.adj.corners[i] = [Math.max(0, Math.min(W, (ev.clientX - r.left) / r.width * W)), Math.max(0, Math.min(H, (ev.clientY - r.top) / r.height * H))];
+        adjustDraw();
+      };
+      var up = function () { hd.removeEventListener("pointermove", move); hd.removeEventListener("pointerup", up); hd.removeEventListener("pointercancel", up); };
+      hd.addEventListener("pointermove", move); hd.addEventListener("pointerup", up); hd.addEventListener("pointercancel", up);
+    });
+  });
+  adjustDraw();
+}
+function adjustDraw() {
+  var A = ST && ST.adj; if (!A) return;
+  A.poly.setAttribute("points", A.corners.map(function (p) { return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" "));
+  A.hs.forEach(function (hd, i) { hd.style.left = (A.corners[i][0] / A.W * 100) + "%"; hd.style.top = (A.corners[i][1] / A.H * 100) + "%"; });
+}
+function adjustApply() {
+  var A = ST && ST.adj, L = ST && ST.last; if (!A || !L) return;
+  var q = A.corners.map(function (p) { return [p[0], p[1]]; });
+  if (!angleOk(orderQuad(q)) || polyArea(q) < A.W * A.H * 0.02) { alertIn("Those corners don't make a page. Drag them onto the paper's corners."); return; }
+  ST.step = "busy"; ST.busyText = "Scanning…"; paint();
+  later(function () {
+    try {
+      var out = renderPage(L.src, orderQuad(q), "bw"), pg = ST.pages[ST.pages.length - 1];
+      pg.out = out; pg.thumb = thumbOf(out); L.corners = orderQuad(q); ST.adj = null; ST.step = "review"; paint();
+    } catch (err) { ST.step = "review"; paint(); alertIn("That didn't scan. Try again."); }
   });
 }
 function onFile(e) {
@@ -559,13 +691,16 @@ function onClick(e) {
   else if (a === "liveback") { stopCam(); ST.step = "capture"; paint(); }
   else if (a === "shutter") snap();
   else if (a === "library") $("#scan-lib").click();
-  else if (a === "redo") { ST.pages.pop(); ST.step = "capture"; paint(); }
-  else if (a === "more") { ST.step = "capture"; paint(); }
+  else if (a === "redo") { ST.pages.pop(); ST.last = null; ST.step = "capture"; paint(); }
+  else if (a === "adjust") { ST.step = "adjust"; paint(); }
+  else if (a === "adjcancel") { ST.step = "review"; paint(); }
+  else if (a === "adjapply") adjustApply();
+  else if (a === "more") { ST.last = null; ST.step = "capture"; paint(); }
   else if (a === "done") finish();
 }
 document.addEventListener("keydown", function (e) { if (e.key === "Escape" && ST) close(); });
 
 window.Dept12Scanner = { open: open, close: close,
   // For the local test bench (.claude/scan-bench.html) only.
-  _test: { detectCorners: detectCorners, renderPage: renderPage } };
+  _test: { detectCorners: detectCorners, renderPage: renderPage, last: function () { return ST && ST.last; } } };
 })();
