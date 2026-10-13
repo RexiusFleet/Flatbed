@@ -390,17 +390,6 @@ function stopsDispatchScreen(t) {
   }
   return out;
 }
-// Loose lines at the top of an email ("No tarp", "Call for loading and delivery") are instructions for the driver.
-function emailNotes(t) {
-  var L = lines(t), out = [];
-  for (var i = 0; i < L.length && out.length < 4; i++) {
-    var l = L[i]; if (!l) continue;
-    if (/^Ship\s*to\s*:|^Order\s*:/i.test(l)) break;
-    if (/^Load\s+\d/i.test(l)) continue;
-    out.push(l);
-  }
-  return out.join(". ");
-}
 function isJunk(s) {
   var x = (s.name + " " + s.address).toLowerCase();
   return /signature|invoice|unprocessed|conditions|carrier|facility phone|pallets|rexius|transportation,? llc|po box 426|\bmc\s*#|us mail|bill to|load number|^phone\b/.test(x) ||
@@ -585,9 +574,8 @@ function parse(text, opts) {
   }
   set("broker", hit, brokerC);
 
-  var note = fam === "dispatchscreen" ? emailNotes(t) : "";
   return {
-    note: note, family: fam, fields: fields, conf: conf, missing: missing,
+    family: fam, fields: fields, conf: conf, missing: missing,
     pickup: pickup, delivery: delivery, stops: stops
   };
 }

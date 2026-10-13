@@ -272,6 +272,8 @@ function hasAppt(o) {
   return !!(st && st.some(function (x) { return x.notes; }));
 }
 function orderForKey(key) { return S.orders && S.orders[S.loadOrder[key]] || null; }
+// Each part of a load (broker, pick, drop) is its own block with a small gap, instead of blank lines that eat the space.
+function lsHtml(lines) { return lines.filter(Boolean).map(function (l) { return '<div class="ls">' + l + "</div>"; }).join(""); }
 function tabChipHtml(key, r) {
   var o = orderForKey(key);
   if (o && o.kind !== "internal" && !o.is_transfer) {
@@ -285,12 +287,12 @@ function tabChipHtml(key, r) {
         var isP = x.stop_type === "pickup", n = isP ? ++cp : ++cd, tot = isP ? nP : nD;
         lines.push("", "<b>" + (isP ? "PICK" : "DROP") + (tot > 1 ? " " + n : "") + ":</b> " + esc(stopLine(x.name, x.address, x.city, x.state)) + apptTag(x.notes));
       });
-      return lines.join("\n");
+      return lsHtml(lines);
     }
     var pick = stopLine(o.pickup_name, o.pickup_address, o.pickup_city, o.pickup_state);
     var drop = stopLine(o.delivery_name, o.delivery_address, o.delivery_city, o.delivery_state);
-    return lines.concat(["", "<b>PICK:</b> " + esc(pick) + apptTag(apptLabel(o, "pick", day)),
-      "", "<b>DROP:</b> " + esc(drop) + apptTag(apptLabel(o, "drop", day))]).join("\n");
+    return lsHtml(lines.concat(["<b>PICK:</b> " + esc(pick) + apptTag(apptLabel(o, "pick", day)),
+      "<b>DROP:</b> " + esc(drop) + apptTag(apptLabel(o, "drop", day))]));
   }
   // Bag orders: the same EARLY / ANYTIME and FORKLIFT boxes as Current Week.
   var fl = o && o.kind === "internal" && !o.is_transfer ? flagsHtml(bagFlags(o)) : "";

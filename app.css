@@ -684,7 +684,7 @@ td.editing{z-index:9}
   display:flex;flex-direction:column;justify-content:flex-start}
 .slotrow .chip .who,.slotrow .chip .meta,.slotrow .chip .flags{flex:none}
 .slotrow .chip .flags{flex-wrap:nowrap;overflow:hidden}
-.slotrow .chip .note,.slotrow .chip .dnote{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:none}
+.slotrow .chip .note,.slotrow .chip .dnote,.slotrow .chip .pnote{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:none}
 
 .dv{display:grid;gap:1px;background:var(--rule-2);border:1px solid var(--rule-2);border-radius:var(--r-sm);overflow:hidden}
 .dv>div{background:var(--panel);padding:6px 8px;font-size:var(--fs-body-sm)}
@@ -1916,3 +1916,53 @@ table.grid thead th .trk{font-size:var(--fs-body-sm);margin-top:1px;display:bloc
 .fmt-pub{margin-right:4px}
 .fmt-pub #cw-start{background:var(--paper);color:var(--ink);border:1px solid var(--rule-2);border-radius:var(--r-sm);padding:3px 7px;font-size:var(--fs-body-sm);box-sizing:border-box;height:var(--ctl-h)}
 .fmt-pub #cw-start:focus{outline:none;border-color:var(--focus)}
+
+/* Filing a note to a customer or location (the + beside the note boxes, and its popover). */
+.fld-pn{display:flex;gap:6px;align-items:center;min-width:0}
+.fld-pn input{flex:1;min-width:0}
+.pn-plus{flex:none;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;padding:0;border:1px solid var(--rule-2);
+  border-radius:var(--r-sm);background:var(--panel);color:var(--ink-2);font:600 var(--fs-body-lg)/1 var(--font);cursor:pointer}
+.pn-plus:hover:not(:disabled){background:var(--panel-2);border-color:var(--brand);color:var(--brand)}
+.pn-plus:disabled{opacity:.4;cursor:default}
+.drvnote-hd .pn-plus{margin-left:auto;width:22px;height:22px}
+.pn-pop{position:fixed;z-index:340;width:340px;max-width:calc(100vw - 16px);background:var(--panel);border:1px solid var(--rule-2);
+  border-radius:var(--r-md);box-shadow:var(--e2);padding:12px 14px;animation:pn-in var(--motion-fast,.12s) var(--ease-ui,ease-out)}
+@keyframes pn-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.pn-hd{font-size:var(--fs-body-sm);font-weight:700;margin-bottom:6px}
+.pn-opt{display:flex;gap:8px;align-items:flex-start;padding:5px 0;font-size:var(--fs-body-sm);cursor:pointer}
+.pn-opt input{margin-top:2px}
+.pn-opt small{display:block;font-size:var(--fs-label);color:var(--ink-3)}
+.pn-opt.off{opacity:.55;cursor:default}
+.pn-none{font-size:var(--fs-body-sm);color:var(--ink-3);margin:2px 0 6px}
+.pn-hint{font-size:var(--fs-label);color:var(--ink-3);margin:6px 0 10px}
+.pn-ft{display:flex;justify-content:flex-end;gap:8px}
+.pn-file{margin:0 0 10px}
+.pn-grp{margin:6px 0;font-size:var(--fs-body-sm)}
+.pn-txt{white-space:pre-wrap;color:var(--ink-2);margin-top:2px}
+
+/* New Order button (header) and its chooser. */
+#hdr-new-order{flex:none;margin-left:10px;white-space:nowrap}
+.no-grid{display:grid;gap:8px}
+.no-pick{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:12px 14px;border:1px solid var(--rule-2);border-radius:var(--r-md);
+  background:var(--panel);color:var(--ink);cursor:pointer;font:inherit}
+.no-pick b{font-size:var(--fs-body-lg)}
+.no-pick span{font-size:var(--fs-label);color:var(--ink-3)}
+.no-pick:hover{border-color:var(--brand);background:var(--panel-2)}
+@media(max-width:980px){.gs{min-width:0;flex:1 1 90px}#hdr-new-order{margin-left:6px}}
+
+/* Show On Order Page: the row you jumped to blinks once. */
+@keyframes rowflash{0%,40%{background:var(--focus-soft)}100%{background:transparent}}
+tr.row-flash>td{animation:rowflash 1.6s ease-out}
+
+/* Staging rail: when it is dragged wider, the chips lay out in columns instead of one long stack. */
+.rail-body{display:grid;grid-template-columns:repeat(auto-fill,minmax(236px,1fr));align-content:start;align-items:start}
+.rail-body>.empty-state,.rail-body>.rail-div{grid-column:1/-1}
+
+/* The private note on a load chip: the same small red note line as before, with bold text (the icon stays as it was). Dashboard only. */
+.chip .pnote{font-weight:800}
+
+
+/* Staging rail group labels: a name with a line running out to the edge. */
+.rail-div{display:flex;align-items:center;gap:8px;margin:4px 0 0;font:700 var(--fs-caption)/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.rail-div:first-child{margin-top:0}
+.rail-div::after{content:"";flex:1;border-top:1.5px solid var(--rule-2)}

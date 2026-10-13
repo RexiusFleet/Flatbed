@@ -1026,6 +1026,11 @@ function applyOrderFkDenorm(o, field, value) {
    is repainted. The full reload that still follows only catches what the server derives. */
 function patchOrderLocal(oid, row) {
   var o = order(oid); if (!o) return null;
+  if (row && lastPushMs()) {
+    var edited = PUB_ORDER_FIELDS.some(function (f) { return f in row && String(o[f] == null ? "" : o[f]) !== String(row[f] == null ? "" : row[f]); }) ||
+      (o.is_transfer && "notes" in row && String(o.notes || "") !== String(row.notes || ""));
+    if (edited) PUB.dirty[oid] = true;
+  }
   if (row) {
     for (var k in row) o[k] = row[k];
     ["customer_party_id", "broker_party_id", "transfer_department_id"].forEach(function (f) { if (f in row) applyOrderFkDenorm(o, f, row[f]); });
@@ -1340,7 +1345,7 @@ function apptHas(oid) {
 var NOTEPAD_ICON = '<svg class="notepad" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2h9v12h-9zM6 5.5h4M6 8h4M6 10.5h2.5"/></svg> ';
 /* ── Chip construction — built, never stored ─────────────────────────────── */
 function buildChip(o) {
-  var flags = [], notes = [], win = "anytime", title, line, route, nums;
+  var flags = [], notes = [], pnote = "", win = "anytime", title, line, route, nums;
   /* Backfilled sheet rows (D65, extended D220) carry the raw sheet lane text
      and no broker/order number — show the lane text plainly, the way the old
      sheet read, instead of "(no broker) / NO ORDER #". */
@@ -1370,7 +1375,7 @@ function buildChip(o) {
     line = route + " · " + nums;
     if (o.tarp) flags.push("TARP");
     if (o.backhaul) flags.push("BACKHAUL");   // dispatcher-only: never published to drivers or the bag plant
-    if (o.notes) notes.push(o.notes);
+    pnote = o.notes || "";   // the private note: boxed on the chip so it can't be missed
   } else {
     title = o.customer_name || "(no customer)";
     line = (o.pallet_count ? o.pallet_count + " PAL · " : "") + (o.rexius_order_no || "no order #");
@@ -1392,12 +1397,13 @@ function buildChip(o) {
       }
       if (loc.notes) notes.push(loc.notes);
     }
-    if (o.notes) notes.push(o.notes); // this dispatch's own note, from the drawer — D34
+    pnote = o.notes || ""; // this dispatch's own private note, from the drawer — D34
   }
-  return { title: title, line: line, route: route, nums: nums, win: win, flags: flags,
+  return { title: title, line: line, route: route, nums: nums, win: win, flags: flags, pnote: pnote,
            note: notes.join(" · "), needsNumber: !o.rexius_order_no && !o.is_transfer };
 }
 function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
+  if (pushed && PUB.dirty[o.id]) pushed = false;   // changed since the last publish: back to the plain look until it is published again
   var ch = buildChip(o), w = WIN[ch.win] || WIN.anytime;
   fmt = fmt || {};
   // Driver tab note (D140) — the one note that's actually pushed to the
@@ -1437,7 +1443,7 @@ function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
   if (fmt.size) { var _fs = parseInt(fmt.size, 10); if (_fs > 0) ws += "font-size:" + _fs + "px;"; }
   var bg = filled ? ";background:" + fill + (textc ? ";color:" + textc : "")
          : tinted ? ";background:color-mix(in srgb," + fill + " 17%,var(--panel))" : "";
-  var chipTitle = [ch.title, ch.line].concat(ch.flags || []).concat(ch.note ? [ch.note] : [])
+  var chipTitle = [ch.title, ch.line].concat(ch.flags || []).concat(ch.pnote ? [ch.pnote] : []).concat(ch.note ? [ch.note] : [])
     .concat(dispatchNote ? [dispatchNote] : []).filter(Boolean).join(" · ");
   /* Timing (EARLY/ANYTIME) uses the same high-contrast callout as EAST,
      forklift, and tarp. A timing-colored badge disappeared into a filled
@@ -1477,6 +1483,7 @@ function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
     '<div class="who"' + (ws ? ' style="' + ws + '"' : "") + ">" + esc(ch.title) + "</div>" +
     metaHtml +
     (f ? '<div class="flags">' + f + "</div>" : "") +
+    (ch.pnote ? '<div class="note pnote" title="Private note: only you see this">' + NOTEPAD_ICON + esc(ch.pnote) + "</div>" : "") +
     (ch.note ? '<div class="note">' + NOTEPAD_ICON + esc(ch.note) + "</div>" : "") +
     /* Driver tab note (D140) — the pushed note, distinct from ch.note above
        (dispatcher-private, customer/location-derived, never pushed). */
@@ -1680,7 +1687,6 @@ function parseRateCon(text, filename) {
   }
   function shape(s) { return s ? { name: s.name, address: s.address, city: s.city, state: s.state, zip: s.zip, appt: s.appt, conf: s.conf } : null; }
   out.pickup = shape(rc.pickup); out.delivery = shape(rc.delivery);
-  out.note = rc.note || "";
   out.stops = rc.stops.map(function (s) { var x = shape(s); x.stop_type = s.type; return x; });
   if (out.load_no) out.source.push("load #");
   if (out.po) out.source.push("PO");
@@ -1977,17 +1983,18 @@ function refreshOrderDrawerAfterSave(saveOid) {
    Cancel/Delete used to live here too; retired (D159) in favor of the
    order trackers' numbered-gutter multi-select, which covers a single
    order the same way (select one row) plus real multi-select. */
+function orderPageBtn(oid) { return '<button class="btn sm" data-showorder="' + oid + '">Show On Order Page &rarr;</button>'; }
 function schedBar(oid) {
   var o = order(oid); if (!o) return "";
   var ds = schedDateForOrder(oid);
   var controls = stageControls(o, !!ds, false);
   if (ds) return '<div class="dw-sched">' + controls +
     '<span style="font-size:var(--fs-label);color:var(--ink-3);margin-left:2px">' + esc(prettyDate(ds)) + "</span>" +
-    '<button class="btn sm" data-showsched="' + oid + '" data-schedds="' + ds + '">Show On Scheduler &rarr;</button>' +
+    '<button class="btn sm" data-showsched="' + oid + '" data-schedds="' + ds + '">Show On Scheduler &rarr;</button>' + orderPageBtn(oid) +
     "</div>";
   if (STAGED.indexOf(oid) >= 0) return '<div class="dw-sched">' + controls +
-    '<span style="font-size:var(--fs-label);color:var(--ink-3)">In the staging rail — not on the board yet.</span></div>';
-  return '<div class="dw-sched">' + controls + "</div>";
+    '<span style="font-size:var(--fs-label);color:var(--ink-3)">In the staging rail — not on the board yet.</span>' + orderPageBtn(oid) + "</div>";
+  return '<div class="dw-sched">' + controls + orderPageBtn(oid) + "</div>";
 }
 function openInternalOrder(o) {
   var ch = buildChip(o), ds = docsFor(o.id);
@@ -2011,15 +2018,15 @@ function openInternalOrder(o) {
     fld("pallet_count", "PAL", o.pallet_count, "") +
     fld("order_date", "Ordered", o.order_date && String(o.order_date).slice(0, 10), "", "date") +
     fld("delivery_date", "Delivered", o.delivery_date && String(o.delivery_date).slice(0, 10), "", "date") +
-    fld("notes", "Private notes", o.notes, "Only you see this. It never goes to drivers.") +
+    fld("notes", "Private notes", o.notes, "Only you can see this") +
     "</div></div>";
 
   /* Two notes, every order kind (D140): Notes above is dispatcher-private,
      never pushed. Driver tab note is the one thing that reaches the
      driver's Sheets tab — same field/pattern Internal Freight transfers
      already had (D130), now universal. */
-  h += '<div><div class="sec-h">Note for the driver</div><div class="fields">' +
-    fld("driver_note", "Dispatch Note", o.driver_note, "Shows on the driver's tab and Current Week after you push") +
+  h += '<div><div class="fields">' +
+    fld("driver_note", "Dispatch Note", o.driver_note, "Note to driver") +
     "</div></div>";
 
   /* Freight to the bag plant (D38) — actual miles and the hand-entered
@@ -2212,8 +2219,7 @@ function afApply(o, p) {
   }
   simple("broker_load_no", p.load_no, c.load_no);
   simple("po_number", p.po, c.po);
-  simple("rexius_order_no", p.solomon, "ok", true);
-  if (p.note) simple("driver_note", p.note, "check", true);   // rate cons never carry it, so no "not found" tag
+  simple("rexius_order_no", p.solomon, "ok", true);   // rate cons never carry it, so no "not found" tag
   if (created && o.broker_party_id && p.broker_id && o.broker_party_id === p.broker_id) mark("broker_party_id", p.broker_conf || "check", p.broker_id);
   else if (!(o.broker_party_id)) { if (p.broker_id) { body.broker_party_id = p.broker_id; mark("broker_party_id", p.broker_conf || "check", p.broker_id); } else mark("broker_party_id", "missing"); }
   if (o.external_rate == null || o.external_rate === "") {
@@ -2432,8 +2438,8 @@ function openTransferOrder(o) {
   /* Load info stays dispatcher-facing only (drives the chip title, never
      pushed). driver_note is the separate field that actually reaches the
      driver's Sheets tab — D130. */
-  h += '<div><div class="sec-h">Note for the driver</div><div class="fields">' +
-    fld("driver_note", "Dispatch Note", o.driver_note, "Shows on the driver's tab and Current Week after you push") +
+  h += '<div><div class="fields">' +
+    fld("driver_note", "Dispatch Note", o.driver_note, "Note to driver") +
     "</div></div>";
 
   h += '<div><div class="sec-h">Mileage / transfer cost</div><div class="fields">' +
@@ -2478,7 +2484,7 @@ function openOrder(oid) {
     "<label>Rate" + afBadge(o, "external_rate") + "</label>" + rateInputHtml(o, "") +
     fld("order_date", "Ordered", o.order_date && String(o.order_date).slice(0, 10), "", "date") +
     fld("delivery_date", "Delivered", o.delivery_date && String(o.delivery_date).slice(0, 10), "", "date") +
-    fld("notes", "Private notes", o.notes, "Only you see this. It never goes to drivers.") +
+    fld("notes", "Private notes", o.notes, "Only you can see this") +
     "</div><div style=\"display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:8px\">" +
     "<label style=\"display:flex;align-items:center;gap:6px;font-size:var(--fs-body-sm);color:var(--ink-2)\">" +
     '<input type="checkbox" data-oedit="' + oid + '" data-field="tarp"' + (o.tarp ? " checked" : "") +
@@ -2491,8 +2497,8 @@ function openOrder(oid) {
      never pushed. Driver tab note is the one thing that reaches the
      driver's Sheets tab — same field/pattern Internal Freight transfers
      already had (D130), now universal. */
-  h += '<div><div class="sec-h">Note for the driver</div><div class="fields">' +
-    fld("driver_note", "Dispatch Note", o.driver_note, "Shows on the driver's tab and Current Week after you push") +
+  h += '<div><div class="fields">' +
+    fld("driver_note", "Dispatch Note", o.driver_note, "Note to driver") +
     "</div></div>";
 
   /* Pickup / Delivery (D42) — type-ahead against the Pick/Drop List, pre-filled
@@ -2500,6 +2506,7 @@ function openOrder(oid) {
   var sug = rateConSuggest(oid);
   var routeLocked = !!(o.delivery_date || o.billed_date);
   h += '<div><div class="sec-h">Pickup / Drop</div>' + routeSectionHtml(o, sug, routeLocked) + "</div>";
+  h += pnSectionHtml(o);
 
   // What the driver sent in (notes, POD/BOL scans), right above Documents.
   h += driverNotesHtml(o.id) + driverScansHtml(o.id);
@@ -2539,18 +2546,119 @@ function openOrder(oid) {
   $("#drawer").classList.add("on"); $("#scrim").classList.add("on");
   $("#drawer").setAttribute("aria-hidden", "false");
 }
+/* ── Filing a note to a customer or a location ────────────────────────────────────────────────────────────
+   The + beside Private notes, Dispatch Note and each Note From Driver adds that text, stamped with today's date and
+   this order's number, to the Notes column that already exists on the customer (external orders) or on the location
+   (picks, drops, and a bag customer's "Customer notes"). Nothing new is stored: it is the same text you can edit in the
+   Database. A bag customer's notes ride to the driver's tab, so a Private note can't be filed there. */
+function pnKindLabel(k) { return { private: "Private note", dispatch: "Dispatch note", driver: "Note from driver" }[k] || "Note"; }
+function pnTargets(o) {
+  var out = [], seen = {};
+  function party(id, label) {
+    if (!id || seen["p" + id]) return;
+    var p = DB.parties.filter(function (x) { return x.id === id; })[0]; if (!p) return;
+    seen["p" + id] = 1; out.push({ table: "parties", id: id, label: label + ": " + p.name, row: p });
+  }
+  function loc(id, label, driverSees) {
+    if (!id || seen["l" + id]) return;
+    var l = locById(id); if (!l) return;
+    seen["l" + id] = 1; out.push({ table: "locations", id: id, label: label + ": " + (l.name || "Location") + (l.city ? ", " + l.city : ""), row: l, driverSees: !!driverSees });
+  }
+  if (isExt(o)) {
+    party(o.broker_party_id, "Customer notes"); party(o.customer_party_id, "Customer notes");
+    loc(o.pickup_location_id, "Pick notes"); loc(o.delivery_location_id, "Drop notes");
+    if (o.route_mode === "custom") orderStops(o.id).forEach(function (st) { loc(st.location_id, st.stop_type === "pickup" ? "Pick notes" : "Drop notes"); });
+  } else {
+    var cl = o.customer_party_id ? locFor(o.customer_party_id) : null;
+    if (cl) loc(cl.id, "Customer notes", true);
+    loc(o.pickup_location_id, "Pick notes"); loc(o.delivery_location_id, "Drop notes");
+  }
+  return out;
+}
+function pnLine(o, kind, text) {
+  var d = new Date(), ds = (d.getMonth() + 1) + "/" + d.getDate() + "/" + String(d.getFullYear()).slice(2);
+  return ds + " · from " + (o.rexius_order_no || o.broker_load_no || "an order with no number") + " · " + pnKindLabel(kind) + ": " + String(text).replace(/\s*\n+\s*/g, " ").trim();
+}
+var PN_OPEN = null;
+function pnClose() { var p = $("#pn-pop"); if (p) p.remove(); PN_OPEN = null; }
+function pnOpen(btn, text, kind) {
+  pnClose();
+  var o = DRAWER_OID ? order(DRAWER_OID) : null; if (!o) return;
+  var targets = pnTargets(o), firstOk = -1;
+  targets.forEach(function (t, i) { if (firstOk < 0 && !(kind === "private" && t.driverSees)) firstOk = i; });
+  var h = '<div class="pn-pop" id="pn-pop" role="dialog" aria-label="Add this note"><div class="pn-hd">Add this note to</div>';
+  if (!targets.length) h += '<p class="pn-none">This load has no customer or location to add it to yet.</p>';
+  targets.forEach(function (t, i) {
+    var blocked = kind === "private" && t.driverSees;
+    h += '<label class="pn-opt' + (blocked ? " off" : "") + '"><input type="checkbox" data-pni="' + i + '"' + (blocked ? " disabled" : i === firstOk ? " checked" : "") + "><span>" + esc(t.label) +
+      (t.driverSees ? '<small>' + (blocked ? "Drivers see this one, so a private note can't go here" : "Drivers see this one") + "</small>" : "") + "</span></label>";
+  });
+  h += '<div class="pn-hint">Added to the Notes column with today\'s date and this order\'s number.</div><div class="pn-ft"><button type="button" class="btn sm" data-pn-cancel>Cancel</button>' +
+    (targets.length ? '<button type="button" class="btn sm pri" data-pn-go>Add Note</button>' : "") + "</div></div>";
+  document.body.insertAdjacentHTML("beforeend", h);
+  var p = $("#pn-pop"), r = btn.getBoundingClientRect();
+  p.style.left = Math.max(8, Math.min(window.innerWidth - p.offsetWidth - 8, r.right - p.offsetWidth)) + "px";
+  p.style.top = Math.max(8, Math.min(window.innerHeight - p.offsetHeight - 8, r.bottom + 6)) + "px";
+  PN_OPEN = { oid: o.id, text: text, kind: kind, targets: targets };
+}
+function pnGo() {
+  var P = PN_OPEN; if (!P) return;
+  var o = order(P.oid), picked = [].slice.call(document.querySelectorAll("#pn-pop input[data-pni]:checked")).map(function (i) { return P.targets[+i.getAttribute("data-pni")]; });
+  if (!picked.length) { toast("Pick where to add it", true); return; }
+  var line = pnLine(o, P.kind, P.text), go = $("#pn-pop [data-pn-go]"); if (go) go.disabled = true;
+  Promise.all(picked.map(function (t) {
+    var cur = String(t.row.notes || "").replace(/\s+$/, "");
+    return gridCellSet(t.table, t.id, "notes", cur ? cur + " | " + line : line);   // one line per cell, entries split by " | "
+  })).then(function () {
+    pnClose(); toast("Note added to " + picked.length + " place" + (picked.length > 1 ? "s" : ""));
+    if (DRAWER_OID === P.oid) openOrder(P.oid);
+  }).catch(function (err) { toast(err.message, true); if (go) go.disabled = false; });
+}
+// What is already written in the Notes column of this load's customer and locations, read-only here.
+function pnSectionHtml(o) {
+  var rows = pnTargets(o).filter(function (t) { return t.row.notes && String(t.row.notes).trim(); });
+  if (!rows.length) return "";
+  return '<details class="pn-file"><summary class="sec-h">Notes on file — ' + rows.length + "</summary>" + rows.map(function (t) {
+    return '<div class="pn-grp"><b>' + esc(t.label) + '</b><div class="pn-txt">' + esc(String(t.row.notes).split(" | ").join("\n")) + "</div></div>";
+  }).join("") + "</details>";
+}
+document.addEventListener("click", function (e) {
+  var b = e.target.closest("[data-pnfield],[data-pndn]");
+  if (b) {
+    e.preventDefault();
+    if (PN_OPEN && $("#pn-pop")) { pnClose(); return; }
+    if (b.hasAttribute("data-pnfield")) {
+      var f = b.getAttribute("data-pnfield"), inp = $('#drawer [data-of="' + f + '"]'), v = inp ? inp.value.trim() : "";
+      if (v) pnOpen(b, v, f === "notes" ? "private" : "dispatch");
+    } else {
+      var id = b.getAttribute("data-pndn"), n = (DRIVER_NOTES[DRAWER_OID] || []).filter(function (x) { return String(x.id) === id; })[0];
+      if (n) pnOpen(b, n.text, "driver");
+    }
+    return;
+  }
+  if (e.target.closest("[data-pn-go]")) { pnGo(); return; }
+  if (e.target.closest("[data-pn-cancel]")) { pnClose(); return; }
+  if (PN_OPEN && !e.target.closest("#pn-pop")) pnClose();
+});
+document.addEventListener("keydown", function (e) { if (e.key === "Escape" && PN_OPEN) pnClose(); });
+document.addEventListener("input", function (e) {
+  var t = e.target; if (!t.matches || !t.matches('[data-of="notes"],[data-of="driver_note"]')) return;
+  var b = t.parentNode && t.parentNode.querySelector(".pn-plus"); if (b) b.disabled = !t.value.trim();
+});
 /* Driver notes — what a driver wrote about this load from the Flatbed
    Schedule page (driver/): a long wait, a bad site, anything dispatch
    should know. Read from Supabase (driver_notes), refreshed every minute. */
 function driverNotesHtml(oid) {
   var list = (DRIVER_NOTES[oid] || []).slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; });
   var h = '<div id="dw-drvnotes"><div class="sec-h">Note From Driver — ' + list.length + "</div>";
-  if (!list.length) return h + '<p class="drvnote-empty">No notes from the driver yet.</p></div>';
+  if (!list.length) return h + '<p class="drvnote-empty">Note from driver</p></div>';
   return h + '<div class="drvnote-list">' + list.map(function (n) {
     var d = new Date(n.at);
+    var po = order(oid), plus = po && !po.is_transfer ? '<button type="button" class="pn-plus" data-pndn="' + esc(n.id) +
+      '" title="Add this note to a customer or location" aria-label="Add this note to a customer or location">+</button>' : "";
     return '<div class="drvnote"><div class="drvnote-hd"><b>' + esc(n.driver || "Driver") + "</b><span>" +
       esc((n.truck ? n.truck + " · " : "") + d.toLocaleDateString([], { month: "numeric", day: "numeric" }) + " " +
-      d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) + "</span></div>" + esc(n.text) + "</div>";
+      d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) + "</span>" + plus + "</div>" + esc(n.text) + "</div>";
   }).join("") + "</div></div>";
 }
 /* External rate: what the broker pays for the order. Typed as dollars ("1850", "$1,850.50"); saves as typed
@@ -2590,8 +2698,13 @@ function fld(name, label, val, ph, type) {
       '" value="' + esc(isoToMdy(val)) + '" placeholder="MM/DD/YYYY">';
   }
   var o = DRAWER_OID ? order(DRAWER_OID) : null;
-  return "<label>" + esc(label) + (o ? afBadge(o, name) : "") + '</label><input data-of="' + name + '" type="' + (type || "text") +
+  var inp = '<input data-of="' + name + '" type="' + (type || "text") +
     '" value="' + esc(val == null ? "" : val) + '" placeholder="' + esc(ph || "") + '">';
+  // Private notes and Dispatch Note get a + that files the note to the customer or a location (not on one-off transfers).
+  if (o && !o.is_transfer && (name === "driver_note" || (name === "notes" && label === "Private notes")))
+    inp = '<span class="fld-pn">' + inp + '<button type="button" class="pn-plus" data-pnfield="' + name + '"' + (val ? "" : " disabled") +
+      ' title="Add this note to a customer or location" aria-label="Add this note to a customer or location">+</button></span>';
+  return "<label>" + esc(label) + (o ? afBadge(o, name) : "") + "</label>" + inp;
 }
 /* Like fld() but saves via /api/freight (D38/D103) instead of /api/order. */
 function frFld(name, label, val, ph) {
@@ -3162,10 +3275,17 @@ function syncHeaderSeen() {
 /* Publish indicator, left of the driver icon: when the schedule was last published and how many
    schedule edits (loads placed or moved, truck days off, notes, driver-visible order fields) came after it.
    Counted from the edit history; Publish Schedule itself does not count as a change. */
-var PUB = { n: null, at: 0, base: -1, busy: false };
+var PUB = { n: null, at: 0, base: -1, busy: false, dirty: {} };
 var PUB_ORDER_FIELDS = ["pickup_location_id", "delivery_location_id", "pallet_count", "driver_note", "po_number", "delivery_number", "route_mode",
   "pick_appt_text", "drop_appt_text", "pick_appt_date", "pick_appt_from", "pick_appt_to", "drop_appt_date", "drop_appt_from", "drop_appt_to",
-  "customer_party_id", "broker_party_id", "solomon_order_no", "broker_load_no", "notes"];
+  "customer_party_id", "broker_party_id", "rexius_order_no", "broker_load_no", "tarp"];
+// An order edit counts when it touches something drivers see. A transfer's "Load info" (notes) is published; other orders' private notes are not.
+function pubOrderEdit(c) {
+  var f = c.changed_fields || [];
+  if (f.some(function (x) { return PUB_ORDER_FIELDS.indexOf(x) >= 0; })) return true;
+  if (f.indexOf("notes") >= 0) { var o = order((c.primary_key || {}).id); return !!(o && o.is_transfer); }
+  return false;
+}
 function pubCounts(ev, since) {
   if (!ev || new Date(ev.occurred_at).getTime() <= since + 8000) return false;
   return (ev.changes || []).some(function (c) {
@@ -3173,9 +3293,38 @@ function pubCounts(ev, since) {
     if (t === "loads") return f.some(function (x) { return x !== "pushed_at" && x !== "updated_at"; });
     if (t === "load_orders" || t === "load_stops" || t === "schedule_notes" || t === "truck_off_days") return true;
     if (t === "trucks") return f.indexOf("driver_id") >= 0;
-    if (t === "orders") return f.some(function (x) { return PUB_ORDER_FIELDS.indexOf(x) >= 0; });
+    if (t === "orders") return pubOrderEdit(c);
     return false;
   });
+}
+// Which orders an event changed (for the chips that need publishing again).
+function pubOrderIds(ev, since) {
+  var ids = [];
+  if (!ev || new Date(ev.occurred_at).getTime() <= since + 8000) return ids;
+  (ev.changes || []).forEach(function (c) {
+    var f = c.changed_fields || [], t = c.table_name, pk = c.primary_key || {};
+    if (t === "orders") { if (pubOrderEdit(c)) ids.push(pk.id); }
+    else if (t === "load_orders") ids.push(pk.order_id);
+    else if (t === "loads") {
+      if (!f.some(function (x) { return x !== "pushed_at" && x !== "updated_at"; })) return;
+      (DB.loads || []).filter(function (l) { return l.id === pk.id; }).forEach(function (l) { (l.order_ids || []).forEach(function (id) { ids.push(id); }); });
+    } else if (t === "load_stops" || t === "order_stops") {
+      var d = c.after_data || c.before_data || {}; if (d.order_id) ids.push(d.order_id);
+    }
+  });
+  return ids.filter(Boolean);
+}
+// Orders edited since the last publish: their external chips drop back to the unpublished look (white, colored edge) until you publish again.
+function pubSetDirty(nd) {
+  var changed = [];
+  Object.keys(nd).forEach(function (id) { if (!PUB.dirty[id]) changed.push(id); });
+  Object.keys(PUB.dirty).forEach(function (id) { if (!nd[id]) changed.push(id); });
+  PUB.dirty = nd;
+  if (changed.length) pubRepaintChips(changed);
+}
+function pubRepaintChips(oids) {
+  var want = {}; oids.forEach(function (id) { want[id] = true; });
+  Object.keys(CELLS || {}).forEach(function (key) { var v = CELLS[key]; if (v && v.oid && want[v.oid]) repaintCell(key); });
 }
 function pubRefresh(force) {
   var base = lastPushMs();
@@ -3184,6 +3333,8 @@ function pubRefresh(force) {
   PUB.busy = true;
   api("history?limit=100", {}).then(function (r) {
     var evs = (r && r.events) || [], n = evs.filter(function (e) { return pubCounts(e, base); }).length;
+    var nd = {}; evs.forEach(function (e) { pubOrderIds(e, base).forEach(function (id) { nd[id] = true; }); });
+    pubSetDirty(nd);
     var oldest = evs.length ? new Date(evs[evs.length - 1].occurred_at).getTime() : 0;
     PUB.n = n; PUB.more = !!(r && r.has_more) && oldest > base;
   }, function () {}).then(function () { PUB.busy = false; PUB.at = Date.now(); PUB.base = base; pubPaint(); });
@@ -5770,8 +5921,16 @@ function renderRail() {
     var c = buildChip(o);
     return (c.title + " " + c.line).toLowerCase().indexOf(Q.toLowerCase()) >= 0;
   });
-  $("#rail").innerHTML = list.length ? list.map(function (id) {
-    var o = order(id); return o ? chipHtml(o, true, 'data-from="STAGE"') : "";
+  // Grouped by kind, each group under a labeled line: External, Bag Orders, Internal Freight.
+  var groups = [["External", []], ["Bag Orders", []], ["Internal Freight", []]];
+  list.forEach(function (id) {
+    var o = order(id); if (!o) return;
+    groups[o.is_transfer ? 2 : isExt(o) ? 0 : 1][1].push(id);
+  });
+  $("#rail").innerHTML = list.length ? groups.filter(function (g) { return g[1].length; }).map(function (g) {
+    return '<div class="rail-div"><span>' + esc(g[0]) + "</span></div>" + g[1].map(function (id) {
+      return chipHtml(order(id), true, 'data-from="STAGE"');
+    }).join("");
   }).join("") : emptyStateHtml(Q ? "No matches for “" + Q + "”" : "Nothing staged");
   $("#stage-ct").textContent = STAGED.length;
 }
@@ -6169,11 +6328,22 @@ function render() {
   if (navEl && $("#sidenav-body")) $("#sidenav-body").scrollTop = navTop;
 }
 var LAST_VIEW_KEY = null, SCHED_KEEP = false, DRIVER_BOOTED = false;
+var AUTOSTAGE_OFF = false;
 function reload() { return api("bootstrap").then(function (d) {
   // A reload rebuilds the Scheduler; keep the spot you were at instead of
   // snapping back to today.
   if (schedNode && schedNode.parentNode) { schedScrollTop = schedNode.scrollTop; SCHED_KEEP = true; }
-  DB = d; schedNode = null; render();
+  // Any order that wasn't here before this reload (a rate con, a pasted load, New Order, a copy) goes straight into the
+  // Staging rail. Reserving a block of numbers or bulk-adding blanks turns this off for that one reload.
+  var prevIds = DB && DB.orders ? DB.orders.map(function (o) { return o.id; }) : null;
+  DB = d;
+  if (prevIds && prevIds.length && !AUTOSTAGE_OFF) {
+    var seenIds = {}; prevIds.forEach(function (id) { seenIds[id] = 1; });
+    var pmNew = placement();
+    (d.orders || []).forEach(function (o) { if (!seenIds[o.id] && canStageOrder(o, pmNew[o.id])) STAGED.push(o.id); });
+  }
+  AUTOSTAGE_OFF = false;
+  schedNode = null; render();
   if (typeof rptOnReload === "function") rptOnReload();
   if (!DRIVER_BOOTED) { DRIVER_BOOTED = true; loadDriverActivity(); }   // first load: bring in notes, scans, views
   if (typeof refreshDrawerChipPreview === "function") refreshDrawerChipPreview();
@@ -7605,6 +7775,94 @@ function ingestParsed(p, filename) {
   }).then(function (o) { return afApply(o, p).then(function (r) { r.o._match = o._match; return r; }); });
 }
 
+/* ── New Order (header button) ──────────────────────────────────────────────────────────────────────
+   Pick the kind, then it starts that kind's own process: External from a rate con (file or pasted text) or a blank
+   order; Bag Order by its order number (opens the order if the number is already there, adds it if not); Internal
+   Freight adds a new transfer. */
+function bagNumberRegex() {
+  var pattern = orderNumberSettings().internal_pattern || "07-{MM}{YY}-{####}";
+  var esc2 = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  esc2 = esc2.replace(/\\\{MM\\\}/gi, "\\d{2}").replace(/\\\{YYYY\\\}/gi, "\\d{4}").replace(/\\\{YY\\\}/gi, "\\d{2}").replace(/\\\{(#+)\\\}/g, function (m, h) { return "\\d{" + h.length + "}"; });
+  try { return new RegExp("^" + esc2 + "$", "i"); } catch (e) { return /^07-\d{4}-\d{4}$/; }
+}
+// "07-1026-0123", "07 1026 0123" and "0710260123" all mean the same number.
+function normalizeBagNumber(raw) {
+  var t = String(raw || "").trim().toUpperCase().replace(/\s+/g, "-").replace(/[–—_]/g, "-");
+  if (/^\d{10}$/.test(t)) t = t.slice(0, 2) + "-" + t.slice(2, 6) + "-" + t.slice(6);
+  return t;
+}
+function newOrderModal() {
+  openModal('<div class="modal-hd"><h2>New Order</h2></div><div class="modal-body"><div class="no-grid">' +
+    '<button class="no-pick" id="no-ext" type="button"><b>External Order</b><span>From a rate con, pasted text, or blank</span></button>' +
+    '<button class="no-pick" id="no-bag" type="button"><b>Bag Order</b><span>Open it by order number, or add it</span></button>' +
+    '<button class="no-pick" id="no-xfer" type="button"><b>Internal Freight</b><span>A one-off transfer to a department</span></button>' +
+    '</div></div><div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button></div>');
+}
+function newExternalModal() {
+  openModal('<div class="modal-hd"><h2>New External Order</h2></div><div class="modal-body"><div class="no-grid">' +
+    '<button class="no-pick" id="no-ext-upload" type="button"><b>Upload a Rate Con</b><span>Reads a PDF and fills the order</span></button>' +
+    '<button class="no-pick" id="no-ext-paste" type="button"><b>Paste Text</b><span>An email or any text with the load</span></button>' +
+    '<button class="no-pick" id="no-ext-blank" type="button"><b>Blank Order</b><span>Start empty and fill it in</span></button>' +
+    '</div></div><div class="modal-ft"><button class="btn" id="no-back" type="button">Back</button><button class="btn" id="modal-cancel">Cancel</button></div>');
+}
+function newBagPanel() {
+  closeModal(); DRAWER_OID = null;
+  setDrawerHtml('<div class="dw-hd"><div style="flex:1"><h2 id="dw-title">New Bag Order</h2><div class="sub">Enter the order number</div></div>' +
+    '<button class="btn" id="dw-close">Close</button></div><div class="dw-body"><div><div class="sec-h">Order</div><div class="fields">' +
+    '<label>Order #</label><input id="no-bag-num" type="text" autocomplete="off" placeholder="' +
+      esc(formatOrderNumber(orderNumberSettings().internal_pattern, TODAY.slice(5, 7), String(YEAR), 1)) + '"></div></div>' +
+    '<p style="font-size:var(--fs-label);color:var(--ink-3)">If this number is already on a bag order, that order opens so you can fill it in. If not, it is added.</p>' +
+    '<div><button class="btn pri" id="no-bag-go" type="button">Open Or Add</button></div></div>');
+  $("#drawer").classList.add("on"); $("#scrim").classList.add("on"); $("#drawer").setAttribute("aria-hidden", "false");
+  setTimeout(function () { var i = $("#no-bag-num"); if (i) i.focus(); }, 60);
+}
+function newBagGo() {
+  var inp = $("#no-bag-num"), num = normalizeBagNumber(inp ? inp.value : "");
+  if (!num) { toast("Enter the order number", true); return; }
+  var have = orders().filter(function (o) { return String(o.rexius_order_no || "").toUpperCase() === num; })[0];
+  if (have) {
+    closeModal(); openOrder(have.id);
+    toast(isExt(have) || have.is_transfer ? "That number is " + (have.is_transfer ? "an internal freight" : "an external") + " order" : "Opened order " + num);
+    return;
+  }
+  if (!bagNumberRegex().test(num)) { toast("That doesn't look like a bag order number, like " + formatOrderNumber(orderNumberSettings().internal_pattern, TODAY.slice(5, 7), String(YEAR), 1), true); return; }
+  var go = $("#no-bag-go"); if (go) go.disabled = true;
+  api("order/ingest", { kind: "internal", rexius_order_no: num }).then(function (o) {
+    closeModal();
+    return reload().then(function () { openOrder(o.id); toast("Added bag order " + num + " — fill it in"); });
+  }).catch(function (err) { toast(err.message, true); if (go) go.disabled = false; });
+}
+document.addEventListener("click", function (e) {
+  var so = e.target.closest("[data-showorder]");
+  if (so) {   // jump from the side window to this order's row on its Orders page
+    var soid = so.getAttribute("data-showorder"), oo = order(soid); if (!oo) return;
+    closeDrawer(); SEC = "orders"; SUB = oo.is_transfer ? "xfer" : (oo.kind === "internal" ? "int" : "ext"); SEL = null; render();
+    setTimeout(function () {
+      var tr = document.querySelector('tr[data-roworder="' + soid + '"]');
+      if (!tr) { toast("That order is in a collapsed group on this page", true); return; }
+      tr.scrollIntoView({ block: "center" }); tr.classList.add("row-flash"); setTimeout(function () { tr.classList.remove("row-flash"); }, 1800);
+    }, 60);
+    return;
+  }
+  var t = e.target.closest("button"); if (!t) return;
+  if (t.id === "hdr-new-order") { newOrderModal(); return; }
+  if (t.id === "no-ext") { newExternalModal(); return; }
+  if (t.id === "no-bag") { newBagPanel(); return; }
+  if (t.id === "no-back") { newOrderModal(); return; }
+  if (t.id === "no-xfer") { closeModal(); addTransferOrder(); return; }
+  if (t.id === "no-ext-upload") { closeModal(); $("#file-ratecon").click(); return; }
+  if (t.id === "no-ext-paste") { closeModal(); pasteLoadModal(); return; }
+  if (t.id === "no-ext-blank") {
+    closeModal();
+    api("order", { kind: "external" }).then(function (o) {
+      return reload().then(function () { openOrder(o.id); toast("New order — fill it in"); });
+    }).catch(function (err) { toast(err.message, true); });
+    return;
+  }
+  if (t.id === "no-bag-go") newBagGo();
+});
+document.addEventListener("keydown", function (e) { if (e.key === "Enter" && e.target && e.target.id === "no-bag-num") { e.preventDefault(); newBagGo(); } });
+
 /* Paste Load Info — most loads arrive as an email, not a PDF. Paste the email (or any text with the load on it);
    it goes through the same reader and fills an order the same way, with the same tags. */
 function pasteLoadModal() {
@@ -7848,7 +8106,7 @@ function addBagOrderNumber() {
   // today's real-world month under whichever year the picker is on (same
   // YEAR-picker-scoped behavior the old month-group version already had).
   return api("internal-order", { month: TODAY.slice(5, 7) + String(YEAR) })
-    .then(reload).then(function () { toast("Order number reserved"); })
+    .then(function () { AUTOSTAGE_OFF = true; return reload(); }).then(function () { toast("Order number reserved"); })
     .catch(function (err) { toast(err.message, true); });
 }
 function addTransferOrder() {
@@ -8650,7 +8908,7 @@ document.addEventListener("click", function (e) {
         // chips over to the truck's driver-color tint (pushColorFor); reload so
         // the Scheduler/Current Week/Driver Tabs show it right away.
         return reload().then(function () {
-          DRIVER_SIG = "x"; loadDriverActivity(); PUB.at = 0; PUB.n = 0;
+          DRIVER_SIG = "x"; loadDriverActivity(); PUB.at = 0; PUB.n = 0; PUB.dirty = {};
           toast("Schedule published · " + r.pushed.length + " driver tab(s)");
         });
       })
@@ -8673,7 +8931,7 @@ document.addEventListener("click", function (e) {
     var xn = parseInt($('#modal [data-cf="count"]').value, 10);
     if (!xn || xn < 1) { toast("Enter how many orders to add", true); return; }
     api("order/transfer", { count: xn }).then(function (r) {
-      closeModal();
+      closeModal(); AUTOSTAGE_OFF = true;
       return reload().then(function () { toast(r.created + " orders added"); });
     }).catch(function (err) { toast(err.message, true); });
     return;
@@ -8713,7 +8971,7 @@ document.addEventListener("click", function (e) {
     if (!be || be < bs) { toast("Enter an ending number at or after the starting number", true); return; }
     api("internal-order", { month: bm + by, count: be - bs + 1, start: bs }).then(function (r) {
       if (availableYears().indexOf(+by) >= 0) YEAR = +by;  // jump to the year we just filled
-      closeModal();
+      closeModal(); AUTOSTAGE_OFF = true;
       return reload().then(function () {
         toast(r.created + " numbers reserved (" + r.first + "…" + r.last + ")");
       });
