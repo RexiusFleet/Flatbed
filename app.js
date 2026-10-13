@@ -5914,6 +5914,17 @@ function subsOf(s) {
 }
 var RAIL_ON = { sched: 1, int: 1, xfer: 1, ext: 1, cw: 1, driver: 1 };
 
+var RAIL_SHUT = (function () { try { return JSON.parse(localStorage.getItem("railShut") || "{}") || {}; } catch (e) { return {}; } })();
+function railToggleGroup(name) {
+  RAIL_SHUT[name] = !RAIL_SHUT[name]; if (!RAIL_SHUT[name]) delete RAIL_SHUT[name];
+  try { localStorage.setItem("railShut", JSON.stringify(RAIL_SHUT)); } catch (e) { /* not saved on this device */ }
+  renderRail();
+}
+document.addEventListener("click", function (e) { var g = e.target.closest && e.target.closest(".rail-div[data-railgrp]"); if (g) railToggleGroup(g.getAttribute("data-railgrp")); });
+document.addEventListener("keydown", function (e) {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  var g = e.target.closest && e.target.closest(".rail-div[data-railgrp]"); if (g) { e.preventDefault(); railToggleGroup(g.getAttribute("data-railgrp")); }
+});
 function renderRail() {
   var list = STAGED.filter(function (id) {
     if (!Q) return true;
@@ -5928,9 +5939,12 @@ function renderRail() {
     groups[o.is_transfer ? 2 : isExt(o) ? 0 : 1][1].push(id);
   });
   $("#rail").innerHTML = list.length ? groups.filter(function (g) { return g[1].length; }).map(function (g) {
-    return '<div class="rail-div"><span>' + esc(g[0]) + "</span></div>" + g[1].map(function (id) {
-      return chipHtml(order(id), true, 'data-from="STAGE"');
-    }).join("");
+    var shut = !!RAIL_SHUT[g[0]];
+    // Click the label to fold the group away; a folded group shows just how many are inside.
+    return '<div class="rail-div' + (shut ? " shut" : "") + '" data-railgrp="' + esc(g[0]) + '" role="button" tabindex="0" aria-expanded="' + !shut +
+      '" title="' + (shut ? "Show" : "Hide") + " " + esc(g[0]) + '"><span>' + esc(g[0]) + "</span>" + (shut ? '<b class="rail-ct">' + g[1].length + "</b>" : "") +
+      '<i class="rail-arr">' + (shut ? "&darr;" : "&uarr;") + "</i></div>" +
+      (shut ? "" : g[1].map(function (id) { return chipHtml(order(id), true, 'data-from="STAGE"'); }).join(""));
   }).join("") : emptyStateHtml(Q ? "No matches for “" + Q + "”" : "Nothing staged");
   $("#stage-ct").textContent = STAGED.length;
 }
@@ -7156,7 +7170,7 @@ function handleRowSel(td, e) {
   if (e.shiftKey && ROWSEL_ANCHOR[grid] && ids.indexOf(ROWSEL_ANCHOR[grid]) >= 0) {
     var a = ids.indexOf(ROWSEL_ANCHOR[grid]), b = ids.indexOf(id);
     sel = ids.slice(Math.min(a, b), Math.max(a, b) + 1);
-  } else if (e.metaKey || e.ctrlKey) {
+  } else if (e.metaKey || e.ctrlKey || e.altKey) {
     var i = sel.indexOf(id);
     if (i >= 0) sel.splice(i, 1); else sel.push(id);
     ROWSEL_ANCHOR[grid] = id;
@@ -7862,6 +7876,62 @@ document.addEventListener("click", function (e) {
   if (t.id === "no-bag-go") newBagGo();
 });
 document.addEventListener("keydown", function (e) { if (e.key === "Enter" && e.target && e.target.id === "no-bag-num") { e.preventDefault(); newBagGo(); } });
+
+/* ── Billing queue: drag over rows to tick them (or untick, if the row you started on was ticked), like a spreadsheet.
+   Shift-click ticks everything between the last row you clicked and this one. The checkboxes still work on their own. ── */
+var BDRAG = null, BILL_LAST = null;
+function billRows(tr) { return [].slice.call(tr.closest("tbody").querySelectorAll("tr.bill-row")); }
+function billRowAt(rows, y) {
+  if (y <= rows[0].getBoundingClientRect().top) return 0;
+  for (var i = 0; i < rows.length; i++) { var r = rows[i].getBoundingClientRect(); if (y >= r.top && y <= r.bottom) return i; }
+  return rows.length - 1;
+}
+function billSet(tr, on) {
+  var cb = tr.querySelector("[data-group]"); if (!cb || cb.checked === on) return;
+  cb.checked = on; cb.dispatchEvent(new Event("change", { bubbles: true }));
+}
+function billApply(B) {
+  var cur = billRowAt(B.rows, B.lastY), lo = Math.min(B.a, cur), hi = Math.max(B.a, cur);
+  B.rows.forEach(function (tr, i) { billSet(tr, i >= lo && i <= hi ? B.state : B.orig[i]); });
+}
+function billScroller(tr) {
+  for (var el = tr.closest(".grid-wrap"); el; el = el.parentElement && el.parentElement.closest(".grid-wrap")) if (el.scrollHeight > el.clientHeight + 2) return el;
+  return tr.closest(".grid-wrap");
+}
+document.addEventListener("pointerdown", function (e) {
+  if (e.pointerType === "touch" || (e.button !== 0 && e.pointerType === "mouse")) return;
+  var tr = e.target.closest && e.target.closest("tr.bill-row"); if (!tr) return;
+  var rows = billRows(tr), a = rows.indexOf(tr), cb = tr.querySelector("[data-group]"); if (!cb) return;
+  if (e.shiftKey && BILL_LAST != null && rows[BILL_LAST]) {   // shift-click: the whole stretch in between
+    e.preventDefault();
+    var lo = Math.min(BILL_LAST, a), hi = Math.max(BILL_LAST, a), st = rows[BILL_LAST].querySelector("[data-group]").checked;
+    rows.forEach(function (r, i) { if (i >= lo && i <= hi) billSet(r, st); });
+    return;
+  }
+  if (e.target.closest("button,a,select,textarea,.bill-x,[data-open],input:not([data-group])")) return;   // those keep their own clicks
+  if ((e.metaKey || e.ctrlKey || e.altKey) && e.target !== cb) { e.preventDefault(); BILL_LAST = a; billSet(tr, !cb.checked); return; }   // one row at a time
+  BILL_LAST = a;
+  BDRAG = { rows: rows, a: a, state: !cb.checked, orig: rows.map(function (r) { return r.querySelector("[data-group]").checked; }),
+    scroller: billScroller(tr), lastX: e.clientX, lastY: e.clientY, x0: e.clientX, y0: e.clientY, moved: false, timer: 0, onCheckbox: e.target === cb };
+}, true);
+document.addEventListener("pointermove", function (e) {
+  var B = BDRAG; if (!B) return;
+  B.lastX = e.clientX; B.lastY = e.clientY;
+  if (!B.moved) {
+    if (Math.abs(e.clientY - B.y0) < 5) return;
+    B.moved = true; document.body.classList.add("bill-dragging");
+    B.timer = setInterval(function () { if (BDRAG && edgeAutoScroll(B.scroller, B.lastX, B.lastY)) billApply(B); }, 16);
+  }
+  e.preventDefault(); billApply(B);
+}, true);
+function billDragEnd() {
+  var B = BDRAG; if (!B) return;
+  clearInterval(B.timer); document.body.classList.remove("bill-dragging");
+  BDRAG = null;
+  if (B.moved) { var swallow = function (ev) { ev.stopPropagation(); ev.preventDefault(); }; document.addEventListener("click", swallow, true); setTimeout(function () { document.removeEventListener("click", swallow, true); }, 0); }
+}
+document.addEventListener("pointerup", billDragEnd, true);
+document.addEventListener("pointercancel", billDragEnd, true);
 
 /* Paste Load Info — most loads arrive as an email, not a PDF. Paste the email (or any text with the load on it);
    it goes through the same reader and fills an order the same way, with the same tags. */
@@ -10309,6 +10379,26 @@ function selStart(e) {
   if (e.target.closest(".col-resize")) return;   // column resize owns this drag (D85)
   if (e.target.closest("#fillhandle")) return;   // fill-handle drag owns this (D118)
   if (e.target.closest("th[data-colref],.col-plus-h")) return; // header click/drag owns this
+  // Cmd / Ctrl / Option held: add or remove single cells without losing the rest (drag to add a block). Any grid, any page.
+  if ((e.metaKey || e.ctrlKey || e.altKey) && !e.shiftKey) {
+    var atd = e.target.closest("td[data-key],td[data-field]"), awrap = e.target.closest(".grid-wrap");
+    if (atd && awrap && gridSelCells(awrap).length && !e.target.closest("input,textarea,select,button,a,.cell-input,[data-rowsel],th,.col-resize,#fillhandle,#palette,#ctxmenu,#drawer,.fmtbar,header")) {
+      if (typeof EDITING !== "undefined" && EDITING && EDITING.td !== atd) commitEdit();
+      var base = SELSET.length ? SELSET.slice() : (SEL && awrap.contains(SEL) ? [SEL] : []);
+      var bi = base.indexOf(atd);
+      if (bi >= 0) base.splice(bi, 1); else base.push(atd);
+      SEL_ANCHOR = atd;
+      if (SEL) { SEL.classList.remove("sel"); SEL = null; }
+      if (base.length === 1) { setSel([]); selectCell(base[0]); }
+      else if (base.length === 0) clearMulti();
+      else setSel(base);
+      if (!e.target.closest(".chip")) e.preventDefault();   // a chip keeps its own drag
+      MARQ = { x0: e.clientX, y0: e.clientY, sx0: awrap.scrollLeft, sy0: awrap.scrollTop, wrap: awrap, moved: false, box: null, lastX: e.clientX, lastY: e.clientY,
+               add: base.slice(), scrollTimer: setInterval(marqueeAutoScrollTick, 16) };
+      if (e.target.closest(".chip")) { clearInterval(MARQ.scrollTimer); MARQ = null; }
+      return;
+    }
+  }
   // A chip drag or any other control click means the user moved on — drop the
   // marquee so the next format doesn't hit stale cells (D82).
   if (e.target.closest(".chip")) { clearMulti(); return; }   // chip drag wins
@@ -10340,7 +10430,7 @@ function selStart(e) {
     selectCell(td);
   }
   e.preventDefault();                                // stops native text-select / drag
-  MARQ = { x0: e.clientX, y0: e.clientY, wrap: wrap, moved: false, box: null, lastX: e.clientX, lastY: e.clientY,
+  MARQ = { x0: e.clientX, y0: e.clientY, sx0: wrap.scrollLeft, sy0: wrap.scrollTop, wrap: wrap, moved: false, box: null, lastX: e.clientX, lastY: e.clientY,
            scrollTimer: setInterval(marqueeAutoScrollTick, 16) };
 }
 function selMove(e) {
@@ -10348,13 +10438,15 @@ function selMove(e) {
   MARQ.lastX = e.clientX; MARQ.lastY = e.clientY;
   if (!MARQ.moved && Math.abs(e.clientX - MARQ.x0) + Math.abs(e.clientY - MARQ.y0) < 4) return;
   MARQ.moved = true; e.preventDefault();
+  var an = marqAnchor();
   drawMarquee(e.clientX, e.clientY);
-  setSel(boxTds(MARQ.wrap, MARQ.x0, MARQ.y0, e.clientX, e.clientY));
+  setSel(marqCells(an));
 }
 function drawMarquee(x1, y1) {
   if (!MARQ.box) { killMarquee(); MARQ.box = document.createElement("div"); MARQ.box.className = "marquee"; document.body.appendChild(MARQ.box); }
-  var x = Math.min(x1, MARQ.x0), y = Math.min(y1, MARQ.y0),
-      w = Math.abs(x1 - MARQ.x0), h = Math.abs(y1 - MARQ.y0);
+  var an = marqAnchor(), vr = MARQ.wrap.getBoundingClientRect();
+  var ax = Math.max(vr.left, Math.min(vr.right, an.x)), ay = Math.max(vr.top, Math.min(vr.bottom, an.y));
+  var x = Math.min(x1, ax), y = Math.min(y1, ay), w = Math.abs(x1 - ax), h = Math.abs(y1 - ay);
   MARQ.box.style.cssText = "position:fixed;left:" + x + "px;top:" + y + "px;width:" + w + "px;height:" + h + "px";
 }
 /* Drag near the edge of a scroll container and it keeps scrolling (Nate's
@@ -10372,27 +10464,36 @@ function drawMarquee(x1, y1) {
 var GRID_SCROLL_EDGE = 28, GRID_SCROLL_SPEED = 14;
 function edgeAutoScroll(wrap, x, y) {
   var r = wrap.getBoundingClientRect();
-  if (x < r.left || x > r.right) return false;
   if (y < r.top + GRID_SCROLL_EDGE && wrap.scrollTop > 0) {
-    wrap.scrollTop = Math.max(0, wrap.scrollTop - GRID_SCROLL_SPEED); return true;
+    wrap.scrollTop = Math.max(0, wrap.scrollTop - (GRID_SCROLL_SPEED + Math.min(60, Math.max(0, r.top + GRID_SCROLL_EDGE - y) / 2))); return true;
   }
   if (y > r.bottom - GRID_SCROLL_EDGE && wrap.scrollTop + wrap.clientHeight < wrap.scrollHeight) {
-    wrap.scrollTop = Math.min(wrap.scrollHeight - wrap.clientHeight, wrap.scrollTop + GRID_SCROLL_SPEED); return true;
+    wrap.scrollTop = Math.min(wrap.scrollHeight - wrap.clientHeight, wrap.scrollTop + GRID_SCROLL_SPEED + Math.min(60, Math.max(0, y - (r.bottom - GRID_SCROLL_EDGE)) / 2)); return true;
   }
   return false;
+}
+// Where the drag started, on screen right now: it moves up as the grid scrolls down, so rows that scroll out of view stay selected.
+function marqAnchor() { return { x: MARQ.x0 + (MARQ.sx0 - MARQ.wrap.scrollLeft), y: MARQ.y0 + (MARQ.sy0 - MARQ.wrap.scrollTop) }; }
+// The cells the drag covers, plus whatever was already picked when Cmd / Ctrl / Option was held.
+function marqCells(a) {
+  var box = boxTds(MARQ.wrap, a.x, a.y, MARQ.lastX, MARQ.lastY);
+  if (!MARQ.add) return box;
+  var out = MARQ.add.slice(); box.forEach(function (td) { if (out.indexOf(td) < 0) out.push(td); });
+  return out;
 }
 function marqueeAutoScrollTick() {
   if (!MARQ || !MARQ.moved) return;
   if (edgeAutoScroll(MARQ.wrap, MARQ.lastX, MARQ.lastY)) {
+    var a = marqAnchor();
     drawMarquee(MARQ.lastX, MARQ.lastY);
-    setSel(boxTds(MARQ.wrap, MARQ.x0, MARQ.y0, MARQ.lastX, MARQ.lastY));
+    setSel(marqCells(a));
   }
 }
 function endMarquee() {
   if (!MARQ) return;
   clearInterval(MARQ.scrollTimer);
   killMarquee();
-  if (!MARQ.moved) setSel([]);                       // keep the plain-click single cell
+  if (!MARQ.moved && !MARQ.add) setSel([]);          // keep the plain-click single cell (a Cmd/Ctrl/Option click keeps its set)
   MARQ = null;
 }
 /* ── Fill handle (D118) — Excel-style drag-to-fill ───────────────────────────
