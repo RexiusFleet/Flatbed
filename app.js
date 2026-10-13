@@ -5103,7 +5103,7 @@ function motDownloadAll() {
   busyStart("Reading every saved Motive day…");
   motLoad("2000-01-01", "2100-12-31").then(function () {
     var keys = Object.keys(MOT.rows).sort(function (a, b) { var x = a.split("|"), y = b.split("|"); return x[1] < y[1] ? -1 : x[1] > y[1] ? 1 : x[0].localeCompare(y[0]); });
-    var when = function (iso) { if (!iso) return ""; var d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString([], { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" }); };
+    var when = function (iso) { if (!iso) return ""; var d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString("en-US", { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }); };
     var out = [["Date", "Truck", "Drivers", "Start odometer", "End odometer", "Miles", "First on", "Last off", "Hours", "Bag order miles", "Internal freight miles", "External miles", "Typed miles over Motive total", "Saved from Motive at"]];
     keys.forEach(function (k) {
       var r = MOT.rows[k], b = motBuckets(r.truck_number, String(r.day).slice(0, 10));
@@ -5911,7 +5911,7 @@ function motBuckets(truck, day) {
   var rest = T == null ? null : T - bag - intf;
   return { total: T, bag: bag, intf: intf, ext: rest == null ? null : Math.max(0, rest), over: rest != null && rest < 0 ? -rest : 0, extOrders: ext };
 }
-function motFmtTime(iso) { if (!iso) return "—"; var d = new Date(iso); return isNaN(d) ? "—" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+function motFmtTime(iso) { if (!iso) return "—"; var d = new Date(iso); return isNaN(d) ? "—" : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }); }   // 24-hour, e.g. 06:45 and 17:30
 function motTruckDriver(truck) { var t = (DB.trucks || []).filter(function (x) { return String(x.number) === String(truck); })[0]; return t && t.driver_name || ""; }
 function motFreightCost(miles) {
   var cfg = DB.internal_freight_rate || {}, r = Number(cfg.rate_per_mile) || 0, mn = Number(cfg.minimum_charge) || 0;
