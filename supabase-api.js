@@ -382,7 +382,7 @@ var REPORT_LABELS = {
 var REPORT_ORDER = ["orders", "loads", "missing_pod", "customers", "brokers", "fleet",
                     "customer_order_counts", "documents", "dump", "freight", "mileage"];
 function csvOf(rep, labels) {
-  var rows = rep && rep.rows, numeric = {};
+  var rows = rep && rep.rows && rep.rows.filter(function (r) { return r.stage !== "cancelled"; }), numeric = {};   // cancelled orders are never exported
   if (!rows || !rows.length) return "";
   (rep.numeric_columns || []).forEach(function (c) { numeric[c] = true; });
   var cols = Object.keys(rows[0]); labels = labels || {};
@@ -539,10 +539,11 @@ function addRateColumns(d) {
     return d;
   }).catch(function () { return d; });
 }
-// ...and the rate con autofill markers.
+// ...and the autofill field, which now holds the shared Staging mark ({ _staged: <place in line> }). Read fresh on every load, because
+// a row someone else changed arrives without it and the Staging rail has to match what they did.
 function addAutofillColumn(d) {
   var orders = d && d.orders;
-  if (!orders || !orders.length || "autofill" in orders[0]) return d;
+  if (!orders || !orders.length) return d;
   return rest("GET", "orders?select=id,autofill&autofill=not.is.null").then(function (rows) {
     var byId = {}; (rows || []).forEach(function (r) { byId[r.id] = r.autofill; });
     orders.forEach(function (o) { o.autofill = byId[o.id] || null; });
@@ -664,8 +665,30 @@ var ROUTES = {
   "sync-delivery-dates": viaRpc("api_sync_delivery_dates"),
   // The Reports data: api_report_rows (adds the order id, rate and backhaul columns) once its SQL has been run,
   // otherwise the plain Export Everything report.
+  // Live updates: look for what someone else changed since the last fetch (the History log), fold it into the kept copy, and say
+  // whether anything changed and which orders. The app then redraws from that copy (a normal "bootstrap").
+  "bootstrap/poll": function () {
+    if (LEGACY_BOOT || !BOOT || BOOT_DIRTY) return Promise.resolve({ changed: false, orders: [] });
+    var before = BOOT.cursor;
+    return rpc("api_bootstrap_since", { d: { since: before } }).then(function (res) {
+      if (res.full) return bootFull().then(function () { return { changed: true, orders: [], all: true }; });
+      var ids = {}, any = false;
+      BIG_TABLES.forEach(function (k) {
+        var rows = unpack(res[k]), gone = (res.deleted && res.deleted[k]) || [];
+        if (rows.length || gone.length) any = true;
+        if (k === "orders") { rows.forEach(function (r) { ids[r.id] = 1; }); gone.forEach(function (id) { ids[id] = 1; }); }
+        mergeRows(k, rows, gone);
+      });
+      Object.assign(BOOT.data, res.small || {});
+      if (res.cursor !== before) any = true;      // something was logged (even if only a small table changed)
+      BOOT.cursor = res.cursor;
+      return { changed: any, orders: Object.keys(ids) };
+    });
+  },
   "report-rows": function () {
-    return rpc("api_report_rows", {}).catch(function () { return rpc("api_report", { p_name: "dump", p_from: null, p_to: null }); });
+    // Cancelled orders stay on file but are never counted in any report.
+    return rpc("api_report_rows", {}).catch(function () { return rpc("api_report", { p_name: "dump", p_from: null, p_to: null }); })
+      .then(function (j) { if (j && j.rows) j.rows = j.rows.filter(function (r) { return r.stage !== "cancelled"; }); return j; });
   },
   "saved-report/list": viaRpc("api_saved_report_list"),
   "saved-report": viaRpc("api_saved_report_save"),
@@ -788,7 +811,7 @@ function api(path, body) {
     .catch(function (err) {
       // A failed save may leave something on screen that didn't stick; make
       // the next load a complete one so the screen matches the database.
-      if (route !== "bootstrap") BOOT_DIRTY = true;
+      if (route !== "bootstrap" && route !== "bootstrap/poll") BOOT_DIRTY = true;
       throw err;
     });
 }

@@ -1977,3 +1977,33 @@ body.bill-dragging{user-select:none;-webkit-user-select:none;cursor:ns-resize}
 .rail-div .rail-ct{font:700 var(--fs-caption)/1 var(--mono);letter-spacing:0;background:var(--panel-2);color:var(--ink);border:1px solid var(--rule-2);border-radius:var(--r-sm);padding:2px 6px}
 .rail-div .rail-arr{order:3;font-style:normal;font-size:var(--fs-body-sm);letter-spacing:0}
 .rail-div::after{order:2}
+
+/* Side window Actions bar: a darker band; click anywhere on its label row to fold it. The buttons live in the folding part. */
+.dw-actbar{margin:4px -14px -12px;background:var(--sunk);border-top:1px solid var(--rule-2);box-shadow:inset 0 3px 6px -3px rgba(0,0,0,.14)}
+.dw-acthead{position:relative;display:flex;align-items:center;justify-content:flex-start;width:100%;height:24px;padding:0 14px;border:0;background:none;color:var(--ink-2);cursor:pointer;
+  font:700 var(--fs-caption)/1 var(--mono);letter-spacing:.14em;text-transform:uppercase}
+.dw-acthead:hover{color:var(--ink)}
+.dw-acthead .arr{position:absolute;left:50%;top:50%;transform:translate(-50%,-52%);font-style:normal;font-size:var(--fs-body);line-height:1;letter-spacing:0;color:var(--ink)}
+.dw-actfold{display:grid;grid-template-rows:1fr;transition:grid-template-rows var(--motion-panel,.22s) var(--ease-ui,ease)}
+.dw-actbar.shut .dw-actfold{grid-template-rows:0fr}
+.dw-actfold>div{overflow:hidden;min-height:0}
+.dw-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 14px 10px}
+/* Delete: solid red with white text, the same in every theme. */
+.btn.del{background:#c42b2b;border-color:#c42b2b;color:#fff;box-shadow:0 1px 2px rgba(196,43,43,.35)}
+.btn.del:hover:not(:disabled){background:#d63636;border-color:#d63636;color:#fff;box-shadow:0 3px 9px rgba(196,43,43,.4)}
+.btn.del:active:not(:disabled){background:#a82323;border-color:#a82323}
+
+/* Review window for a rate con / pasted load. */
+.af-review .fields{margin:0 0 12px}
+.af-review input{background:var(--panel);border:1px solid var(--rule-2);border-radius:var(--r-sm);padding:5px 8px;font-size:var(--fs-body-sm);color:var(--ink);width:100%;box-sizing:border-box}
+.af-review input:focus{border-color:var(--focus);outline:none}
+.af-review input.afr-check{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,var(--panel))}
+.afr-intro{font-size:var(--fs-label);color:var(--ink-3);margin:0 0 10px}
+.afr-hint{font-size:var(--fs-label);color:var(--ink-3);margin-top:3px;min-height:1px}
+.afr-stop{margin:0 0 10px}
+.afr-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.afr-row2{grid-column:1/-1;display:grid;grid-template-columns:70px 110px 1fr;gap:6px}
+
+/* Paperwork dashes in the order side window (same bars as the Billing queue), where the "Missing:" line used to be. */
+.dw-pw{display:flex;align-items:center;gap:12px;margin-top:8px}
+.dw-pw-l{font:600 var(--fs-caption)/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}

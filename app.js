@@ -1178,6 +1178,51 @@ function loadDriverActivity() {
 var ACT_BUSY = false;
 function actPoll() { if (document.hidden || ACT_BUSY) return; ACT_BUSY = true; loadDriverActivity().then(function () { ACT_BUSY = false; }, function () { ACT_BUSY = false; }); }
 setInterval(actPoll, 15000);
+
+/* ── Live updates (two dispatchers on one dashboard) ─────────────────────────────────────────────────────
+   Every few seconds the dashboard asks Supabase what changed since its last fetch (the same History-log call a normal save uses).
+   If someone else changed something, it redraws from the merged copy, but only when you are not in the middle of something
+   (typing, a drag, a popup): a waiting update is applied the moment you are idle. The order open in the side window is refreshed
+   too, or closed if someone deleted it. */
+var LIVE = { busy: false, pending: false, ids: {}, drag: false, ms: 4000 };
+document.addEventListener("dragstart", function () { LIVE.drag = true; }, true);
+document.addEventListener("dragend", function () { LIVE.drag = false; }, true);
+document.addEventListener("drop", function () { setTimeout(function () { LIVE.drag = false; }, 0); }, true);
+function liveBusy() {
+  var a = document.activeElement;
+  // A text box with something typed in it that isn't saved yet is off limits; one you only clicked into is not.
+  if (a && /^(INPUT|TEXTAREA)$/.test(a.tagName) && a.type !== "checkbox" && a.type !== "radio" && a.type !== "button" && a.type !== "submit" &&
+      (a.value !== a.defaultValue || a.classList.contains("cell-input"))) return true;
+  if (a && a.isContentEditable) return true;
+  if (LIVE.drag) return true;
+  if (typeof EDITING !== "undefined" && EDITING) return true;
+  if ((typeof MARQ !== "undefined" && MARQ) || (typeof FILL !== "undefined" && FILL) || (typeof NOTEDRAG !== "undefined" && NOTEDRAG) ||
+      (typeof ROWDRAG !== "undefined" && ROWDRAG) || (typeof BDRAG !== "undefined" && BDRAG)) return true;
+  var m = document.getElementById("modal"); if (m && m.classList.contains("on")) return true;
+  if (typeof PN_OPEN !== "undefined" && PN_OPEN) return true;
+  return false;
+}
+function liveApply() {
+  var ids = LIVE.ids; LIVE.pending = false; LIVE.ids = {};
+  AUTOSTAGE_OFF = true;          // other people's new orders are not staged on this screen
+  return reload().then(function () {
+    if (!DRAWER_OID) return;
+    if (!order(DRAWER_OID)) { closeDrawer(); toast("That order was deleted by someone else", true); return; }
+    if (ids[DRAWER_OID] || ids.__all) openOrder(DRAWER_OID);
+  });
+}
+function livePoll() {
+  if (LIVE.busy || document.hidden || typeof DB === "undefined" || !DB || !DB.orders) return;
+  LIVE.busy = true;
+  api("bootstrap/poll").then(function (r) {
+    if (r && r.changed) { LIVE.pending = true; if (r.all) LIVE.ids.__all = true; (r.orders || []).forEach(function (id) { LIVE.ids[id] = true; }); }
+    if (LIVE.pending && !liveBusy()) return liveApply();
+  }).catch(function () { /* offline or signed out: try again next time */ }).then(function () { LIVE.busy = false; });
+}
+setInterval(livePoll, LIVE.ms);
+document.addEventListener("visibilitychange", function () { if (!document.hidden) livePoll(); });
+window.addEventListener("focus", livePoll);
+
 document.addEventListener("visibilitychange", actPoll);
 window.addEventListener("focus", actPoll);
 /* Driver scans section in the order drawer. A scan always stays on file on
@@ -1984,18 +2029,63 @@ function refreshOrderDrawerAfterSave(saveOid) {
    order trackers' numbered-gutter multi-select, which covers a single
    order the same way (select one row) plus real multi-select. */
 function orderPageBtn(oid) { return '<button class="btn sm" data-showorder="' + oid + '">Show On Order Page &rarr;</button>'; }
+// The Actions bar starts folded for every order you open, and stays however you left it while you work in that order.
+var DW_ACT_SHUT = true, DW_ACT_FOR = null;
+// Top of the side window: the order's status and date.
 function schedBar(oid) {
   var o = order(oid); if (!o) return "";
-  var ds = schedDateForOrder(oid);
-  var controls = stageControls(o, !!ds, false);
-  if (ds) return '<div class="dw-sched">' + controls +
-    '<span style="font-size:var(--fs-label);color:var(--ink-3);margin-left:2px">' + esc(prettyDate(ds)) + "</span>" +
-    '<button class="btn sm" data-showsched="' + oid + '" data-schedds="' + ds + '">Show On Scheduler &rarr;</button>' + orderPageBtn(oid) +
-    "</div>";
-  if (STAGED.indexOf(oid) >= 0) return '<div class="dw-sched">' + controls +
-    '<span style="font-size:var(--fs-label);color:var(--ink-3)">In the staging rail — not on the board yet.</span>' + orderPageBtn(oid) + "</div>";
-  return '<div class="dw-sched">' + controls + orderPageBtn(oid) + "</div>";
+  var ds = schedDateForOrder(oid), controls = stageControls(o, !!ds, false);
+  return '<div class="dw-sched">' + controls +
+    (ds ? '<span style="font-size:var(--fs-label);color:var(--ink-3);margin-left:2px">' + esc(prettyDate(ds)) + "</span>"
+      : STAGED.indexOf(oid) >= 0 ? '<span style="font-size:var(--fs-label);color:var(--ink-3)">In the staging rail — not on the board yet.</span>' : "") + "</div>";
 }
+// Very bottom of the side window, under the documents and download buttons: the Actions bar (click anywhere on its label row to open it downward).
+function actionsBar(oid) {
+  var o = order(oid); if (!o) return "";
+  if (DW_ACT_FOR !== oid) { DW_ACT_FOR = oid; DW_ACT_SHUT = true; }
+  var ds = schedDateForOrder(oid), canDel = canDeleteOrder(o);
+  return '<div class="dw-actbar' + (DW_ACT_SHUT ? " shut" : "") + '" id="dw-actbar"><button type="button" class="dw-acthead" data-actbar="1" aria-expanded="' + !DW_ACT_SHUT + '">' +
+    '<span>Actions</span><i class="arr">' + (DW_ACT_SHUT ? "&darr;" : "&uarr;") + '</i></button>' +
+    '<div class="dw-actfold"><div><div class="dw-actions">' +
+    (ds ? '<button class="btn sm" data-showsched="' + oid + '" data-schedds="' + ds + '">Show On Scheduler &rarr;</button>' : "") + orderPageBtn(oid) +
+    '<span style="flex:1"></span><button class="btn del sm" data-delorder="' + oid + '"' + (canDel ? "" : ' disabled title="Billed external orders and delivered bag orders with an order number stay on file"') + ">Delete</button></div></div></div></div>";
+}
+document.addEventListener("click", function (e) {
+  var h = e.target.closest("[data-actbar]"); if (!h) return;
+  DW_ACT_SHUT = !DW_ACT_SHUT;
+  var bar = h.closest(".dw-actbar"); bar.classList.toggle("shut", DW_ACT_SHUT);
+  h.setAttribute("aria-expanded", !DW_ACT_SHUT); h.querySelector(".arr").innerHTML = DW_ACT_SHUT ? "&darr;" : "&uarr;";
+  if (!DW_ACT_SHUT) setTimeout(function () { var body = bar.closest(".dw-body"); if (body) body.scrollTo({ top: body.scrollHeight, behavior: "smooth" }); }, 230);
+});
+/* Delete from the side window: asks first, and offers Cancel Order instead, which keeps the order on file (off the Scheduler, Staging
+   and every report) so it can be restored later. */
+function delOrderModal(oid) {
+  var o = order(oid); if (!o) return;
+  if (!canDeleteOrder(o)) { toast("That order stays on file: it can't be deleted", true); return; }
+  var name = o.rexius_order_no || o.broker_load_no || buildChip(o).title || "this order", canCx = canCancelOrder(o);
+  openModal('<div class="modal-hd"><h2>Delete this order?</h2></div><div class="modal-body">' +
+    '<p style="line-height:1.5;margin:0 0 10px">Deleting <b>' + esc(name) + "</b> permanently removes it, its place on the Scheduler, and its documents. This cannot be undone.</p>" +
+    (canCx ? '<p style="line-height:1.5;margin:0;color:var(--ink-2)">Want to keep the data? <b>Cancel the order</b> instead: it stays on file, comes off the Scheduler and Staging, is not counted in any report, and can be restored later.</p>' : "") +
+    '</div><div class="modal-ft"><button class="btn" id="modal-cancel">Never Mind</button><span style="flex:1"></span>' +
+    (canCx ? '<button class="btn bad" id="del-order-cx" data-oid="' + oid + '">Cancel Order</button>' : "") +
+    '<button class="btn del" id="del-order-go" data-oid="' + oid + '">Delete Order</button></div>');
+}
+document.addEventListener("click", function (e) {
+  var b = e.target.closest("[data-delorder],#del-order-cx,#del-order-go"); if (!b) return;
+  if (b.hasAttribute("data-delorder")) { if (!b.disabled) delOrderModal(b.getAttribute("data-delorder")); return; }
+  var oid = b.getAttribute("data-oid"); b.disabled = true;
+  if (b.id === "del-order-cx") {
+    api("order/cancel", { id: oid, cancelled: true }).then(function () {
+      STAGED = STAGED.filter(function (x) { return x !== oid; }); closeModal(); return reload();
+    }).then(function () { if (DRAWER_OID === oid) openOrder(oid); toast("Order cancelled. It stays on file."); })
+      .catch(function (err) { toast(err.message, true); b.disabled = false; });
+  } else {
+    api("order/delete", { id: oid }).then(function () {
+      STAGED = STAGED.filter(function (x) { return x !== oid; }); closeModal(); closeDrawer(); return reload();
+    }).then(function () { toast("Order deleted"); })
+      .catch(function (err) { toast(err.message, true); b.disabled = false; });
+  }
+});
 function openInternalOrder(o) {
   var ch = buildChip(o), ds = docsFor(o.id);
   var have = {}; ds.forEach(function (d) { have[d.doc_type] = 1; });
@@ -2073,6 +2163,7 @@ function openInternalOrder(o) {
   h += '</div><div class="drop" id="dw-drop" style="margin-top:9px"><b>Drop documents here</b>' +
        "Delivery receipt, signed POD, invoice — stays linked to this order.</div></div>";
 
+  h += actionsBar(o.id);
   h += "</div>";
   setDrawerHtml(h);
   $("#drawer").classList.add("on"); $("#scrim").classList.add("on");
@@ -2146,10 +2237,8 @@ function afGet(o, key) {
   if (a.s === "missing") return afNorm(o[key]) === "" ? a : null;
   return afNorm(o[key]) === afNorm(a.v) ? a : null;
 }
-function afBadge(o, key) {
-  var a = afGet(o, key);
-  return a ? '<button type="button" class="af af-' + a.s + '" data-afdone="' + o.id + '|' + key + '" title="' + esc(AF_TIP[a.s]) + '">' + AF_LABEL[a.s] + "</button>" : "";
-}
+// The Auto / Check / Not Found tags are gone: a rate con or pasted load is reviewed in a window first, then filled in.
+function afBadge() { return ""; }
 function afDone(oid, key) {
   var o = order(oid); if (!o || !o.autofill) return;
   var next = Object.assign({}, o.autofill); delete next[key];
@@ -2202,47 +2291,26 @@ function afResolveStop(s) {
   return api("location", { name: s.name, address: s.address || null, city: s.city, state: s.state || null, postal_code: s.zip || null })
     .then(function (loc) { return { id: loc.id, conf: "check" }; });
 }
-/* Fill the blank boxes of an order from a parsed rate con and remember what was touched. Boxes that already
-   hold something are never changed. Returns the updated order and counts for the toast. */
+/* Fill the blank boxes of an order from a (reviewed) rate con. Boxes that already hold something are never changed. */
 function afApply(o, p) {
-  var rc = p.rc, c = rc.conf, body = {}, flags = Object.assign({}, o.autofill || {}), n = { ok: 0, check: 0, missing: 0 };
-  function mark(key, state, v) { flags[key] = state === "missing" ? { s: "missing" } : { s: state, v: v }; n[state]++; }
-  var created = o._match === "created";
-  function simple(key, val, conf, quiet) {
-    if (o[key] != null && o[key] !== "") {
-      // the new order was just created from these very values: tag them too
-      if (created && val != null && val !== "" && afNorm(o[key]) === afNorm(val)) mark(key, conf || "ok", val);
-      return;
-    }
-    if (val == null || val === "") { if (!quiet) mark(key, "missing"); return; }
-    body[key] = val; mark(key, conf || "ok", val);
-  }
-  simple("broker_load_no", p.load_no, c.load_no);
-  simple("po_number", p.po, c.po);
-  simple("rexius_order_no", p.solomon, "ok", true);   // rate cons never carry it, so no "not found" tag
-  if (created && o.broker_party_id && p.broker_id && o.broker_party_id === p.broker_id) mark("broker_party_id", p.broker_conf || "check", p.broker_id);
-  else if (!(o.broker_party_id)) { if (p.broker_id) { body.broker_party_id = p.broker_id; mark("broker_party_id", p.broker_conf || "check", p.broker_id); } else mark("broker_party_id", "missing"); }
-  if (o.external_rate == null || o.external_rate === "") {
-    if (p.rate == null) mark("external_rate", "missing");
-    else {
-      body.external_rate = p.rate; body.external_rate_source = "rate_con"; body.external_rate_original = p.rate;
-      mark("external_rate", p.rate > 3000 || p.rate < 150 ? "check" : (c.rate || "ok"), p.rate);
-    }
+  var body = {};
+  function simple(key, val) { if (o[key] != null && o[key] !== "") return; if (val == null || val === "") return; body[key] = val; }
+  simple("broker_load_no", p.load_no);
+  simple("po_number", p.po);
+  simple("rexius_order_no", p.solomon);
+  if (!o.broker_party_id && p.broker_id) body.broker_party_id = p.broker_id;
+  if ((o.external_rate == null || o.external_rate === "") && p.rate != null) {
+    body.external_rate = p.rate; body.external_rate_source = "rate_con"; body.external_rate_original = p.rate;
   }
   var work = [];
   [["pickup", "pickup_location_id", "pick_appt_text"], ["delivery", "delivery_location_id", "drop_appt_text"]].forEach(function (k) {
     var stop = p[k[0]];
-    if (!o[k[1]]) {
-      work.push(afResolveStop(stop).then(function (r) {
-        if (r) { body[k[1]] = r.id; mark(k[1], r.conf, r.id); } else mark(k[1], "missing");
-      }).catch(function () { mark(k[1], "missing"); }));
-    }
-    if (stop && stop.appt && !o[k[2]]) { body[k[2]] = stop.appt; mark(k[2], "check", stop.appt); }
+    if (!o[k[1]]) work.push(afResolveStop(stop).then(function (r) { if (r) body[k[1]] = r.id; }).catch(function () { /* leave it blank */ }));
+    if (stop && stop.appt && !o[k[2]]) body[k[2]] = stop.appt;
   });
   return Promise.all(work).then(function () {
-    body.id = o.id; body.autofill = flags;
-    return api("order/update", body);
-  }).then(function (row) { return { o: Object.assign(o, row || {}), n: n }; });
+    return Object.keys(body).length ? api("order/update", Object.assign({ id: o.id }, body)) : null;
+  }).then(function (row) { return { o: Object.assign(o, row || {}), n: {} }; });
 }
 function locCombo(oid, field, currentId, suggest) {
   var cur = currentId ? locById(currentId) : null;
@@ -2449,6 +2517,7 @@ function openTransferOrder(o) {
 
   // No Documents section on transfers — driver notes/scans go last.
   h += driverNotesHtml(o.id) + driverScansHtml(o.id);
+  h += actionsBar(o.id);
   h += "</div>";
   setDrawerHtml(h);
   $("#drawer").classList.add("on"); $("#scrim").classList.add("on");
@@ -2527,9 +2596,8 @@ function openOrder(oid) {
     h += '<div class="note-bar" style="margin-top:7px">' + deliveryCount + ' delivery stop' +
       (deliveryCount === 1 ? "" : "s") + ' — one combined POD or stop-specific PODs are both accepted.</div>';
   }
-  if (missing.length)
-    h += '<div style="margin-top:7px;font-size:var(--fs-label);color:var(--bad)">Missing: ' +
-         missing.map(function (m) { return m.replace("_", " "); }).join(", ") + "</div>";
+  h += '<div class="dw-pw"><span class="dw-pw-l">Paperwork</span><div class="bill-pw" role="img" aria-label="' +
+    (missing.length ? "Missing " + missing.map(function (m) { return m.replace("_", " "); }).join(", ") : "Rate con, POD and invoice on file") + '">' + paperworkBars(have) + "</div></div>";
   h += '<div class="drop" id="dw-drop" style="margin-top:9px"><b>Drop documents here</b>' +
        "Anything — POD, BOL, invoice, signed paperwork. Stays linked to this order.</div></div>";
 
@@ -2541,6 +2609,7 @@ function openOrder(oid) {
     '<button class="btn pri" data-pkg="merged">Download Merged</button>' +
     '<button class="btn" data-pkg="individual">Download Individually</button></div></div>';
 
+  h += actionsBar(oid);
   h += "</div>";
   setDrawerHtml(h);
   $("#drawer").classList.add("on"); $("#scrim").classList.add("on");
@@ -2722,7 +2791,7 @@ function setDrawerHtml(h) {
 }
 function closeDrawer() {
   $("#drawer").classList.remove("on"); $("#scrim").classList.remove("on");
-  $("#drawer").setAttribute("aria-hidden", "true"); DRAWER_OID = null; DRAWER_SHOWN = null; ROUTE_SEL = null;
+  $("#drawer").setAttribute("aria-hidden", "true"); DRAWER_OID = null; DRAWER_SHOWN = null; ROUTE_SEL = null; DW_ACT_FOR = null;
 }
 function packageDocs(oid) {
   var o = order(oid), ds = docsFor(oid);
@@ -2771,6 +2840,29 @@ function billDone(oid) {
     return;
   }
   markBilled(oid);
+}
+/* Mark every ticked load in the Billing queue billed in one go. Loads missing a POD or invoice ask first (once for all of them). */
+function billDoneMany() {
+  var ids = GROUP.filter(function (id) { var o = order(id); return o && isExt(o) && !o.is_transfer && !o.billed_date; });
+  if (!ids.length) { toast("Tick the loads to mark billed first", true); return; }
+  var incomplete = ids.filter(function (id) { return !isFulfilled(id); }).length;
+  var run = function () {
+    var btn = $("#bill-done-sel"); if (btn) btn.disabled = true;
+    Promise.all(ids.map(function (id) { return billOrder(id, true); })).then(function () {
+      GROUP = GROUP.filter(function (id) { return ids.indexOf(id) < 0; });
+      return reload();
+    }).then(function () {
+      toast(ids.length + " load" + (ids.length === 1 ? "" : "s") + " billed out");
+      histPush("bill out " + ids.length,
+        function () { return Promise.all(ids.map(function (id) { return billOrder(id, false); })).then(reload); },
+        function () { return Promise.all(ids.map(function (id) { return billOrder(id, true); })).then(reload); });
+    }).catch(function (e) { toast(e.message, true); reload(); });
+  };
+  var n = ids.length, msg = n === 1 ? "This load doesn't have both a POD and an invoice yet. Mark it billed anyway?"
+    : incomplete === n ? "None of the " + n + " selected loads has both a POD and an invoice yet. Mark all " + n + " billed anyway?"
+    : incomplete + " of the " + n + " selected loads " + (incomplete === 1 ? "doesn't" : "don't") + " have both a POD and an invoice yet. Mark all " + n + " billed anyway?";
+  if (incomplete) confirmModal(msg, run, "Mark Billed Anyway", true);
+  else run();
 }
 function markBilled(oid) {
   billOrder(oid, true).then(reload).then(function () {
@@ -4339,13 +4431,20 @@ function billDocCardHtml(d, exts) {
     exts.map(function (o) { return '<option value="' + o.id + '">' + esc(orderLabel(o)) + "</option>"; }).join("") + "</select></div>";
   return h;
 }
+// The RC / POD / INV dashes: filled when that paperwork is on file. Same in the Billing queue and the order side window.
+function paperworkBars(have) {
+  return [["rate_con", "RC"], ["pod", "POD"], ["invoice", "INV"]].map(function (t) {
+    return '<span class="' + (have[t[0]] ? "y" : "") + '" title="' + (have[t[0]] ? "On file" : "Missing") + '"><em>' + t[1] + "</em><b></b></span>";
+  }).join("");
+}
 function vBilling() {
-  var queue = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_date && !isHistorical(o); });
+  var queue = orders().filter(function (o) { return isExt(o) && !o.is_transfer && !o.billed_date && o.stage !== "cancelled" && !isHistorical(o); });
   var haveOf = function (o) { var have = {}; docsFor(o.id).forEach(function (d) { have[d.doc_type] = d; }); return have; };
   var readyN = queue.filter(function (o) { var hv = haveOf(o); return hv.pod && hv.invoice; }).length;
   var shown = queue;   // always everything: no filter
   var h = toolbarHtml("Billing", {
-    secondary: '<button class="btn sm" id="bill-dl-sel">Download Selected (' + GROUP.length + ")</button>",
+    secondary: '<button class="btn sm" id="bill-done-sel" title="Mark every ticked load billed">Mark Billed (' + GROUP.length + ")</button>" +
+      '<button class="btn sm" id="bill-dl-sel">Download Selected (' + GROUP.length + ")</button>",
     primary: '<button class="btn pri sm" id="bill-combine-sel">Combine Into One PDF (' + GROUP.length + ")</button>"
   });
   h += '<div class="grid-wrap bill-page">';
@@ -4369,9 +4468,7 @@ function vBilling() {
     '<th style="width:170px">Invoice #</th><th style="width:196px"></th></tr></thead><tbody>';
   shown.forEach(function (o) {
     var have = haveOf(o), ready = have.pod && have.invoice;
-    var bars = [["rate_con", "RC"], ["pod", "POD"], ["invoice", "INV"]].map(function (t) {
-      return '<span class="' + (have[t[0]] ? "y" : "") + '" title="' + (have[t[0]] ? "On file" : "Missing") + '"><em>' + t[1] + "</em><b></b></span>";
-    }).join("");
+    var bars = paperworkBars(have);
     var inv = have.invoice, ief = inv && inv.extracted_fields || {};
     var invCell = !inv ? "—" :
       (ief.invoiceNum ? "#" + esc(ief.invoiceNum) : "On file") +
@@ -4736,7 +4833,7 @@ function vBuiltin(ent) {
       (archivedView ? "Restore Selected" : "Archive Selected") +
       (selectedRows ? " (" + selectedRows + ")" : "") + "</button>";
   } else {
-    rowAction = '<button class="btn bad" data-delrows="' + gk + '"' + (selectedRows ? "" : " disabled") + ">" +
+    rowAction = '<button class="btn del" data-delrows="' + gk + '"' + (selectedRows ? "" : " disabled") + ">" +
       (selectedRows ? "Delete Selected (" + selectedRows + ")" : "Delete Selected") + "</button>";
   }
   // Sort's highlight when a custom sort is active is a status indicator, not
@@ -5925,6 +6022,42 @@ document.addEventListener("keydown", function (e) {
   if (e.key !== "Enter" && e.key !== " ") return;
   var g = e.target.closest && e.target.closest(".rail-div[data-railgrp]"); if (g) { e.preventDefault(); railToggleGroup(g.getAttribute("data-railgrp")); }
 });
+/* ── Shared Staging ───────────────────────────────────────────────────────────────────────────────────────
+   STAGED is this screen's copy of the Staging line. The real one lives on the orders themselves (orders.autofill._staged, a number that
+   puts the order in line; no new table), so two dispatchers see the same loads: a change made here is written right after the rail redraws
+   (stageSyncUp), and a change made on the other screen arrives with the next live update and is read back in reload() (stageFromDB). */
+var STAGE = { srv: [], writes: 0 };
+function stageFromDB() {
+  var srv = (DB.orders || []).filter(function (o) { return o.autofill && o.autofill._staged != null; })
+    .sort(function (a, b) { return a.autofill._staged - b.autofill._staged; }).map(function (o) { return o.id; });
+  STAGE.srv = srv.slice();
+  if (STAGE.writes > 0) return;           // one of your own changes is still being saved: it wins
+  STAGED = srv.slice();
+}
+function stageWrite(id, val) {
+  var o = order(id); if (!o) return Promise.resolve();
+  var cur = Object.assign({}, o.autofill || {});
+  if (val == null) delete cur._staged; else cur._staged = val;
+  var next = Object.keys(cur).length ? cur : null;
+  o.autofill = next;
+  return api("order/update", { id: id, autofill: next });
+}
+function stageSyncUp() {
+  var known = function (id) { return !!order(id); };
+  var inSrv = {}, inLoc = {}; STAGE.srv.forEach(function (id) { inSrv[id] = 1; }); STAGED.forEach(function (id) { inLoc[id] = 1; });
+  var add = STAGED.filter(function (id) { return !inSrv[id] && known(id); }), rem = STAGE.srv.filter(function (id) { return !inLoc[id] && known(id); });
+  var reorder = !add.length && !rem.length && STAGED.length > 1 && STAGED.filter(known).join("|") !== STAGE.srv.filter(known).join("|");
+  if (!add.length && !rem.length && !reorder) return;
+  STAGE.srv = STAGED.filter(known); STAGE.writes++;
+  var base = Date.now(), ops = [];
+  if (reorder) STAGED.forEach(function (id, i) { if (known(id)) ops.push(stageWrite(id, base + i)); });
+  else {
+    add.forEach(function (id) { ops.push(stageWrite(id, base + STAGED.indexOf(id))); });
+    rem.forEach(function (id) { ops.push(stageWrite(id, null)); });
+  }
+  Promise.all(ops).catch(function (e) { toast("Couldn't save Staging: " + (e && e.message || "try again"), true); })
+    .then(function () { STAGE.writes--; });
+}
 function renderRail() {
   var list = STAGED.filter(function (id) {
     if (!Q) return true;
@@ -5946,7 +6079,8 @@ function renderRail() {
       '<i class="rail-arr">' + (shut ? "&darr;" : "&uarr;") + "</i></div>" +
       (shut ? "" : g[1].map(function (id) { return chipHtml(order(id), true, 'data-from="STAGE"'); }).join(""));
   }).join("") : emptyStateHtml(Q ? "No matches for “" + Q + "”" : "Nothing staged");
-  $("#stage-ct").textContent = STAGED.length;
+  $("#stage-ct").textContent = STAGED.filter(function (id) { return order(id); }).length;
+  stageSyncUp();
 }
 /* Reorder within the Staging rail by drag (D197, Nate: "id also like to be
    able to re order the loads in the staging area by clicking and dragging
@@ -6351,6 +6485,7 @@ function reload() { return api("bootstrap").then(function (d) {
   // Staging rail. Reserving a block of numbers or bulk-adding blanks turns this off for that one reload.
   var prevIds = DB && DB.orders ? DB.orders.map(function (o) { return o.id; }) : null;
   DB = d;
+  stageFromDB();
   if (prevIds && prevIds.length && !AUTOSTAGE_OFF) {
     var seenIds = {}; prevIds.forEach(function (id) { seenIds[id] = 1; });
     var pmNew = placement();
@@ -6727,7 +6862,7 @@ function dayNoteModal(ds) {
     '<div class="modal-body"><p class="modal-note">Dispatcher-only — never shown to drivers or pushed to Sheets. Included in the full "Export entire app" data export.</p>' +
     '<label class="mf"><span>Note</span><textarea id="daynote-text" rows="4">' + esc(existing ? existing.text : "") + '</textarea></label></div>' +
     '<div class="modal-ft">' +
-    (existing ? '<button class="btn bad" id="daynote-clear" style="margin-right:auto">Delete note</button>' : "") +
+    (existing ? '<button class="btn del" id="daynote-clear" style="margin-right:auto">Delete note</button>' : "") +
     '<button class="btn" id="modal-cancel">Cancel</button>' +
     '<button class="btn pri" id="daynote-save">Save</button></div>');
   function submit(text) {
@@ -6747,7 +6882,7 @@ function confirmModal(message, onYes, confirmLabel, primary) {
     '<div class="modal-body"><p style="line-height:1.5;margin:0">' + esc(message) + "</p></div>" +
     '<div class="modal-ft"><span style="flex:1"></span>' +
     '<button class="btn" id="modal-cancel">Cancel</button>' +
-    '<button class="btn ' + (primary ? "pri" : "bad") + '" id="modal-confirm">' + esc(confirmLabel || "Delete") + "</button></div>");
+    '<button class="btn ' + (primary ? "pri" : /^delete/i.test(confirmLabel || "Delete") ? "del" : "bad") + '" id="modal-confirm">' + esc(confirmLabel || "Delete") + "</button></div>");
   var btn = $("#modal-confirm");
   if (btn) btn.addEventListener("click", function () { closeModal(); onYes(); });
 }
@@ -7158,7 +7293,7 @@ function trackerBulkButtonsHtml(grid) {
   var n = (ROWSEL[grid] || []).length;
   return '<button class="btn bad sm" data-ordercancelrows="' + grid + '"' + (n ? "" : " disabled") + ">" +
       (n ? "Cancel Selected (" + n + ")" : "Cancel Selected") + "</button>" +
-    '<button class="btn bad sm" data-orderdelrows="' + grid + '"' + (n ? "" : " disabled") + ">" +
+    '<button class="btn del sm" data-orderdelrows="' + grid + '"' + (n ? "" : " disabled") + ">" +
       (n ? "Delete Selected (" + n + ")" : "Delete Selected") + "</button>";
 }
 function handleRowSel(td, e) {
@@ -7221,7 +7356,7 @@ function columnModal(grid, col) {
     mfield("options", "Dropdown options (comma-separated)", "text");
   openModal('<div class="modal-hd"><h2>' + (col ? "Edit column" : "Add column") + "</h2></div>" +
     '<div class="modal-body">' + body + "</div>" +
-    '<div class="modal-ft">' + (col ? '<button class="btn bad" id="col-delete" data-colid="' + col.id + '">Delete</button>' : "") +
+    '<div class="modal-ft">' + (col ? '<button class="btn del" id="col-delete" data-colid="' + col.id + '">Delete</button>' : "") +
     '<span style="flex:1"></span><button class="btn" id="modal-cancel">Cancel</button>' +
     '<button class="btn pri" id="col-save" data-grid="' + grid + '"' + (col ? ' data-colid="' + col.id + '"' : "") +
     ">" + (col ? "Save" : "Add Column") + "</button></div>");
@@ -7723,6 +7858,77 @@ document.addEventListener("keydown", function (e) {
 });
 
 /* ── Rate con → order ────────────────────────────────────────────────────── */
+/* ── Review window for a rate con or pasted load ──────────────────────────────────────────────────────────
+   The reader never creates anything on its own: it opens this window with what it found (every box editable, ones it was unsure of
+   outlined, ones it could not find empty), and only "Create Order" / "Fill In Order" puts it on an order. Cancel creates nothing. */
+function afFindExisting(p) {
+  return orders().filter(function (o) { return isExt(o) && !o.is_transfer && ((p.solomon && o.rexius_order_no === p.solomon) || (p.load_no && o.broker_load_no === p.load_no)); })[0] || null;
+}
+function afStopVal(p, which, k) { var s = p[which]; return s && s[k] ? s[k] : ""; }
+function afReview(p, source) {
+  return new Promise(function (resolve) {
+    var conf = (p.rc && p.rc.conf) || {}, ex = afFindExisting(p);
+    function row(label, key, val, opts) {
+      opts = opts || {};
+      var low = opts.low || (val === "" || val == null ? false : conf[key] === "check");
+      return "<label>" + esc(label) + '</label><div><input data-afr="' + key + '" value="' + esc(val == null ? "" : val) + '" placeholder="' + (opts.ph || "Not found") + '"' +
+        (opts.list ? ' list="' + opts.list + '"' : "") + (low ? ' class="afr-check" title="The reader was not sure of this one. Check it."' : "") + ' autocomplete="off">' +
+        (opts.hint ? '<div class="afr-hint" id="afr-hint-' + opts.hint + '"></div>' : "") + "</div>";
+    }
+    function stop(which, label) {
+      var s = p[which], lowAll = s && s.conf === "check";
+      return '<div class="afr-stop"><div class="sec-h">' + label + '</div><div class="afr-grid">' +
+        ["name", "address", "city"].map(function (k) { return '<input data-afr="' + which + "." + k + '" value="' + esc(afStopVal(p, which, k)) + '" placeholder="' + { name: "Name", address: "Address", city: "City" }[k] + '"' + (lowAll ? ' class="afr-check"' : "") + ' autocomplete="off">'; }).join("") +
+        '<div class="afr-row2"><input data-afr="' + which + '.state" value="' + esc(afStopVal(p, which, "state")) + '" placeholder="State" maxlength="2" autocomplete="off">' +
+        '<input data-afr="' + which + '.zip" value="' + esc(afStopVal(p, which, "zip")) + '" placeholder="ZIP" autocomplete="off">' +
+        '<input data-afr="' + which + '.appt" value="' + esc(afStopVal(p, which, "appt")) + '" placeholder="Appointment" autocomplete="off"></div></div>' +
+        '<div class="afr-hint" id="afr-hint-' + which + '"></div></div>';
+    }
+    var brokers = brokerList().map(function (b) { return '<option value="' + esc(b.name) + '">'; }).join("");
+    var h = '<div class="modal-hd"><h2>Review ' + (source === "text" ? "Pasted Load Info" : "Rate Con") + '</h2></div><div class="modal-body af-review">' +
+      (ex ? '<div class="note-bar" style="margin:0 0 10px">This matches order <b>' + esc(ex.rexius_order_no || ex.broker_load_no || "") + "</b>. Only its blank boxes will be filled in; nothing already on it is changed.</div>" :
+        '<p class="afr-intro">Check what was read, fix anything, then create the order. Nothing is saved until you do.</p>') +
+      '<datalist id="afr-brokers">' + brokers + "</datalist>" +
+      '<div class="fields">' + row("Broker", "broker", p.broker || "", { list: "afr-brokers", hint: "broker" }) + row("Order #", "solomon", p.solomon || "", { ph: "Optional" }) +
+      row("Load #", "load_no", p.load_no || "") + row("PU / PO", "po", p.po || "") +
+      row("Rate", "rate", p.rate == null ? "" : "$" + Number(p.rate).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), { low: p.rate != null && (p.rate > 3000 || p.rate < 150) || (p.rate != null && conf.rate === "check") }) + "</div>" +
+      stop("pickup", "Pickup") + stop("delivery", "Drop") +
+      '</div><div class="modal-ft"><button class="btn" id="afr-cancel" type="button">Cancel</button><span style="flex:1"></span>' +
+      '<button class="btn pri" id="afr-go" type="button">' + (ex ? "Fill In Order" : "Create Order") + "</button></div>";
+    openModal(h); var m = $("#modal"); if (m) m.classList.add("wide-modal");
+    var q = function (k) { var e = document.querySelector('#modal [data-afr="' + k + '"]'); return e ? e.value.trim() : ""; };
+    function brokerHit(name) {
+      var lc = String(name).toLowerCase(), exact = brokerList().filter(function (b) { return String(b.name).toLowerCase() === lc; })[0];
+      if (exact) return { b: exact, how: "exact" };
+      var f = name ? findBroker(name) : null; return f && f.broker ? { b: f.broker, how: "close" } : null;
+    }
+    function stopObj(which) {
+      var s = { name: q(which + ".name"), address: q(which + ".address"), city: q(which + ".city"), state: q(which + ".state").toUpperCase(), zip: q(which + ".zip"), appt: q(which + ".appt"), conf: "ok" };
+      return s.name || s.address || s.city || s.appt ? s : null;
+    }
+    function hints() {
+      var bh = $("#afr-hint-broker"), name = q("broker"), hit = name ? brokerHit(name) : null;
+      if (bh) bh.textContent = !name ? "" : hit ? (hit.how === "exact" ? "Existing customer" : "Closest match: " + hit.b.name + ". It will be used.") : "A new customer will be added";
+      ["pickup", "delivery"].forEach(function (w) {
+        var el = $("#afr-hint-" + w), s = stopObj(w); if (!el) return;
+        var mt = s && (s.name || s.address) ? afMatchLocation(s) : null, loc = mt && locById(mt.id);
+        el.textContent = !s ? "" : mt && loc ? "On the Pick/Drop List: " + (loc.name || "") + (loc.city ? ", " + loc.city : "") : s.name && s.city ? "A new location will be added to the Pick/Drop List" : "Needs a name and a city to be added; it will be left blank";
+      });
+    }
+    hints();
+    $("#modal").oninput = function (e) { if (e.target && e.target.dataset && e.target.dataset.afr) { e.target.classList.remove("afr-check"); hints(); } };
+    $("#afr-cancel").onclick = function () { closeModal(); resolve(null); };
+    $("#afr-go").onclick = function () {
+      var out = Object.assign({}, p), name = q("broker"), hit = name ? brokerHit(name) : null;
+      out.broker = hit ? hit.b.name : name; out.broker_id = hit ? hit.b.id : undefined;
+      out.solomon = q("solomon"); out.load_no = q("load_no"); out.po = q("po");
+      var rt = q("rate").replace(/[^0-9.]/g, ""); out.rate = rt === "" || isNaN(Number(rt)) ? null : Number(rt);
+      out.pickup = stopObj("pickup"); out.delivery = stopObj("delivery");
+      closeModal(); resolve(out);
+    };
+    setTimeout(function () { var f = $('#modal [data-afr="broker"]'); if (f) f.focus(); }, 0);
+  });
+}
 function ingestRateCon(file) {
   busyStart("Reading rate con…");
   return fileB64(file).then(function (b64) {
@@ -7738,24 +7944,28 @@ function ingestRateCon(file) {
       return textReady.then(function (finalText) {
         var p = parseRateCon(finalText, file.name);
         var scanned = finalText.replace(/\s/g, "").length < 40;
-        return ingestParsed(p, file.name).then(function (r) {
-          return api("document", {
-            order_id: r.o.id, doc_type: "rate_con", filename: file.name, b64: b64,
-            extracted_fields: p, matched_by: scanned ? "filename" : "document_text"
-          }).then(function () { return { o: r.o, p: p, n: r.n, scanned: scanned, ocrUsed: ocrUsed }; });
+        busyEnd();
+        return afReview(p, "file").then(function (p2) {
+          if (!p2) return null;                      // cancelled: nothing was created
+          busyStart("Saving order…");
+          return ingestParsed(p2, file.name).then(function (r) {
+            return api("document", {
+              order_id: r.o.id, doc_type: "rate_con", filename: file.name, b64: b64,
+              extracted_fields: p2, matched_by: scanned ? "filename" : "document_text"
+            }).then(function () { return { o: r.o, p: p2, n: r.n, scanned: scanned, ocrUsed: ocrUsed }; });
+          });
         });
       });
     });
   }).then(function (r) {
-    busyStart("Saving order…");
+    if (!r) { busyEnd(); return; }
     return reload().then(function () {
       busyEnd();
       openOrder(r.o.id);
       if (r.o._match && r.o._match !== "created") {
-        toast("Matched to existing order " + (r.o.rexius_order_no || r.o.broker_load_no || "") +
-          " (" + r.o._match.replace("_", " ") + ") — rate con attached. " + afSummary(r.n));
+        toast("Filled in order " + (r.o.rexius_order_no || r.o.broker_load_no || "") + " — rate con attached.");
       } else {
-        toast((r.scanned ? "Scanned rate con — OCR found nothing usable. " : r.ocrUsed ? "OCR read the scanned rate con. " : "Order created from rate con. ") + afSummary(r.n));
+        toast(r.scanned ? "Order created. The scan had little text, so check the boxes." : "Order created from the rate con.");
       }
     });
   }).catch(function (e) { busyEnd(); toast("Rate con failed: " + e.message, true); });
@@ -7773,14 +7983,7 @@ function rateConComplete(text) {
   var r = window.Dept12RateCon.parse(text, {}), f = r.fields;
   return !!((f.load_no || f.po) && f.rate != null && r.pickup && r.delivery && r.pickup.city && r.delivery.city);
 }
-// One line for the toast: how many boxes were filled with confidence, how many need a look, how many were not found.
-function afSummary(n) {
-  var bits = [];
-  if (n.ok) bits.push(n.ok + " filled");
-  if (n.check) bits.push(n.check + " to check");
-  if (n.missing) bits.push(n.missing + " not found");
-  return bits.length ? bits.join(", ") + " — tags are on the boxes." : "";
-}
+function afSummary() { return ""; }
 // Create (or match) the order for a parsed rate con / pasted load info, then fill what it can.
 function ingestParsed(p, filename) {
   return api("order/ingest", {
@@ -7949,12 +8152,15 @@ function runPasteLoad() {
   var p = parseRateCon(text, "");
   if (!p.load_no && !p.po && p.rate == null && !p.pickup && !p.delivery) { toast("Could not find any load info in that text.", true); return; }
   closeModal();
-  busyStart("Reading load info…");
-  ingestParsed(p, "").then(function (r) {
-    return reload().then(function () {
-      busyEnd();
-      openOrder(r.o.id);
-      toast((r.o._match && r.o._match !== "created" ? "Matched to existing order " + (r.o.rexius_order_no || r.o.broker_load_no || "") + ". " : "Order created from pasted text. ") + afSummary(r.n));
+  afReview(p, "text").then(function (p2) {
+    if (!p2) return;                                 // cancelled: nothing was created
+    busyStart("Saving order…");
+    return ingestParsed(p2, "").then(function (r) {
+      return reload().then(function () {
+        busyEnd();
+        openOrder(r.o.id);
+        toast(r.o._match && r.o._match !== "created" ? "Filled in order " + (r.o.rexius_order_no || r.o.broker_load_no || "") + "." : "Order created from the pasted text.");
+      });
     });
   }).catch(function (e) { busyEnd(); toast("Paste failed: " + e.message, true); });
 }
@@ -8379,7 +8585,7 @@ document.addEventListener("click", function (e) {
     "#profile-btn,[data-profile],[data-setpref],[data-showsched],[data-screc],[data-screset],[data-scresetall]," +
     "[data-cw-step],[data-schedsize-step],[data-schedsize-reset],[data-accent-pick],[data-accent-save],[data-accent-forget],[data-custom-accent-toggle],[data-numbering-save]," +
     "#navtoggle,[data-navto],[data-navsec],[data-navcycle],[data-bill-done],[data-bill-dl],[data-reopen-bill]," +
-    "#bill-dl-sel,#bill-combine-sel");
+    "#bill-dl-sel,#bill-done-sel,#bill-combine-sel");
   if (!t) return;
   if (t.id === "scrim") { closeDrawer(); closeModal(); return; }
   if (t.id === "nav-scrim") { closeMobileNav(); return; }
@@ -8551,7 +8757,7 @@ document.addEventListener("click", function (e) {
       '?</h2></div><div class="modal-body"><p style="font-size:var(--fs-body);color:var(--ink-2)">' +
       "This can&rsquo;t be undone. Rows still referenced elsewhere (e.g. a customer on an order) are kept and reported.</p></div>" +
       '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
-      '<button class="btn bad" id="confirm-del" data-delgrid="' + g + '">Delete ' + ids.length + "</button></div>");
+      '<button class="btn del" id="confirm-del" data-delgrid="' + g + '">Delete ' + ids.length + "</button></div>");
     return;
   }
   if (t.dataset.archiverows) {
@@ -8753,6 +8959,7 @@ document.addEventListener("click", function (e) {
     return;
   }
   if (t.id === "bill-dl-sel") { billBatch(); return; }
+  if (t.id === "bill-done-sel") { billDoneMany(); return; }
   if (t.id === "bill-combine-sel") { groupMerge(); return; }
   if (t.dataset.reopenBill) {
     var roid = t.dataset.reopenBill;
@@ -9117,6 +9324,8 @@ document.addEventListener("change", function (e) {
     if (e.target.checked && i < 0) GROUP.push(id); else if (!e.target.checked && i >= 0) GROUP.splice(i, 1);
     var groupBtn = $("#group-btn"); if (groupBtn) groupBtn.textContent = "Group merge (" + GROUP.length + ")";
     var dlSelBtn = $("#bill-dl-sel"); if (dlSelBtn) dlSelBtn.textContent = "Download Selected (" + GROUP.length + ")";
+    var doneSelBtn = $("#bill-done-sel"); if (doneSelBtn) doneSelBtn.textContent = "Mark Billed (" + GROUP.length + ")";
+    var combSelBtn = $("#bill-combine-sel"); if (combSelBtn) combSelBtn.textContent = "Combine Into One PDF (" + GROUP.length + ")";
   }
   if (e.target.id === "dv-pick") { DRIVER_VIEW = e.target.value; render(); }
   if (e.target.id === "year-pick") {

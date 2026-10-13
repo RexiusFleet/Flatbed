@@ -178,11 +178,12 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | A popup / form | `app.js` → `═══ 06-modals-grids` → `…Modal` |
 | Colors, spacing, fonts | `app.css` (tokens at the top) |
 | Rate-con reading (what it fills, what it misses) | `ratecon-parser.js` (per-broker handlers), then `app.js` → `ingestRateCon`, `ingestParsed`, `afApply` |
-| The Auto / Check / Not Found tags in the side window | `app.js` → `afBadge`, `afGet`; saved in `orders.autofill` |
+| The window that confirms a rate con or pasted load before an order is made (no tags in the side window any more) | `app.js` → `afReview`, then `ingestParsed` and `afApply` (fills only blank boxes) |
 | Paste Load Info | `app.js` → `pasteLoadModal`, `runPasteLoad` |
+| Live updates when a second dispatcher changes something | `app.js` → `livePoll`, `liveBusy`, `liveApply` (every 4 seconds); `supabase-api.js` → route `bootstrap/poll` (asks `api_bootstrap_since`, which reads the History log) |
 | New Order button (header): External / Bag Order / Internal Freight | `app.js` → `newOrderModal`, `newExternalModal`, `newBagPanel`, `newBagGo` (a bag order number that exists opens that order; a new one is added) |
 | The + that files a note to a customer or pick/drop (writes the stamped line into the existing Notes column) | `app.js` → `pnTargets`, `pnOpen`, `pnGo`, `pnSectionHtml` |
-| Staging rail: new orders added automatically, labeled groups | `app.js` → `reload()` (`AUTOSTAGE_OFF`), `renderRail` |
+| Staging rail: new orders added automatically, labeled groups, shared between dispatchers | `app.js` → `reload()` (`AUTOSTAGE_OFF`), `renderRail`, `stageFromDB` / `stageSyncUp`; the list is stored on the orders themselves (`orders.autofill._staged`, no extra table) and read back in `reload()` → `stageFromDB` |
 | A chip going back to the plain look after an edit until you publish again | `app.js` → `PUB.dirty`, `pubOrderIds`, `pubSetDirty`, and the `pushed` check at the top of `chipHtml` |
 | Driver page: loads and typed notes | `driver/driver.js` → `vDriverGrid`, `vDriverCards`, `tabChipHtml`; `driver/driver.css` → `.dvx-note-row` |
 | Invoice reading | `app.js` → `extractInvoiceInfo` |
