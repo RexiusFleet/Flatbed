@@ -2019,7 +2019,7 @@ function openInternalOrder(o) {
      driver's Sheets tab — same field/pattern Internal Freight transfers
      already had (D130), now universal. */
   h += '<div><div class="sec-h">Note for the driver</div><div class="fields">' +
-    fld("driver_note", "Driver note", o.driver_note, "Shows on the driver's tab and Current Week after you push") +
+    fld("driver_note", "Dispatch Note", o.driver_note, "Shows on the driver's tab and Current Week after you push") +
     "</div></div>";
 
   /* Freight to the bag plant (D38) — actual miles and the hand-entered
@@ -2433,7 +2433,7 @@ function openTransferOrder(o) {
      pushed). driver_note is the separate field that actually reaches the
      driver's Sheets tab — D130. */
   h += '<div><div class="sec-h">Note for the driver</div><div class="fields">' +
-    fld("driver_note", "Driver note", o.driver_note, "Shows on the driver's tab and Current Week after you push") +
+    fld("driver_note", "Dispatch Note", o.driver_note, "Shows on the driver's tab and Current Week after you push") +
     "</div></div>";
 
   h += '<div><div class="sec-h">Mileage / transfer cost</div><div class="fields">' +
@@ -2492,7 +2492,7 @@ function openOrder(oid) {
      driver's Sheets tab — same field/pattern Internal Freight transfers
      already had (D130), now universal. */
   h += '<div><div class="sec-h">Note for the driver</div><div class="fields">' +
-    fld("driver_note", "Driver note", o.driver_note, "Shows on the driver's tab and Current Week after you push") +
+    fld("driver_note", "Dispatch Note", o.driver_note, "Shows on the driver's tab and Current Week after you push") +
     "</div></div>";
 
   /* Pickup / Delivery (D42) — type-ahead against the Pick/Drop List, pre-filled
@@ -2544,7 +2544,7 @@ function openOrder(oid) {
    should know. Read from Supabase (driver_notes), refreshed every minute. */
 function driverNotesHtml(oid) {
   var list = (DRIVER_NOTES[oid] || []).slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; });
-  var h = '<div id="dw-drvnotes"><div class="sec-h">Driver notes — ' + list.length + "</div>";
+  var h = '<div id="dw-drvnotes"><div class="sec-h">Note From Driver — ' + list.length + "</div>";
   if (!list.length) return h + '<p class="drvnote-empty">No notes from the driver yet.</p></div>';
   return h + '<div class="drvnote-list">' + list.map(function (n) {
     var d = new Date(n.at);
