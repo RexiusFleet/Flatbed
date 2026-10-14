@@ -798,6 +798,7 @@ var ROUTES = {
   "history/revert": function (d) { return rpc("api_history_revert", { d: d }); }
 };
 
+var API_WRITES = { seq: 0, open: 0 };
 // The single entry point app.js uses (unchanged signature from the Python era).
 function api(path, body) {
   var qi = path.indexOf("?"), route = qi < 0 ? path : path.slice(0, qi), q = {};
@@ -807,7 +808,11 @@ function api(path, body) {
   }
   var fn = ROUTES[route];
   if (!fn) return Promise.reject(new Error("no route /api/" + route));
+  // Saves in flight / saves started: the live-update check waits for these so it never redraws around your own save.
+  var isRead = route === "bootstrap" || route === "bootstrap/poll" || route === "history" || route.indexOf("report") === 0;
+  if (!isRead) { API_WRITES.seq++; API_WRITES.open++; }
   return Promise.resolve().then(function () { return fn(body || {}, route, q); })
+    .finally(function () { if (!isRead) API_WRITES.open--; })
     .catch(function (err) {
       // A failed save may leave something on screen that didn't stick; make
       // the next load a complete one so the screen matches the database.
@@ -874,6 +879,7 @@ var dashboardAuth = {
 
 // Globals app.js relies on.
 window.api = api;
+window.API_WRITES = API_WRITES;
 window.dept12LoadHistory = loadHistory;
 window.dept12HistoryLoaded = function () { return !!(BOOT && BOOT.history); };
 window.dashboardAuth = dashboardAuth;

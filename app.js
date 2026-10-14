@@ -1185,6 +1185,7 @@ setInterval(actPoll, 15000);
    (typing, a drag, a popup): a waiting update is applied the moment you are idle. The order open in the side window is refreshed
    too, or closed if someone deleted it. */
 var LIVE = { busy: false, pending: false, ids: {}, drag: false, ms: 4000 };
+var RELOADING = 0;
 document.addEventListener("dragstart", function () { LIVE.drag = true; }, true);
 document.addEventListener("dragend", function () { LIVE.drag = false; }, true);
 document.addEventListener("drop", function () { setTimeout(function () { LIVE.drag = false; }, 0); }, true);
@@ -1213,9 +1214,13 @@ function liveApply() {
 }
 function livePoll() {
   if (LIVE.busy || document.hidden || typeof DB === "undefined" || !DB || !DB.orders) return;
+  if (API_WRITES.open || RELOADING) return;      // one of your own saves is still going: let it finish and redraw first
   LIVE.busy = true;
+  var seq = API_WRITES.seq;
   api("bootstrap/poll").then(function (r) {
     if (r && r.changed) { LIVE.pending = true; if (r.all) LIVE.ids.__all = true; (r.orders || []).forEach(function (id) { LIVE.ids[id] = true; }); }
+    // If you saved something while this check was running, your own redraw owns the screen; the next check applies the rest.
+    if (seq !== API_WRITES.seq || API_WRITES.open || RELOADING) return;
     if (LIVE.pending && !liveBusy()) return liveApply();
   }).catch(function () { /* offline or signed out: try again next time */ }).then(function () { LIVE.busy = false; });
 }
@@ -6477,7 +6482,7 @@ function render() {
 }
 var LAST_VIEW_KEY = null, SCHED_KEEP = false, DRIVER_BOOTED = false;
 var AUTOSTAGE_OFF = false;
-function reload() { return api("bootstrap").then(function (d) {
+function reload() { RELOADING++; return api("bootstrap").then(function (d) {
   // A reload rebuilds the Scheduler; keep the spot you were at instead of
   // snapping back to today.
   if (schedNode && schedNode.parentNode) { schedScrollTop = schedNode.scrollTop; SCHED_KEEP = true; }
@@ -6500,7 +6505,7 @@ function reload() { return api("bootstrap").then(function (d) {
   // reload() already runs after essentially every mutation in the app, so
   // this is "live" without any polling/websocket infrastructure (D134).
   if (typeof historyPanelOpen === "function" && historyPanelOpen()) loadHistoryPanel();
-}); }
+}).finally(function () { RELOADING--; }); }
 
 /* ── Global search (D44) — type anything, it scrapes the already-loaded DB and
    jumps you to the match: an order opens its drawer, everything else navigates
@@ -8897,9 +8902,16 @@ document.addEventListener("click", function (e) {
     });
     if (!cd.name || !cd.name.trim()) { toast("Name is required", true); return; }
     var custGrid = t.dataset.custkind === "external" ? "external" : "bagger";
+    var dupKey = cd.name.trim().toLowerCase().replace(/\s+/g, " ");
+    var dup = (DB.parties || []).filter(function (p) { return String(p.name || "").trim().toLowerCase().replace(/\s+/g, " ") === dupKey; })[0];
+    if (dup) {
+      var where = dup.is_broker && dup.broker_archived_at ? "in the archived external customers" : dup.is_broker ? "in external customers" : dup.is_customer ? "in bagger customers" : "in the database";
+      toast("\u201c" + dup.name + "\u201d already exists " + where + ". Open that row instead of adding it again.", true); return;
+    }
+    if (t.disabled) return; t.disabled = true;      // a second click while saving must not add it twice
     api("customer", cd).then(function (party) { return saveCustomFields(custGrid, "parties", party.id, cd); })
       .then(reload).then(function () { closeModal(); toast("Customer added"); })
-      .catch(function (err) { toast(err.message, true); });
+      .catch(function (err) { t.disabled = false; toast(/parties_name|duplicate key/i.test(err.message || "") ? "A customer with that name already exists." : err.message, true); });
     return;
   }
   if (t.id === "modal-save-loc") {
@@ -8911,6 +8923,12 @@ document.addEventListener("click", function (e) {
     var locTarget = MODAL_LOC_TARGET, stopTarget = null, newLocId = null; MODAL_LOC_TARGET = null;
     // A drawer stop box ("stop:…") finishes through the route save instead.
     if (locTarget && /^stop:/.test(locTarget.field)) { stopTarget = locTarget; locTarget = null; }
+    var lkey = function (v) { return String(v || "").trim().toLowerCase().replace(/\s+/g, " "); };
+    var ldup = (DB.locations || []).filter(function (l) {
+      return lkey(l.name) === lkey(ld.name) && lkey(l.address) === lkey(ld.address) && lkey(l.city) === lkey(ld.city) && lkey(l.state) === lkey(ld.state);
+    })[0];
+    if (ldup) { MODAL_LOC_TARGET = locTarget || stopTarget; toast("\u201c" + ldup.name + "\u201d is already on the Pick/Drop List with that address.", true); return; }
+    if (t.disabled) return; t.disabled = true;
     api("location", ld).then(function (loc) {
       newLocId = loc.id;
       return saveCustomFields("pickdrop", "locations", loc.id, ld).then(function () {
@@ -8925,7 +8943,7 @@ document.addEventListener("click", function (e) {
       closeModal(); toast(locTarget || stopTarget ? "Location added and set" : "Location added");
       if (stopTarget) drawerStopPick(stopTarget.oid, stopTarget.field, newLocId);
     })
-      .catch(function (err) { toast(err.message, true); });
+      .catch(function (err) { t.disabled = false; toast(err.message, true); });
     return;
   }
   if (t.id === "modal-save-dept") {
