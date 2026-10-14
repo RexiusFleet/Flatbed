@@ -4775,14 +4775,41 @@ function storedOrderRows(rows, gk, ent) {
     if (r.grid === gk) { order[r.row_id] = r.sort_order; found = true; }
   });
   if (!found) return rows;
-  return rows.map(function (row, index) { return { row: row, index: index }; })
-    .sort(function (a, b) {
-      var ai = order[rowIdForEntity(a.row, ent)], bi = order[rowIdForEntity(b.row, ent)];
-      if (ai == null && bi == null) return a.index - b.index;
-      if (ai == null) return 1;
-      if (bi == null) return -1;
-      return ai - bi || a.index - b.index;
-    }).map(function (item) { return item.row; });
+  var placed = [], loose = [];
+  rows.forEach(function (row) { (order[rowIdForEntity(row, ent)] == null ? loose : placed).push(row); });
+  placed = placed.map(function (row, index) { return { row: row, index: index }; })
+    .sort(function (a, b) { return order[rowIdForEntity(a.row, ent)] - order[rowIdForEntity(b.row, ent)] || a.index - b.index; })
+    .map(function (item) { return item.row; });
+  if (!loose.length || placed.length < 2) return placed.concat(loose);
+  /* Rows with no saved position (a customer you just added) used to land at the bottom. If the saved order is a sort of one
+     column (A to Z on Name, say), each new row goes where that sort puts it; a hand-dragged order has no rule, so they stay last. */
+  var rule = savedOrderRule(placed, ent, gk);
+  if (!rule) return placed.concat(loose);
+  sortRowsBy(loose, rule.field, rule.dir).forEach(function (row) {
+    var v = fieldRawValue(rule.field, row), at = placed.length;
+    for (var i = 0; i < placed.length; i++) {
+      var cmp = compareGridValues(v, fieldRawValue(rule.field, placed[i]));
+      if ((rule.dir === "desc" ? -cmp : cmp) < 0) { at = i; break; }
+    }
+    placed.splice(at, 0, row);
+  });
+  return placed;
+}
+/* Which column (and direction) the saved row order is sorted by, if any. Checked in column order, so Name wins when several fit. */
+function savedOrderRule(placed, ent, gk) {
+  var flds = sortableFields(ent, gk);
+  for (var fi = 0; fi < flds.length; fi++) {
+    var vals = placed.map(function (r) { return fieldRawValue(flds[fi], r); });
+    if (vals.every(function (v) { return v == null || v === ""; })) continue;
+    var asc = true, desc = true;
+    for (var i = 1; i < vals.length && (asc || desc); i++) {
+      var c = compareGridValues(vals[i - 1], vals[i]);
+      if (c > 0) asc = false;
+      if (c < 0) desc = false;
+    }
+    if (asc || desc) return { field: flds[fi], dir: asc ? "asc" : "desc" };
+  }
+  return null;
 }
 function sortRows(rows, flds, gk) {
   var s = GRIDSORT[gk], f = s && flds.filter(function (x) { return x.id === s.fieldId; })[0];
@@ -4836,7 +4863,9 @@ function vBuiltin(ent) {
     rowAction = '<button class="btn" data-archiverows="' + gk + '" data-archive-mode="' +
       (archivedView ? "restore" : "archive") + '"' + (selectedRows ? "" : " disabled") + ">" +
       (archivedView ? "Restore Selected" : "Archive Selected") +
-      (selectedRows ? " (" + selectedRows + ")" : "") + "</button>";
+      (selectedRows ? " (" + selectedRows + ")" : "") + "</button>" +
+      (archivedView ? '<button class="btn del" data-delarchived="' + gk + '"' + (selectedRows ? "" : " disabled") + ">" +
+        (selectedRows ? "Delete Selected (" + selectedRows + ")" : "Delete Selected") + "</button>" : "");
   } else {
     rowAction = '<button class="btn del" data-delrows="' + gk + '"' + (selectedRows ? "" : " disabled") + ">" +
       (selectedRows ? "Delete Selected (" + selectedRows + ")" : "Delete Selected") + "</button>";
@@ -6910,7 +6939,7 @@ document.addEventListener("keydown", function (e) {
   if (e.target && e.target.tagName === "TEXTAREA") return;
   var modal = document.querySelector("#modal.on"); if (!modal) return;
   if (modal.dataset.keyConfirming) return;
-  var yes = modal.querySelector("#modal-confirm,#confirm-del,#confirm-customer-archive,#history-confirm");
+  var yes = modal.querySelector("#modal-confirm,#confirm-del,#confirm-archive-delete,#confirm-customer-archive,#history-confirm");
   if (!yes) {
     var primaries = modal.querySelectorAll(".modal-ft .btn.pri");
     if (primaries.length === 1) yes = primaries[0];
@@ -8581,12 +8610,12 @@ document.addEventListener("click", function (e) {
   var t = e.target.closest("[data-sec],[data-sub],[data-stage],[data-report],[data-open],[data-pkgrow],[data-route-edit]," +
     "[data-pkg],[data-nodelivery],[data-restore-order],[data-tracker-collapse],[data-tracker-collapse-more],[data-tsort],[data-rpttab],[data-rpttile],[data-rptrestore],#rpt-unpinsys,[data-rptsort],[data-rptcell],[data-rptdo],[data-rptrefresh],[data-rptopen],#rpt-new,#rpt-csv,#rpt-save,#rpt-saveas,#rpt-del," +
     "[data-copy-order],[data-addcust],[data-addcol]," +
-    "[data-addrow],[data-delrows],[data-archiverows],[data-archiveview],[data-orderdelrows],[data-ordercancelrows],[data-delete-doc],[data-frreset],[data-catadd],[data-catdel],[data-sortsave],[data-sortclear]," +
+    "[data-addrow],[data-delrows],[data-archiverows],[data-delarchived],[data-archiveview],[data-orderdelrows],[data-ordercancelrows],[data-delete-doc],[data-frreset],[data-catadd],[data-catdel],[data-sortsave],[data-sortclear]," +
     "[data-addsheet],[data-sheet-addrow],[data-sheet-addcol],[data-sheet-rename]," +
     "[data-managecols],[data-colup],[data-coldown],[data-adddb]," +
     "#theme,#sync-all,#jump-btn,#today-jump,#logo-home,#add-truck," +
     "#add-pickdrop,#add-department,#new-order,#xfer-add,#xfer-bulk,#xfer-save-bulk,#dw-close,#group-btn,#scrim,#nav-scrim,#int-add,#int-bulk,#int-save-bulk,#push-driver-tabs," +
-    "#modal-cancel,#modal-save,#modal-save-loc,#modal-save-dept,#modal-save-truck,#col-save,#col-delete,#condfmt-save,#field-save,#field-options-save,#db-save,#confirm-del,#confirm-customer-archive,#ss-toggle,#ifr-toggle,[data-sbpin],[data-rptper]," +
+    "#modal-cancel,#modal-save,#modal-save-loc,#modal-save-dept,#modal-save-truck,#col-save,#col-delete,#condfmt-save,#field-save,#field-options-save,#db-save,#confirm-del,#confirm-archive-delete,#confirm-customer-archive,#ss-toggle,#ifr-toggle,[data-sbpin],[data-rptper]," +
     "#profile-btn,[data-profile],[data-setpref],[data-showsched],[data-screc],[data-screset],[data-scresetall]," +
     "[data-cw-step],[data-schedsize-step],[data-schedsize-reset],[data-accent-pick],[data-accent-save],[data-accent-forget],[data-custom-accent-toggle],[data-numbering-save]," +
     "#navtoggle,[data-navto],[data-navsec],[data-navcycle],[data-bill-done],[data-bill-dl],[data-reopen-bill]," +
@@ -8763,6 +8792,31 @@ document.addEventListener("click", function (e) {
       "This can&rsquo;t be undone. Rows still referenced elsewhere (e.g. a customer on an order) are kept and reported.</p></div>" +
       '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
       '<button class="btn del" id="confirm-del" data-delgrid="' + g + '">Delete ' + ids.length + "</button></div>");
+    return;
+  }
+  if (t.dataset.delarchived) {
+    var dag = t.dataset.delarchived, dids = (ROWSEL[dag] || []).slice(), dcfg = archiveConfigForGrid(dag);
+    if (!dids.length) { toast("Select rows first — click the numbers on the left", true); return; }
+    openModal('<div class="modal-hd"><h2>Delete ' + dids.length + " " + (dids.length === 1 ? dcfg.singular : dcfg.plural) +
+      ' for good?</h2></div><div class="modal-body"><p style="font-size:var(--fs-body);color:var(--ink-2)">' +
+      "This can&rsquo;t be undone. Anything an order, load or invoice still uses is kept in the archive and reported.</p></div>" +
+      '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
+      '<button class="btn del" id="confirm-archive-delete" data-archive-grid="' + dag + '">Delete ' + dids.length + "</button></div>");
+    return;
+  }
+  if (t.id === "confirm-archive-delete") {
+    var xg = t.dataset.archiveGrid, xids = (ROWSEL[xg] || []).slice(), failed = [];
+    t.disabled = true;
+    Promise.all(xids.map(function (id) {
+      return api("database/delete", { grid: xg, id: id }).catch(function (err) {
+        failed.push(/api_database_delete|PGRST202|Could not find the function/i.test(err.message || "") ?
+          "Delete from the archive isn't switched on in the database yet (the SQL hasn't been run)." : err.message);
+      });
+    })).then(function () { ROWSEL[xg] = []; ROWSEL_ANCHOR[xg] = null; closeModal(); return reload(); }).then(function () {
+      var okN = xids.length - failed.length;
+      if (okN) toast("Deleted " + okN + (failed.length ? "; " + failed.length + " kept" : ""));
+      if (failed.length) toast(failed[0], true);
+    }).catch(function (err) { t.disabled = false; toast(err.message, true); });
     return;
   }
   if (t.dataset.archiverows) {
