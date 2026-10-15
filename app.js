@@ -3999,6 +3999,7 @@ function tsortValue(o, key) {
     case "rate": return o.external_rate == null || o.external_rate === "" ? null : Number(o.external_rate);
     case "notes": return o.notes || "";
     case "tarp": return o.tarp ? 1 : 0;
+    case "backhaul": return o.backhaul ? 1 : 0;
     case "pickup": return loc(o.pickup_location_id);
     case "drop": return loc(o.delivery_location_id);
     case "ordered": return String(o.order_date || "").slice(0, 10);
@@ -4112,6 +4113,8 @@ function extOrderRowHtml(o, i, pm) {
       esc(o.notes || "") + '"></div></td>' +
     '<td><div class="cell" style="text-align:center"><input type="checkbox" data-oedit="' + o.id +
       '" data-field="tarp"' + (o.tarp ? " checked" : "") + '></div></td>' +
+    '<td><div class="cell" style="text-align:center"><input type="checkbox" data-oedit="' + o.id +
+      '" data-field="backhaul"' + (o.backhaul ? " checked" : "") + '></div></td>' +
     '<td><div class="cell">' + (customRoute ? '<button class="route-cell" data-route-edit="' + o.id + '">' +
       esc(routeStopLabel(firstPick)) + '<small>' + esc(routeCompactLabel(o)) + '</small></button>' :
       locCombo(o.id, "pickup_location_id", o.pickup_location_id, null)) + "</div></td>" +
@@ -4122,7 +4125,7 @@ function extOrderRowHtml(o, i, pm) {
     dateOeditCell(o.id, "delivery_date", o.delivery_date && String(o.delivery_date).slice(0, 10)) +
     '<td><div class="cell n">' + nd + "</div></td></tr>";
 }
-var EXT_TRACKER_COLS = 16;  // keep in sync with vOrders' <thead> — colspan for the Billed toggle row
+var EXT_TRACKER_COLS = 17;  // keep in sync with vOrders' <thead> — colspan for the Billed toggle row
 function vOrders(kind) {
   var pm = placement();
   var rows = orders().filter(function (o) {
@@ -4137,14 +4140,14 @@ function vOrders(kind) {
     primary: '<button class="btn pri sm orders-primary-btn" id="new-order">+ New Order</button>'
   });
   h += '<div class="drop" id="rc-drop" style="margin-bottom:10px"><b>Drop a rate con here</b> or click to upload or paste</div>';
-  h += '<div class="grid-wrap tracker-scroll"><table class="data order-tracker external-tracker" style="width:2048px"><thead><tr>' +
+  h += '<div class="grid-wrap tracker-scroll"><table class="data order-tracker external-tracker" style="width:2132px"><thead><tr>' +
     trackerSelTh("ext") +
     trackerOpenTh() +
     '<th class="order-actions-col" style="width:220px">Status / Stage</th>' +
     tsortTh("ext", "order", "Order #", 120) + tsortTh("ext", "load", "Load #", 96) +
     tsortTh("ext", "broker", "Broker/Customer", 190) + tsortTh("ext", "po", "PU/PO", 100) +
     tsortTh("ext", "delnum", "Delivery #", 100) + tsortTh("ext", "rate", "Rate", 100) + tsortTh("ext", "notes", "Private notes", 200) +
-    tsortTh("ext", "tarp", "Tarp", 56) +
+    tsortTh("ext", "tarp", "Tarp", 56) + tsortTh("ext", "backhaul", "Backhaul", 84) +
     tsortTh("ext", "pickup", "Pickup Address", 180) + tsortTh("ext", "drop", "Drop Address", 180) +
     tsortTh("ext", "ordered", "Ordered", 112) + tsortTh("ext", "delivered", "Delivered", 112) +
     tsortTh("ext", "docs", "Docs", 64) +
@@ -6203,7 +6206,10 @@ function motMissing(from, to) {
 function motAssignShop(from, to) {
   var fleet = (DB.trucks || []).filter(function (t) { return t.active !== false && t.number; }).map(function (t) { return String(t.number); });
   if (!fleet.length) return Promise.resolve(0);
-  return api("motive/unidentified", { start: from, end: to, trucks: fleet, apply: true, apply_all: true }).then(function (r) {
+  // Motive counts days in UTC, so an evening trip (after about 5 PM Pacific) is on the NEXT day there. Look one day further so
+  // the last evening of the range is not missed; only trips noted "Yard Move in shop" are ever assigned, so the extra day is safe.
+  var toNext = new Date(to + "T12:00:00"); toNext.setDate(toNext.getDate() + 1);
+  return api("motive/unidentified", { start: from, end: rptIso(toNext), trucks: fleet, apply: true, apply_all: true }).then(function (r) {
     var n = ((r && r.applied) || []).filter(function (x) { return x.ok; }).length; MOT.shopLast = (MOT.shopLast || 0) + n; return n;
   }, function () { return 0; });
 }
@@ -9423,6 +9429,11 @@ document.addEventListener("change", function (e) {
       // right away — not a full render(), which would rebuild the very
       // <select> being tabbed through and break tab-through (D84).
       renderRail();
+      // The same box can be on screen twice (the tracker row and the open side window): keep the other copy in step.
+      [].forEach.call(document.querySelectorAll('[data-oedit="' + ov.id + '"][data-field="' + ofield + '"]'), function (twin) {
+        if (twin === e.target || twin === document.activeElement || twin.dataset.smartdate !== undefined) return;
+        if (twin.type === "checkbox") twin.checked = !!onext; else if (twin.value !== String(onext == null ? "" : onext)) twin.value = onext == null ? "" : onext;
+      });
       // The chip shows several of these fields (TARP flag, order and load
       // numbers, pallets…): repaint every copy of it, and the one at the top
       // of an open side window, so a change appears right away.
@@ -12127,7 +12138,20 @@ function historyEventJump(e) {
    tip; even = chain is back to root's data state, odd = currently reverted.
    Only chains with something to actually revert/redo survive — Nate: "days
    with edits u can reverse and thats that" (D135). */
+/* An order's "autofill" box holds two things nobody edits by hand: its place in Staging (_staged, saved there so both dispatchers see
+   the same line) and the old Auto / Check reader tags. Changes that touch only that box are logged (the log is also what carries a
+   Staging move to the other dispatcher's screen) but they are not edits anyone would undo, so the History panel leaves them out. */
+function historyStagingOnly(e) {
+  var ch = e.changes || [];
+  if (!ch.length) return false;
+  return ch.every(function (c) {
+    if (c.table_name !== "orders" || c.operation !== "UPDATE") return false;
+    var f = (c.changed_fields || []).filter(function (x) { return x !== "updated_at"; });
+    return f.length === 1 && f[0] === "autofill";
+  });
+}
 function historyGroupedEvents(events) {
+  events = events.filter(function (e) { return !historyStagingOnly(e); });
   var byId = {}; events.forEach(function (e) { byId[e.id] = e; });
   var seen = {}, out = [];
   events.forEach(function (e) {
