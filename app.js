@@ -6201,17 +6201,53 @@ function motMissing(from, to) {
   return from > to ? [] : motDaysBetween(from, to).filter(function (d) { return !MOT.pulled[d]; });
 }
 // Pull the given days from Motive (31 at a time) and save them. force = true re-pulls days already saved.
-// Trips on the fleet's trucks with no driver logged in go to the shop drivers (Shop Mechanic 1, or 2 when 1 is busy).
-// Runs with every Motive pull, finished days only, fleet trucks only; it never stops a pull when it can't run.
+// Trips on the fleet's trucks with no driver logged in, noted "Yard Move in shop", go to the shop drivers (Shop Mechanic 1, or 2
+// when 1 is busy). Runs with every Motive pull, finished days only, fleet trucks only; it never stops a pull when it can't run.
+// Nothing is written to Motive until you confirm: the function first only LOOKS and returns its plan, a window lists the trips it
+// would assign (all ticked), and only the ones you leave ticked are assigned.
 function motAssignShop(from, to) {
   var fleet = (DB.trucks || []).filter(function (t) { return t.active !== false && t.number; }).map(function (t) { return String(t.number); });
   if (!fleet.length) return Promise.resolve(0);
   // Motive counts days in UTC, so an evening trip (after about 5 PM Pacific) is on the NEXT day there. Look one day further so
   // the last evening of the range is not missed; only trips noted "Yard Move in shop" are ever assigned, so the extra day is safe.
-  var toNext = new Date(to + "T12:00:00"); toNext.setDate(toNext.getDate() + 1);
-  return api("motive/unidentified", { start: from, end: rptIso(toNext), trucks: fleet, apply: true, apply_all: true }).then(function (r) {
-    var n = ((r && r.applied) || []).filter(function (x) { return x.ok; }).length; MOT.shopLast = (MOT.shopLast || 0) + n; return n;
+  var toNext = new Date(to + "T12:00:00"); toNext.setDate(toNext.getDate() + 1); var end = rptIso(toNext);
+  return api("motive/unidentified", { start: from, end: end, trucks: fleet }).then(function (plan) {
+    var rows = ((plan && plan.periods) || []).filter(function (p) { return p.assign_to && p.id; });
+    if (!rows.length) return 0;
+    return motConfirmShop(rows).then(function (ids) {
+      if (!ids.length) return 0;
+      return api("motive/unidentified", { start: from, end: end, trucks: fleet, apply: true, only_ids: ids }).then(function (r) {
+        var res = (r && r.applied) || [], n = res.filter(function (x) { return x.ok; }).length;
+        MOT.shopLast = (MOT.shopLast || 0) + n;
+        if (res.length > n) toast((res.length - n) + " shop trip" + (res.length - n === 1 ? "" : "s") + " couldn't be assigned in Motive", true);
+        return n;
+      });
+    });
   }, function () { return 0; });
+}
+// The window: one line per trip the function would assign. Resolves with the Motive ids left ticked ([] = skip). Closing the
+// window any other way counts as skipping, so a pull never hangs on it.
+function motConfirmShop(rows) {
+  return new Promise(function (resolve) {
+    var done = false, finish = function (ids) { if (done) return; done = true; if (obs) obs.disconnect(); closeModal(); resolve(ids); }, obs = null;
+    var body = rows.map(function (p) {
+      return '<tr><td><input type="checkbox" class="mshop-cb" data-id="' + esc(p.id) + '" checked></td><td><b>' + esc(p.truck || "") + "</b></td><td>" + esc(p.start_pacific || "") +
+        '</td><td class="n">' + (p.distance != null ? esc(p.distance) : "") + "</td><td>" + esc(p.assign_to) + "</td></tr>";
+    }).join("");
+    openModal('<div class="modal-hd"><h2>Assign shop trips?</h2></div><div class="modal-body"><p style="margin:0 0 10px;color:var(--ink-2)">These trips on your trucks had no driver and are noted &ldquo;Yard Move in shop&rdquo;. ' +
+      "Untick any you don&rsquo;t want given to a shop driver. Nothing is changed in Motive until you click Assign.</p>" +
+      '<table class="data" style="min-width:0"><thead><tr><th style="width:28px"></th><th>Truck</th><th>Started (Pacific)</th><th class="n">Miles</th><th>Assign to</th></tr></thead><tbody>' + body + "</tbody></table></div>" +
+      '<div class="modal-ft"><button class="btn" id="mshop-skip">Skip These</button><span style="flex:1"></span><button class="btn pri" id="mshop-go"></button></div>');
+    var go = $("#mshop-go"), count = function () {
+      var n = document.querySelectorAll("#modal .mshop-cb:checked").length; go.textContent = n ? "Assign " + n + " Trip" + (n === 1 ? "" : "s") : "Assign"; go.disabled = !n;
+    };
+    count();
+    [].forEach.call(document.querySelectorAll("#modal .mshop-cb"), function (c) { c.onchange = count; });
+    go.onclick = function () { finish([].map.call(document.querySelectorAll("#modal .mshop-cb:checked"), function (c) { return Number(c.dataset.id); })); };
+    $("#mshop-skip").onclick = function () { finish([]); };
+    var m = $("#modal"); obs = new MutationObserver(function () { if (!m.classList.contains("on")) finish([]); });
+    obs.observe(m, { attributes: true, attributeFilter: ["class"] });
+  });
 }
 function motPull(days) {
   if (!days.length) return Promise.resolve(0);
