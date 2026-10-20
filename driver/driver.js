@@ -117,7 +117,12 @@ var S = {
   serverNotes: {}, serverScans: {}, viewSent: {}, refreshedAt: null
 };
 
-/* ── Sign-in (just remembers a name on this device) ─────────────────── */
+/* ── Sign-in (just remembers a name on this device) ───────────────────
+   NAME_PICKER: the "type or pick your name" screen (and the Log Out button that leads back to it) is switched OFF while
+   sign-in by employee number is built. Nothing below was deleted: set it to true and the old screen comes back exactly as it was.
+   With it off, a tablet that already signed in keeps working as before (its name is remembered on the device); a tablet with
+   nobody signed in shows Current Week only, with a note, and has no own tab, notes or scans until the new sign-in is in. */
+var NAME_PICKER = false;
 function signInAs(who) {
   S.who = who; storeJson("dept12DriverWho", who);
   S.tab = who.role === "bagplant" ? "cw" : String(who.truck);
@@ -349,7 +354,7 @@ function renderHeader() {
     "<b>" + esc(S.who.name) + "</b><span>Truck " + esc(S.who.truck) + "</span>";
   // The bag order color code sits in the header, just left of Log Out.
   $("#hdr").innerHTML = S.who ? bagKeyHtml() +
-    (BAG_PLANT ? "" : '<button class="btn drv-hbtn" id="signout">Log Out</button>') : "";
+    (BAG_PLANT || !NAME_PICKER ? "" : '<button class="btn drv-hbtn" id="signout">Log Out</button>') : "";
 }
 function renderTabs() {
   var tabs = $("#tabs");
@@ -399,6 +404,8 @@ function toolbarHtml(title) {
     (BAG_PLANT ? "" : '<button class="btn pri" id="refresh"' + (S.loading ? " disabled" : "") + ">" + SYNC_ICON + (S.loading ? "Refreshing" : "Refresh") + "</button>") + "</div>";
 }
 function noticeHtml() {
+  if (!S.who && !NAME_PICKER && !DEMO) return '<div class="drv-note"><b>Current Week.</b> Your own tab, notes and scans return with the new sign-in.</div>' +
+    (S.error ? '<div class="drv-note"><b>Couldn\'t refresh.</b> ' + esc(S.error) + " Showing the last loaded schedule.</div>" : "");
   if (DEMO) return '<div class="drv-note"><b>Demo data.</b> Built-in sample schedule for testing the layout.</div>';
   if (S.error) return '<div class="drv-note"><b>Couldn\'t refresh.</b> ' + esc(S.error) + " Showing the last loaded schedule.</div>";
   return "";
@@ -406,7 +413,7 @@ function noticeHtml() {
 
 /* ── Current Week ─────────────────────────────────────────────────────── */
 function vCurrentWeek() {
-  var p = S.payload, cw = p.current_week, today = todayIso(), mine = S.who.role === "driver" ? String(S.who.truck) : "";
+  var p = S.payload, cw = p.current_week, today = todayIso(), mine = S.who && S.who.role === "driver" ? String(S.who.truck) : "";
   // Bag plant: the whole fleet fills the screen, columns as wide as they fit.
   // Bag plant: columns share the screen exactly (its date column is 96px).
   var dateW = 88;   // the bagger page uses exactly the drivers' sizes
@@ -746,7 +753,7 @@ function render() {
   try { renderInner(); } catch (e) { showFatal(e); if (window.console) console.error(e); }
 }
 function renderInner() {
-  document.body.classList.toggle("drv-signed-out", !S.who || !S.payload);
+  document.body.classList.toggle("drv-signed-out", NAME_PICKER && (!S.who || !S.payload));
   document.body.classList.toggle("drv-bagplant", isBagPlant());
   renderHeader();
   renderTabs();
@@ -761,7 +768,7 @@ function renderInner() {
     return;
   }
   if (BAG_PLANT && !S.payload) { $("#main").innerHTML = '<div class="drv-note"><b>Loading the schedule…</b></div>'; return; }
-  if (!S.who || !S.payload) {
+  if (NAME_PICKER && (!S.who || !S.payload)) {
     // Already on the sign-in screen: just refresh the name list, never
     // rebuild the box (that would kick out whoever is mid-typing).
     var box = $("#login-driver");
@@ -773,7 +780,7 @@ function renderInner() {
     $("#main").innerHTML = vLogin();
     return;
   }
-  if (!allowedTab(S.tab)) S.tab = driverByTruck(S.who.truck) ? String(S.who.truck) : "cw";
+  if (!allowedTab(S.tab)) S.tab = S.who && driverByTruck(S.who.truck) ? String(S.who.truck) : "cw";
   var d = S.tab === "cw" ? null : driverByTruck(S.tab);
   var prev = $("#main .grid-wrap, #main .drv-scroll"), top = prev ? prev.scrollTop : 0, left = prev ? prev.scrollLeft : 0;
   var title = d ? (d.driver || "Unassigned") + " · " + d.truck : "Current Week";
