@@ -2007,3 +2007,57 @@ body.bill-dragging{user-select:none;-webkit-user-select:none;cursor:ns-resize}
 /* Paperwork dashes in the order side window (same bars as the Billing queue), where the "Missing:" line used to be. */
 .dw-pw{display:flex;align-items:center;gap:12px;margin-top:8px}
 .dw-pw-l{font:600 var(--fs-caption)/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+
+/* Fleet: drivers who have no truck right now (they get their Employee # here) */
+.fleet-spare{padding:14px 12px 20px}
+.fleet-spare h3{font-size:var(--fs-body-lg);font-weight:700;margin:0 0 8px;color:var(--ink)}
+
+/* ── Sign window (rate con review and signing) ── */
+.sgn{position:fixed;inset:0;z-index:330;background:var(--paper);display:flex;flex-direction:column;outline:none}
+.sgn-hd{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--rule-2);background:var(--panel)}
+.sgn-hd h2{margin:0;font-size:var(--fs-body-lg);font-weight:760;letter-spacing:-.01em}
+.sgn-hd .sub{font-size:var(--fs-label);color:var(--ink-3)}
+.sgn-body{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 380px;grid-template-rows:minmax(0,1fr)}
+.sgn-view{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--rule-2)}
+.sgn-tools{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid var(--rule);background:var(--panel);flex-wrap:wrap}
+.sgn-tools .sep{width:1px;align-self:stretch;background:var(--rule-2);margin:0 4px}
+.sgn-tools .zl{font-size:var(--fs-label);min-width:38px;text-align:center}
+.sgn-tools .hint{font-size:var(--fs-label);color:var(--ink-3);margin-left:6px}
+.sgn-tools .hint b{color:var(--ink)}
+.sgn-scroll{flex:1;min-height:0;overflow:auto;background:var(--sunk);padding:14px;display:flex;flex-direction:column;align-items:center;gap:14px}
+.sgn-page{position:relative;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.25);flex:none}
+.sgn-page canvas{display:block}
+.sgn-ov{position:absolute;inset:0}
+.sgn.arm .sgn-ov{cursor:crosshair}
+.sgn-st{position:absolute;cursor:move;user-select:none;touch-action:none;line-height:1;white-space:nowrap;color:#0b1d5c;font-family:Helvetica,Arial,sans-serif}
+.sgn-st img{display:block;pointer-events:none}
+.sgn-st.sel{outline:1.5px dashed var(--brand);outline-offset:3px}
+.sgn-st .x{position:absolute;right:-12px;top:-14px;width:18px;height:18px;border-radius:50%;background:var(--bad);color:#fff;font:700 12px/18px var(--font);text-align:center;cursor:pointer;display:none}
+.sgn-st.sel .x{display:block}
+.sgn-hit{position:absolute;background:rgba(255,214,0,.38);outline:2px solid rgba(230,160,0,.9);border-radius:2px;pointer-events:none;animation:sgnflash 2.4s ease-out forwards}
+@keyframes sgnflash{0%,60%{opacity:1}100%{opacity:0}}
+.sgn-side{display:flex;flex-direction:column;min-height:0;background:var(--panel)}
+.sgn-side .scroll{flex:1;overflow:auto;padding:12px 14px}
+.sgn-side .note{font-size:var(--fs-label);color:var(--ink-3);margin:0 0 10px;line-height:1.4}
+.sgn-ft{display:flex;flex-direction:column;gap:8px;padding:10px 14px;border-top:1px solid var(--rule-2);background:var(--panel)}
+.sgn-ft .row{display:flex;align-items:center;gap:8px}
+.sgn-ft .keep{display:flex;align-items:center;gap:6px;font-size:var(--fs-label);color:var(--ink-2)}
+.sgn-chip,.pdfchip{display:inline-flex;align-items:center;gap:7px;min-width:0;max-width:100%;box-sizing:border-box;padding:4px 10px 4px 8px;border:1px solid var(--rule-2);border-radius:var(--r-sm);background:var(--paper);color:var(--ink);font-size:var(--fs-body-sm)}
+.sgn-chip .ico,.pdfchip .ico{display:inline-flex;flex:none;color:var(--bad)}
+.sgn-chip .nm,.pdfchip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.sgn-chip.ready,.pdfchip{cursor:grab;transition:border-color var(--motion-fast) var(--ease-ui),background-color var(--motion-fast) var(--ease-ui)}
+.sgn-chip.ready:hover,.pdfchip:hover{border-color:var(--focus);background:var(--focus-soft)}
+.sgn-chip.ready:active,.pdfchip:active{cursor:grabbing}
+.sgn-chip.off{color:var(--ink-3);border-style:dashed}
+.sgn-chip.off .ico{color:var(--ink-3)}
+.pdfchip.wait{opacity:.65}
+.docrow .pdfchip{flex:1;min-width:0}
+.sgn-pop{position:absolute;z-index:5;left:170px;top:52px;background:var(--panel);border:1px solid var(--rule-2);border-radius:var(--r-md);box-shadow:var(--e2);padding:12px;width:330px}
+.sgn-pop h4{margin:0 0 8px;font-size:var(--fs-body)}
+.sgn-pop .tabs{display:flex;gap:4px;margin-bottom:8px}
+.sgn-pop canvas.pad{width:100%;height:110px;background:#fff;border:1px solid var(--rule-2);border-radius:var(--r-sm);touch-action:none;cursor:crosshair}
+.sgn-pop .prev{height:56px;background:#fff;border:1px solid var(--rule-2);border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;margin-top:8px}
+.sgn-pop .prev img{max-height:48px;max-width:90%}
+.sgn-pop input{width:100%;box-sizing:border-box;background:var(--paper);border:1px solid var(--rule-2);border-radius:var(--r-sm);padding:6px 8px;font-size:var(--fs-body)}
+.sgn-pop .acts{display:flex;gap:6px;justify-content:flex-end;margin-top:10px}
+@media (max-width:900px){.sgn-body{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr)}.sgn-view{border-right:0;border-bottom:1px solid var(--rule-2)}}

@@ -20,6 +20,7 @@ var NAV_ICONS = {
   calendar: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5 1.5v3M11 1.5v3"/></svg>',
   copy: '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="5" y="5" width="8" height="8" rx="1"/><path d="M3 11H2.5A1.5 1.5 0 0 1 1 9.5v-7A1.5 1.5 0 0 1 2.5 1h7A1.5 1.5 0 0 1 11 2.5V3"/></svg>',
   orderPanel: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2" width="13" height="12" rx="1"/><path d="M10.5 2v12M5 8h4M7 6l2 2-2 2"/></svg>',
+  pdf: '<svg width="15" height="18" viewBox="0 0 16 20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 1.5h8L14 5.5V18.5H2z"/><path d="M10 1.5v4h4"/><path d="M4.6 15v-3.6h1.3a1 1 0 0 1 0 2H4.6M8 15v-3.6h.9a1.8 1.8 0 0 1 0 3.6zM11.6 15v-3.6h1.8M11.6 13h1.4" stroke-width="0.9"/></svg>',
   empty: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8"/></svg>'
 };
 function icon(name) {
@@ -2157,14 +2158,7 @@ function openInternalOrder(o) {
   h += driverNotesHtml(o.id) + driverScansHtml(o.id);
   h += '<div><div class="sec-h">Documents — ' + ds.length + "</div>" +
     '<div class="doclist" id="dw-docs">';
-  ds.forEach(function (d) {
-    h += '<div class="docrow"><span class="pill">' + esc(d.doc_type.replace("_", " ")) + "</span>" +
-      '<span class="nm">' + esc(d.original_filename || "") + "</span>" +
-      '<button class="btn sm" data-viewpath="' + esc(d.storage_path) + '" data-viewname="' +
-        esc(d.original_filename || "") + '">View</button>' +
-      '<a class="btn sm" href="#" data-filepath="' + esc(d.storage_path) + '" data-filename="' +
-        esc(d.original_filename || "") + '" data-filemode="download">Download</a></div>';
-  });
+  ds.forEach(function (d) { h += docRowHtml(d); });
   h += '</div><div class="drop" id="dw-drop" style="margin-top:9px"><b>Drop documents here</b>' +
        "Delivery receipt, signed POD, invoice — stays linked to this order.</div></div>";
 
@@ -2173,6 +2167,7 @@ function openInternalOrder(o) {
   setDrawerHtml(h);
   $("#drawer").classList.add("on"); $("#scrim").classList.add("on");
   $("#drawer").setAttribute("aria-hidden", "false");
+  docPrefetchAll();
 }
 /* ── Pickup/Delivery type-ahead combo (D42) ──────────────────────────────────
    As Nate types it autofills from the Pick/Drop List (locations); picking one
@@ -2527,6 +2522,7 @@ function openTransferOrder(o) {
   setDrawerHtml(h);
   $("#drawer").classList.add("on"); $("#scrim").classList.add("on");
   $("#drawer").setAttribute("aria-hidden", "false");
+  docPrefetchAll();
 }
 function openOrder(oid) {
   DRAWER_OID = oid;
@@ -2586,14 +2582,7 @@ function openOrder(oid) {
   h += driverNotesHtml(o.id) + driverScansHtml(o.id);
   h += '<div><div class="sec-h">Documents — ' + ds.length + "</div>" +
     '<div class="doclist" id="dw-docs">';
-  ds.forEach(function (d) {
-    h += '<div class="docrow"><span class="pill">' + esc(d.doc_type.replace("_", " ")) + "</span>" +
-      '<span class="nm">' + esc(d.original_filename || "") + "</span>" +
-      '<button class="btn sm" data-viewpath="' + esc(d.storage_path) + '" data-viewname="' +
-        esc(d.original_filename || "") + '">View</button>' +
-      '<a class="btn sm" href="#" data-filepath="' + esc(d.storage_path) + '" data-filename="' +
-        esc(d.original_filename || "") + '" data-filemode="download">Download</a></div>';
-  });
+  ds.forEach(function (d) { h += docRowHtml(d); });
   h += "</div>";
   var missing = need.filter(function (t) { return !have[t]; });
   if (o.route_mode === "custom") {
@@ -2619,6 +2608,7 @@ function openOrder(oid) {
   setDrawerHtml(h);
   $("#drawer").classList.add("on"); $("#scrim").classList.add("on");
   $("#drawer").setAttribute("aria-hidden", "false");
+  docPrefetchAll();
 }
 /* ── Filing a note to a customer or a location ────────────────────────────────────────────────────────────
    The + beside Private notes, Dispatch Note and each Note From Driver adds that text, stamped with today's date and
@@ -2803,7 +2793,10 @@ function packageDocs(oid) {
   var wanted = isExt(o) ? ["rate_con", "pod", "invoice"] : ["pod", "invoice"];
   var out = [];
   wanted.forEach(function (t) { ds.forEach(function (d) { if (d.doc_type === t) out.push(d); }); });
-  return out;
+  // A signed copy takes the place of the document it was made from (both stay in the Documents list).
+  var replaced = {};
+  out.forEach(function (d) { var ef = d.extracted_fields; if (ef && ef.signed && ef.of_name) replaced[d.doc_type + "|" + ef.of_name] = 1; });
+  return out.filter(function (d) { return !replaced[d.doc_type + "|" + (d.original_filename || "")]; });
 }
 function fetchDocB64(d) {
   return fetchStoredFile(d.storage_path).then(function (r) { return r.arrayBuffer(); })
@@ -4655,11 +4648,44 @@ function designationRuleColor(categoryId) {
   if (!color) color = CATCOLOR[categoryId]; // defensive during an unmigrated bootstrap
   return color && String(color).charAt(0) === "#" ? color : "";
 }
+/* Employee numbers (drivers.employee_no). Not part of the normal bootstrap: read on demand through api_driver_employee_nos and
+   kept in EMP.by {driver_id: number}. EMP.ok is false when that SQL has not been run yet (the column then says so). */
+var EMP = { by: {}, at: 0, loading: false, ok: null, err: "" };
+function empEnsure() {
+  if (EMP.loading || EMP.ok === false || (EMP.at && Date.now() - EMP.at < 60000)) return;
+  EMP.loading = true;
+  api("driver/employee-nos").then(function (list) {
+    EMP.by = {}; (list || []).forEach(function (r) { EMP.by[r.driver_id] = r.employee_no; }); EMP.ok = true; EMP.at = Date.now();
+  }, function (e) { EMP.ok = false; EMP.err = e.message || ""; }).then(function () {
+    EMP.loading = false;
+    var ae = document.activeElement;
+    if (SEC === "database" && !(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) render();
+  });
+}
+function empInput(driverId) {
+  if (EMP.ok === false) return '<span style="color:var(--ink-3)" title="Run the employee numbers SQL first">not set up</span>';
+  return '<input class="cell-i n" data-empno="' + esc(driverId) + '" data-was="' + esc(EMP.by[driverId] || "") + '" placeholder="Employee #" value="' + esc(EMP.by[driverId] || "") + '" autocomplete="off">';
+}
+// Drivers with no truck right now (a spare driver) have no row in Fleet, so they get a small list of their own under it.
+function spareDriversHtml() {
+  empEnsure();
+  var list = (DB.drivers || []).filter(function (d) { return d.active !== false && !d.truck; });
+  if (!list.length || EMP.ok === false) return "";
+  return '<div class="fleet-spare"><h3>Drivers without a truck</h3><table class="data" style="width:340px;min-width:0"><tbody>' +
+    list.map(function (d) { return '<tr><td><div class="cell"><b>' + esc(d.full_name) + '</b></div></td><td style="width:150px"><div class="cell">' + empInput(d.id) + "</div></td></tr>"; }).join("") +
+    "</tbody></table></div>";
+}
 /* One cell for a field in a record context — dispatches on the field's `ui`
    special-renderer, else a generic editable cell writing to its real column. */
 function fieldCell(f, ctx) {
   if (f.ui === "designation") return designationSelect(ctx.locations ? ctx.locations.obj : null, true);
   if (f.ui === "equipment") { var t = ctx.trucks.obj; return '<td><div class="cell"><input class="cell-i" list="eqtypes" data-rowtable="trucks" data-rowid="' + ctx.trucks.id + '" data-rowfield="equipment_type" value="' + esc(t.eq || "") + '"></div></td>'; }
+  if (f.ui === "employeeno") {
+    // The number belongs to the DRIVER (reached through the truck's current driver), so a truck change never moves it.
+    var t5 = ctx.trucks.obj; empEnsure();
+    if (!t5.driver_id) return '<td><div class="cell" style="color:var(--ink-3)">—</div></td>';
+    return '<td><div class="cell">' + empInput(t5.driver_id) + "</div></td>";
+  }
   if (f.ui === "truckdriver") { var t2 = ctx.trucks.obj; return '<td><div class="cell"><input class="cell-i" data-truckdriver="' + ctx.trucks.id + '" value="' + esc(t2.driver_name || "") + '"></div></td>'; }
   if (f.ui === "color") {
     // Fleet's driver color lives on `drivers`, reached through the truck's
@@ -4735,6 +4761,7 @@ function fieldRawValue(f, ctx) {
     return cat ? cat.name : "";
   }
   if (f.ui === "truckdriver") return (ctx.trucks && ctx.trucks.obj.driver_name) || "";
+  if (f.ui === "employeeno") return (ctx.trucks && EMP.by[ctx.trucks.obj.driver_id]) || "";
   if (f.ui === "color") {
     if (f.storage === "column:drivers.color") return (ctx.trucks && ctx.trucks.obj.driver_color) || "";
     var rparts = f.storage.indexOf("column:") === 0 ? f.storage.slice(7).split(".") : null;
@@ -4901,6 +4928,7 @@ function vBuiltin(ent) {
       }).join("") + '<td class="col-plus-cell"></td></tr>';
   });
   h += "</tbody></table>";
+  if (slug === "fleet") h += spareDriversHtml();
   if (!rows.length) h += emptyStateHtml(
     archiveCfg && archivedView ? "No archived " + archiveCfg.plural : "No rows yet");
   return h + "</div>";
@@ -7941,97 +7969,522 @@ function afFindExisting(p) {
   return orders().filter(function (o) { return isExt(o) && !o.is_transfer && ((p.solomon && o.rexius_order_no === p.solomon) || (p.load_no && o.broker_load_no === p.load_no)); })[0] || null;
 }
 function afStopVal(p, which, k) { var s = p[which]; return s && s[k] ? s[k] : ""; }
+/* The boxes of the review, shared by the small window (pasted text) and the wide window beside the PDF. */
+function afFormHtml(p) {
+  var conf = (p.rc && p.rc.conf) || {};
+  function row(label, key, val, opts) {
+    opts = opts || {};
+    var low = opts.low || (val === "" || val == null ? false : conf[key] === "check");
+    return "<label>" + esc(label) + '</label><div><input data-afr="' + key + '" value="' + esc(val == null ? "" : val) + '" placeholder="' + (opts.ph || "Not found") + '"' +
+      (opts.list ? ' list="' + opts.list + '"' : "") + (low ? ' class="afr-check" title="The reader was not sure of this one. Check it."' : "") + ' autocomplete="off">' +
+      (opts.hint ? '<div class="afr-hint" id="afr-hint-' + opts.hint + '"></div>' : "") + "</div>";
+  }
+  function stop(which, label) {
+    var s = p[which], lowAll = s && s.conf === "check";
+    return '<div class="afr-stop"><div class="sec-h">' + label + '</div><div class="afr-grid">' +
+      ["name", "address", "city"].map(function (k) { return '<input data-afr="' + which + "." + k + '" value="' + esc(afStopVal(p, which, k)) + '" placeholder="' + { name: "Name", address: "Address", city: "City" }[k] + '"' + (lowAll ? ' class="afr-check"' : "") + ' autocomplete="off">'; }).join("") +
+      '<div class="afr-row2"><input data-afr="' + which + '.state" value="' + esc(afStopVal(p, which, "state")) + '" placeholder="State" maxlength="2" autocomplete="off">' +
+      '<input data-afr="' + which + '.zip" value="' + esc(afStopVal(p, which, "zip")) + '" placeholder="ZIP" autocomplete="off">' +
+      '<input data-afr="' + which + '.appt" value="' + esc(afStopVal(p, which, "appt")) + '" placeholder="Appointment" autocomplete="off"></div></div>' +
+      '<div class="afr-hint" id="afr-hint-' + which + '"></div></div>';
+  }
+  var brokers = brokerList().map(function (b) { return '<option value="' + esc(b.name) + '">'; }).join("");
+  return '<datalist id="afr-brokers">' + brokers + "</datalist>" +
+    '<div class="fields">' + row("Broker", "broker", p.broker || "", { list: "afr-brokers", hint: "broker" }) + row("Order #", "solomon", p.solomon || "", { ph: "Optional" }) +
+    row("Load #", "load_no", p.load_no || "") + row("PU / PO", "po", p.po || "") +
+    row("Rate", "rate", p.rate == null ? "" : "$" + Number(p.rate).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), { low: p.rate != null && (p.rate > 3000 || p.rate < 150) || (p.rate != null && conf.rate === "check") }) + "</div>" +
+    stop("pickup", "Pickup") + stop("delivery", "Drop");
+}
+// Wires the boxes inside `root`: the hints under them, and collect() which returns the (possibly edited) values as the reader's own shape.
+function afFormBind(root, p) {
+  var q = function (k) { var e = root.querySelector('[data-afr="' + k + '"]'); return e ? e.value.trim() : ""; };
+  function brokerHit(name) {
+    var lc = String(name).toLowerCase(), exact = brokerList().filter(function (b) { return String(b.name).toLowerCase() === lc; })[0];
+    if (exact) return { b: exact, how: "exact" };
+    var f = name ? findBroker(name) : null; return f && f.broker ? { b: f.broker, how: "close" } : null;
+  }
+  function stopObj(which) {
+    var s = { name: q(which + ".name"), address: q(which + ".address"), city: q(which + ".city"), state: q(which + ".state").toUpperCase(), zip: q(which + ".zip"), appt: q(which + ".appt"), conf: "ok" };
+    return s.name || s.address || s.city || s.appt ? s : null;
+  }
+  function hints() {
+    var bh = root.querySelector("#afr-hint-broker"), name = q("broker"), hit = name ? brokerHit(name) : null;
+    if (bh) bh.textContent = !name ? "" : hit ? (hit.how === "exact" ? "Existing customer" : "Closest match: " + hit.b.name + ". It will be used.") : "A new customer will be added";
+    ["pickup", "delivery"].forEach(function (w) {
+      var el = root.querySelector("#afr-hint-" + w), s = stopObj(w); if (!el) return;
+      var mt = s && (s.name || s.address) ? afMatchLocation(s) : null, loc = mt && locById(mt.id);
+      el.textContent = !s ? "" : mt && loc ? "On the Pick/Drop List: " + (loc.name || "") + (loc.city ? ", " + loc.city : "") : s.name && s.city ? "A new location will be added to the Pick/Drop List" : "Needs a name and a city to be added; it will be left blank";
+    });
+  }
+  hints();
+  root.oninput = function (e) { if (e.target && e.target.dataset && e.target.dataset.afr) { e.target.classList.remove("afr-check"); hints(); } };
+  return { hints: hints, collect: function () {
+    var out = Object.assign({}, p), name = q("broker"), hit = name ? brokerHit(name) : null;
+    out.broker = hit ? hit.b.name : name; out.broker_id = hit ? hit.b.id : undefined;
+    out.solomon = q("solomon"); out.load_no = q("load_no"); out.po = q("po");
+    var rt = q("rate").replace(/[^0-9.]/g, ""); out.rate = rt === "" || isNaN(Number(rt)) ? null : Number(rt);
+    out.pickup = stopObj("pickup"); out.delivery = stopObj("delivery");
+    return out;
+  } };
+}
 function afReview(p, source) {
   return new Promise(function (resolve) {
-    var conf = (p.rc && p.rc.conf) || {}, ex = afFindExisting(p);
-    function row(label, key, val, opts) {
-      opts = opts || {};
-      var low = opts.low || (val === "" || val == null ? false : conf[key] === "check");
-      return "<label>" + esc(label) + '</label><div><input data-afr="' + key + '" value="' + esc(val == null ? "" : val) + '" placeholder="' + (opts.ph || "Not found") + '"' +
-        (opts.list ? ' list="' + opts.list + '"' : "") + (low ? ' class="afr-check" title="The reader was not sure of this one. Check it."' : "") + ' autocomplete="off">' +
-        (opts.hint ? '<div class="afr-hint" id="afr-hint-' + opts.hint + '"></div>' : "") + "</div>";
-    }
-    function stop(which, label) {
-      var s = p[which], lowAll = s && s.conf === "check";
-      return '<div class="afr-stop"><div class="sec-h">' + label + '</div><div class="afr-grid">' +
-        ["name", "address", "city"].map(function (k) { return '<input data-afr="' + which + "." + k + '" value="' + esc(afStopVal(p, which, k)) + '" placeholder="' + { name: "Name", address: "Address", city: "City" }[k] + '"' + (lowAll ? ' class="afr-check"' : "") + ' autocomplete="off">'; }).join("") +
-        '<div class="afr-row2"><input data-afr="' + which + '.state" value="' + esc(afStopVal(p, which, "state")) + '" placeholder="State" maxlength="2" autocomplete="off">' +
-        '<input data-afr="' + which + '.zip" value="' + esc(afStopVal(p, which, "zip")) + '" placeholder="ZIP" autocomplete="off">' +
-        '<input data-afr="' + which + '.appt" value="' + esc(afStopVal(p, which, "appt")) + '" placeholder="Appointment" autocomplete="off"></div></div>' +
-        '<div class="afr-hint" id="afr-hint-' + which + '"></div></div>';
-    }
-    var brokers = brokerList().map(function (b) { return '<option value="' + esc(b.name) + '">'; }).join("");
+    var ex = afFindExisting(p);
     var h = '<div class="modal-hd"><h2>Review ' + (source === "text" ? "Pasted Load Info" : "Rate Con") + '</h2></div><div class="modal-body af-review">' +
       (ex ? '<div class="note-bar" style="margin:0 0 10px">This matches order <b>' + esc(ex.rexius_order_no || ex.broker_load_no || "") + "</b>. Only its blank boxes will be filled in; nothing already on it is changed.</div>" :
         '<p class="afr-intro">Check what was read, fix anything, then create the order. Nothing is saved until you do.</p>') +
-      '<datalist id="afr-brokers">' + brokers + "</datalist>" +
-      '<div class="fields">' + row("Broker", "broker", p.broker || "", { list: "afr-brokers", hint: "broker" }) + row("Order #", "solomon", p.solomon || "", { ph: "Optional" }) +
-      row("Load #", "load_no", p.load_no || "") + row("PU / PO", "po", p.po || "") +
-      row("Rate", "rate", p.rate == null ? "" : "$" + Number(p.rate).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), { low: p.rate != null && (p.rate > 3000 || p.rate < 150) || (p.rate != null && conf.rate === "check") }) + "</div>" +
-      stop("pickup", "Pickup") + stop("delivery", "Drop") +
+      afFormHtml(p) +
       '</div><div class="modal-ft"><button class="btn" id="afr-cancel" type="button">Cancel</button><span style="flex:1"></span>' +
       '<button class="btn pri" id="afr-go" type="button">' + (ex ? "Fill In Order" : "Create Order") + "</button></div>";
     openModal(h); var m = $("#modal"); if (m) m.classList.add("wide-modal");
-    var q = function (k) { var e = document.querySelector('#modal [data-afr="' + k + '"]'); return e ? e.value.trim() : ""; };
-    function brokerHit(name) {
-      var lc = String(name).toLowerCase(), exact = brokerList().filter(function (b) { return String(b.name).toLowerCase() === lc; })[0];
-      if (exact) return { b: exact, how: "exact" };
-      var f = name ? findBroker(name) : null; return f && f.broker ? { b: f.broker, how: "close" } : null;
-    }
-    function stopObj(which) {
-      var s = { name: q(which + ".name"), address: q(which + ".address"), city: q(which + ".city"), state: q(which + ".state").toUpperCase(), zip: q(which + ".zip"), appt: q(which + ".appt"), conf: "ok" };
-      return s.name || s.address || s.city || s.appt ? s : null;
-    }
-    function hints() {
-      var bh = $("#afr-hint-broker"), name = q("broker"), hit = name ? brokerHit(name) : null;
-      if (bh) bh.textContent = !name ? "" : hit ? (hit.how === "exact" ? "Existing customer" : "Closest match: " + hit.b.name + ". It will be used.") : "A new customer will be added";
-      ["pickup", "delivery"].forEach(function (w) {
-        var el = $("#afr-hint-" + w), s = stopObj(w); if (!el) return;
-        var mt = s && (s.name || s.address) ? afMatchLocation(s) : null, loc = mt && locById(mt.id);
-        el.textContent = !s ? "" : mt && loc ? "On the Pick/Drop List: " + (loc.name || "") + (loc.city ? ", " + loc.city : "") : s.name && s.city ? "A new location will be added to the Pick/Drop List" : "Needs a name and a city to be added; it will be left blank";
-      });
-    }
-    hints();
-    $("#modal").oninput = function (e) { if (e.target && e.target.dataset && e.target.dataset.afr) { e.target.classList.remove("afr-check"); hints(); } };
+    var form = afFormBind(m, p);
     $("#afr-cancel").onclick = function () { closeModal(); resolve(null); };
-    $("#afr-go").onclick = function () {
-      var out = Object.assign({}, p), name = q("broker"), hit = name ? brokerHit(name) : null;
-      out.broker = hit ? hit.b.name : name; out.broker_id = hit ? hit.b.id : undefined;
-      out.solomon = q("solomon"); out.load_no = q("load_no"); out.po = q("po");
-      var rt = q("rate").replace(/[^0-9.]/g, ""); out.rate = rt === "" || isNaN(Number(rt)) ? null : Number(rt);
-      out.pickup = stopObj("pickup"); out.delivery = stopObj("delivery");
-      closeModal(); resolve(out);
-    };
+    $("#afr-go").onclick = function () { var out = form.collect(); closeModal(); resolve(out); };
     setTimeout(function () { var f = $('#modal [data-afr="broker"]'); if (f) f.focus(); }, 0);
   });
 }
-function ingestRateCon(file) {
-  busyStart("Reading rate con…");
-  return fileB64(file).then(function (b64) {
-    return pdfText(b64).then(function (text) {
-      var thin = text.replace(/\s/g, "").length < 40;
-      var ocrUsed = false;
-      var textReady = !thin ? Promise.resolve(text) : ocrPdf(b64, function (n, total) {
-        busyStart("Reading rate con, page " + n + " of " + total + "…");
-      }, { maxPages: 3, enough: rateConComplete }).then(function (ocrText) {
-        if (ocrText.replace(/\s/g, "").length >= 20) { ocrUsed = true; return ocrText; }
-        return text; // OCR found nothing usable — fall through to filename matching
+/* ── Sign window: a rate con (or any PDF on an order) beside the boxes, with initials, date and text written into a copy ─────────
+   Opens when a rate con is dragged in (instead of the small review window) and from the Sign button on a document. The PDF is on the
+   left; on the right are what the reader found (for a rate con), every box editable; the tools put your initials, today's date or
+   typed text wherever you click on the page. The signed copy is a new PDF (the original is never changed): drag the file chip out to
+   the desktop or an email, or click it to save. Initials are set up once (typed in a script font, or drawn) and kept on this computer. */
+var SGN = null, SGN_INK = "#0b1d5c";
+function sgnToday() { var d = new Date(); return (d.getMonth() + 1) + "/" + d.getDate() + "/" + String(d.getFullYear()).slice(2); }
+function sgnInitials() { try { return JSON.parse(localStorage.getItem("sgnInitials") || "null"); } catch (e) { return null; } }
+function sgnSaveInitials(o) { try { localStorage.setItem("sgnInitials", JSON.stringify(o)); } catch (e) { /* private mode */ } }
+function sgnTrim(cv) {
+  var c = cv.getContext("2d"), w = cv.width, h = cv.height, d = c.getImageData(0, 0, w, h).data, x0 = w, y0 = h, x1 = 0, y1 = 0;
+  for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) if (d[(y * w + x) * 4 + 3] > 8) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 <= x0 || y1 <= y0) return null;
+  var pad = 6, o = document.createElement("canvas"); o.width = x1 - x0 + 1 + pad * 2; o.height = y1 - y0 + 1 + pad * 2;
+  o.getContext("2d").drawImage(cv, x0, y0, x1 - x0 + 1, y1 - y0 + 1, pad, pad, x1 - x0 + 1, y1 - y0 + 1);
+  return { url: o.toDataURL("image/png"), w: o.width, h: o.height };
+}
+function sgnQ(s) { return SGN && SGN.el ? SGN.el.querySelector(s) : null; }
+// opts: { kind: "intake" | "doc", bytes: Uint8Array, name, oid, doc }. Intake resolves { p, signed, scanned } or null (cancelled); doc mode resolves null when closed.
+function sgnOpen(opts) {
+  return new Promise(function (resolve) {
+    sgnClose(true);
+    var el = document.createElement("div"); el.className = "sgn"; el.id = "sgn";
+    SGN = { el: el, kind: opts.kind, oid: opts.oid || null, doc: opts.doc || null, bytes: opts.bytes, name: opts.name, resolve: resolve, done: false, pdf: null, pages: [], scale: 1, fit: 1, tool: null,
+      stamps: [], sel: null, words: [], parsed: null, form: null, nextId: 1, blobUrl: "", signedBytes: null, scanned: false, readDone: false, keep: true, timer: null, discard: false, reading: false, failed: "" };
+    var intake = opts.kind === "intake", isRc = !!(opts.doc && opts.doc.doc_type === "rate_con");
+    el.innerHTML = '<div class="sgn-hd"><div><h2>' + (intake ? "Review Rate Con" : "Sign " + esc(({ rate_con: "Rate Con", pod: "POD / BOL", invoice: "Invoice", delivery_receipt: "Delivery Receipt" })[opts.doc.doc_type] || "Document")) + '</h2><div class="sub">' + esc(opts.name) + "</div></div>" +
+      '<span style="flex:1"></span><button class="btn" id="sgn-close" type="button">Close</button></div>' +
+      '<div class="sgn-body"><div class="sgn-view"><div class="sgn-tools">' +
+      '<button class="btn sm" data-sgntool="initials" type="button">Initials</button>' +
+      '<button class="btn sm" id="sgn-setup" type="button" title="Type or draw your initials once; they are remembered on this computer">Set Up Initials</button><span class="sep"></span>' +
+      '<button class="btn sm" data-sgntool="date" type="button">Date</button><button class="btn sm" data-sgntool="text" type="button">Text</button><span class="sep"></span>' +
+      '<button class="btn sm" id="sgn-zout" type="button" title="Zoom out">&minus;</button><span id="sgn-zl" class="zl">100%</span><button class="btn sm" id="sgn-zin" type="button" title="Zoom in">+</button>' +
+      '<span class="hint" id="sgn-hint"></span></div><div class="sgn-scroll" id="sgn-scroll"></div></div>' +
+      '<div class="sgn-side"><div class="scroll" id="sgn-form"></div><div class="sgn-ft" id="sgn-ft-chip"></div><div class="sgn-ft" id="sgn-ft-btns"></div></div></div>';
+    document.body.appendChild(el);
+    sgnHint(); sgnFooter(); sgnChip();
+    el.addEventListener("click", sgnClick); el.addEventListener("pointerdown", sgnPointer); el.addEventListener("dblclick", function (e) { var st = e.target.closest(".sgn-st"); if (st) sgnEditText(+st.dataset.id); });
+    el.addEventListener("focusin", sgnFocus);
+    // Keys are handled on the window itself and stop there, so the dashboard's own shortcuts behind it (Delete on a selected cell, Esc, typing into a cell) never see them.
+    el.tabIndex = -1;
+    el.addEventListener("keydown", function (e) {
+      e.stopPropagation();
+      if (!SGN) return;
+      var ae = document.activeElement, typing = ae && (/INPUT|TEXTAREA|SELECT/.test(ae.tagName) || ae.isContentEditable);
+      if (e.key === "Escape") { if (sgnQ("#sgn-pop")) sgnClosePop(); else if (SGN.tool) sgnArm(null); else sgnCancel(); return; }
+      if ((e.key === "Delete" || e.key === "Backspace") && SGN.sel && !typing) { sgnRemove(SGN.sel); e.preventDefault(); }
+    });
+    ["keyup", "keypress"].forEach(function (t) { el.addEventListener(t, function (e) { e.stopPropagation(); }); });
+    setTimeout(function () { if (SGN && SGN.el === el) el.focus(); }, 0);
+    var side = sgnQ("#sgn-form");
+    side.innerHTML = isRc || intake ? '<p class="note"><span class="spin" style="display:inline-block;vertical-align:-2px;margin-right:6px"></span>Reading the rate con…</p>' :
+      '<p class="note">Add your initials and date on the page, then save the signed copy on this order, or drag the file out. The original stays as it is.</p>' +
+      '<p class="note" style="margin-top:12px">Is this a rate con you want read? <button class="btn sm" id="sgn-read" type="button">Read As Rate Con</button></p>';
+    pdfjsLib.getDocument({ data: opts.bytes.slice(0) }).promise.then(function (pdf) {
+      SGN.pdf = pdf; var jobs = []; for (var i = 1; i <= pdf.numPages; i++) jobs.push(pdf.getPage(i)); return Promise.all(jobs);
+    }).then(function (pgs) {
+      if (!SGN) return;
+      SGN.pages = pgs.map(function (pg) { return { pg: pg, vp1: pg.getViewport({ scale: 1 }) }; });
+      sgnFit(); sgnPages();
+      if (intake || isRc) sgnRead();
+    }).catch(function (e) {
+      if (!SGN) return; SGN.failed = e && e.message || "unreadable";
+      sgnQ("#sgn-scroll").innerHTML = '<div class="empty" style="padding:30px;text-align:center;color:var(--ink-3)">This PDF could not be opened (' + esc(SGN.failed) + ").</div>";
+      if (intake) { SGN.readDone = true; sgnShowForm({ broker: "", load_no: "", solomon: "", po: "", rate: null, pickup: null, delivery: null, rc: { conf: {} } }); }
+    });
+  });
+}
+function sgnClose(silent) {
+  if (!SGN) return;
+  var S = SGN; SGN = null;
+  clearTimeout(S.timer); clearTimeout(S.discardT);
+  if (S.blobUrl) URL.revokeObjectURL(S.blobUrl);
+  if (S.el.parentNode) S.el.remove();
+  if (!S.done && S.resolve) { S.done = true; S.resolve(null); }
+}
+function sgnCancel() {
+  var S = SGN; if (!S) return;
+  if (S.stamps.length && !S.discard) {
+    S.discard = true; var b = sgnQ("#sgn-cancel"); if (b) b.textContent = "Discard Changes?";
+    clearTimeout(S.discardT); S.discardT = setTimeout(function () { if (SGN === S) { S.discard = false; var b2 = sgnQ("#sgn-cancel"); if (b2) b2.textContent = S.kind === "intake" ? "Cancel" : "Close"; } }, 3500);
+    return;
+  }
+  sgnClose();
+}
+function sgnHint() {
+  var h = sgnQ("#sgn-hint"); if (!h) return;
+  h.innerHTML = SGN.tool ? "Click on the page where the <b>" + (SGN.tool === "date" ? "date" : SGN.tool) + "</b> goes. Esc to cancel." : "Pick <b>Initials</b>, <b>Date</b> or <b>Text</b>, then click where it goes. Drag to move.";
+}
+function sgnFit() {
+  var w = sgnQ("#sgn-scroll").clientWidth - 40, p = SGN.pages[0];
+  SGN.fit = p ? Math.max(0.4, Math.min(1.6, w / p.vp1.width)) : 1; SGN.scale = SGN.fit; sgnQ("#sgn-zl").textContent = "100%";
+}
+function sgnZoom(mul) {
+  var S = SGN; S.scale = Math.max(S.fit * 0.5, Math.min(S.fit * 2.5, S.scale * mul)); sgnQ("#sgn-zl").textContent = Math.round(S.scale / S.fit * 100) + "%"; sgnPages();
+}
+function sgnPages() {
+  var S = SGN, sc = sgnQ("#sgn-scroll"); sc.innerHTML = "";
+  S.pages.forEach(function (p, i) {
+    var vp = p.pg.getViewport({ scale: S.scale }), box = document.createElement("div"), r = window.devicePixelRatio || 1;
+    box.className = "sgn-page"; box.style.width = vp.width + "px"; box.style.height = vp.height + "px";
+    var cv = document.createElement("canvas"); cv.width = Math.floor(vp.width * r); cv.height = Math.floor(vp.height * r); cv.style.width = vp.width + "px"; cv.style.height = vp.height + "px";
+    var ov = document.createElement("div"); ov.className = "sgn-ov"; ov.dataset.page = i;
+    box.appendChild(cv); box.appendChild(ov); sc.appendChild(box);
+    p.pg.render({ canvasContext: cv.getContext("2d"), viewport: p.pg.getViewport({ scale: S.scale * r }) });
+  });
+  S.stamps.forEach(sgnDraw);
+}
+function sgnDraw(st) {
+  var S = SGN, ov = S.el.querySelector('.sgn-ov[data-page="' + st.page + '"]'); if (!ov) return;
+  var el = S.el.querySelector('.sgn-st[data-id="' + st.id + '"]'); if (el) el.remove();
+  el = document.createElement("div"); el.className = "sgn-st" + (S.sel === st.id ? " sel" : ""); el.dataset.id = st.id;
+  el.style.left = st.x * S.scale + "px"; el.style.top = st.y * S.scale + "px";
+  if (st.type === "img") el.innerHTML = '<img alt="" src="' + st.dataUrl + '" style="width:' + st.w * S.scale + "px;height:" + st.h * S.scale + 'px">';
+  else { el.style.fontSize = st.size * S.scale + "px"; el.textContent = st.text; }
+  var x = document.createElement("span"); x.className = "x"; x.textContent = "×"; x.title = "Remove"; el.appendChild(x);
+  ov.appendChild(el);
+}
+function sgnSelect(id) { SGN.sel = id; [].forEach.call(SGN.el.querySelectorAll(".sgn-st"), function (e) { e.classList.toggle("sel", +e.dataset.id === id); }); }
+function sgnArm(tool) {
+  var S = SGN; S.tool = S.tool === tool ? null : tool;
+  [].forEach.call(S.el.querySelectorAll("[data-sgntool]"), function (b) { b.classList.toggle("active", b.dataset.sgntool === S.tool); });
+  S.el.classList.toggle("arm", !!S.tool); sgnHint();
+}
+function sgnChanged() { SGN.discard = false; clearTimeout(SGN.timer); SGN.signedBytes = null; sgnChip(); SGN.timer = setTimeout(sgnRebuild, 300); }
+function sgnPlace(pageIdx, cssX, cssY, keep) {
+  var S = SGN, id = S.nextId++, st;
+  if (S.tool === "initials") {
+    var ini = sgnInitials(); if (!ini) { sgnArm(null); sgnSetup(); return; }
+    var w = 70, h = Math.round(70 * ini.h / ini.w);
+    st = { id: id, page: pageIdx, type: "img", dataUrl: ini.url, w: w, h: h, x: cssX / S.scale - w / 2, y: cssY / S.scale - h / 2 };
+  } else st = { id: id, page: pageIdx, type: "text", text: S.tool === "date" ? sgnToday() : "Text", size: 12, x: cssX / S.scale - 2, y: cssY / S.scale - 7 };
+  S.stamps.push(st); sgnDraw(st); sgnSelect(id);
+  if (!keep) sgnArm(S.tool);
+  if (st.type === "text" && st.text === "Text") sgnEditText(id);
+  sgnChanged();
+}
+function sgnRemove(id) {
+  var S = SGN; S.stamps = S.stamps.filter(function (s) { return s.id !== id; }); var el = S.el.querySelector('.sgn-st[data-id="' + id + '"]'); if (el) el.remove();
+  if (S.sel === id) S.sel = null; sgnChanged();
+}
+function sgnEditText(id) {
+  var S = SGN, el = S.el.querySelector('.sgn-st[data-id="' + id + '"]'), st = S.stamps.filter(function (s) { return s.id === id; })[0]; if (!el || !st || st.type !== "text") return;
+  el.contentEditable = "true"; el.style.cursor = "text"; el.focus();
+  var r = document.createRange(); r.selectNodeContents(el); var sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  el.onblur = function () { el.contentEditable = "false"; el.style.cursor = ""; st.text = (el.firstChild && el.firstChild.nodeType === 3 ? el.firstChild.nodeValue : "").trim() || " "; if (SGN === S) { sgnDraw(st); sgnChanged(); } };
+  el.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); el.blur(); } e.stopPropagation(); };
+}
+function sgnPointer(e) {
+  var S = SGN; if (!S) return;
+  var st = e.target.closest(".sgn-st"), ov = e.target.closest(".sgn-ov");
+  if (e.target.classList.contains("x")) { sgnRemove(+e.target.parentNode.dataset.id); return; }
+  if (st && st.contentEditable !== "true") {
+    var id = +st.dataset.id, s = S.stamps.filter(function (x) { return x.id === id; })[0]; sgnSelect(id);
+    var sx = e.clientX, sy = e.clientY, ox = s.x, oy = s.y, moved = false;
+    var mv = function (ev) { moved = true; s.x = ox + (ev.clientX - sx) / S.scale; s.y = oy + (ev.clientY - sy) / S.scale; st.style.left = s.x * S.scale + "px"; st.style.top = s.y * S.scale + "px"; };
+    var up = function () { document.removeEventListener("pointermove", mv); document.removeEventListener("pointerup", up); if (moved && SGN === S) sgnChanged(); };
+    document.addEventListener("pointermove", mv); document.addEventListener("pointerup", up); e.preventDefault(); return;
+  }
+  if (ov && S.tool) { var r = ov.getBoundingClientRect(); sgnPlace(+ov.dataset.page, e.clientX - r.left, e.clientY - r.top, e.shiftKey); return; }
+  if (!st && ov) sgnSelect(null);
+}
+function sgnClick(e) {
+  var S = SGN; if (!S) return;
+  var t = e.target.closest("button, .sgn-chip.ready, [data-sgnmode]"); if (!t) return;
+  if (t.dataset.sgntool) { if (t.dataset.sgntool === "initials" && !sgnInitials()) { sgnSetup(); return; } sgnArm(t.dataset.sgntool); return; }
+  switch (t.id) {
+    case "sgn-close": case "sgn-cancel": sgnCancel(); break;
+    case "sgn-setup": sgnSetup(); break;
+    case "sgn-zin": sgnZoom(1.2); break;
+    case "sgn-zout": sgnZoom(1 / 1.2); break;
+    case "sgn-read": sgnReadAsRateCon(); break;
+    case "sgn-go": sgnGo(); break;
+    case "sgn-fill": sgnFill(); break;
+    case "sgn-save": sgnSaveCopy(); break;
+  }
+  if (t.classList.contains("sgn-chip") && S.blobUrl) sgnSaveFile();
+}
+/* The signed copy as a file chip: drag it out to the desktop or an email (Chrome and Edge), or click it to save. */
+function sgnFileName() { return String(SGN.name || "document").replace(/\.pdf$/i, "").replace(/[\\/:*?"<>|]+/g, "-") + " signed.pdf"; }
+function sgnChip() {
+  var S = SGN; if (!S) return; var box = sgnQ("#sgn-ft-chip"); if (!box) return;
+  if (!S.stamps.length) { box.innerHTML = '<span class="sgn-chip off">' + icon("pdf") + '<span class="nm">Add initials or a date to make a signed copy</span></span>'; return; }
+  if (!S.blobUrl || !S.signedBytes) { box.innerHTML = '<span class="sgn-chip off">' + icon("pdf") + '<span class="nm">Writing the signed copy…</span></span>'; return; }
+  box.innerHTML = '<span class="sgn-chip ready" draggable="true" id="sgn-file" title="Drag it onto your desktop or into an email. Click to save.">' + icon("pdf") + '<span class="nm">' + esc(sgnFileName()) + "</span></span>";
+  var c = box.querySelector("#sgn-file");
+  c.addEventListener("dragstart", function (ev) {
+    if (!SGN || !SGN.blobUrl) { ev.preventDefault(); return; }
+    ev.dataTransfer.effectAllowed = "copy";
+    ev.dataTransfer.setData("DownloadURL", "application/pdf:" + sgnFileName().replace(/:/g, "-") + ":" + SGN.blobUrl);
+    ev.dataTransfer.setData("text/plain", sgnFileName());
+  });
+}
+function sgnSaveFile() {
+  var a = document.createElement("a"); a.href = SGN.blobUrl; a.download = sgnFileName(); document.body.appendChild(a); a.click(); a.remove(); toast("Saved " + sgnFileName());
+}
+function sgnRebuild() {
+  var S = SGN; if (!S || !S.stamps.length) return;
+  sgnBuild().then(function (bytes) {
+    if (SGN !== S) return; if (S.blobUrl) URL.revokeObjectURL(S.blobUrl);
+    S.signedBytes = bytes; S.blobUrl = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })); sgnChip();
+  }, function (err) { if (SGN === S) { sgnQ("#sgn-ft-chip").innerHTML = '<span class="sgn-chip off">' + icon("pdf") + '<span class="nm">Couldn\'t write the PDF: ' + esc(err.message) + "</span></span>"; } });
+}
+function sgnWinAnsi(t) { return String(t).replace(/[^\x20-\x7e\xa0-\xff]/g, "?"); }
+// Writes the stamps into a copy of the PDF. Positions go through the page's own transform, so a rotated scan still comes out upright and where it was placed.
+function sgnBuild() {
+  var S = SGN;
+  return PDFLib.PDFDocument.load(S.bytes).then(function (doc) {
+    return doc.embedFont(PDFLib.StandardFonts.Helvetica).then(function (font) {
+      var ink = PDFLib.rgb(0.043, 0.114, 0.361);
+      return S.stamps.reduce(function (chain, st) {
+        return chain.then(function () {
+          var page = doc.getPage(st.page), vp = S.pages[st.page].vp1;
+          var o = vp.convertToPdfPoint(st.x, st.y), rx = vp.convertToPdfPoint(st.x + 1, st.y), theta = Math.atan2(rx[1] - o[1], rx[0] - o[0]) * 180 / Math.PI;
+          if (st.type === "img") {
+            return doc.embedPng(st.dataUrl).then(function (img) {
+              var org = vp.convertToPdfPoint(st.x, st.y + st.h);
+              page.drawImage(img, { x: org[0], y: org[1], width: st.w, height: st.h, rotate: PDFLib.degrees(theta) });
+            });
+          }
+          var base = vp.convertToPdfPoint(st.x, st.y + st.size * 0.82);
+          page.drawText(sgnWinAnsi(st.text), { x: base[0], y: base[1], size: st.size, font: font, color: ink, rotate: PDFLib.degrees(theta) });
+        });
+      }, Promise.resolve()).then(function () { return doc.save(); });
+    });
+  });
+}
+/* My initials: typed (rendered in a script font) or drawn. */
+function sgnClosePop() { var p = sgnQ("#sgn-pop"); if (p) p.remove(); }
+function sgnSetup() {
+  sgnClosePop(); var cur = sgnInitials(), mode = "type", pop = document.createElement("div"); pop.className = "sgn-pop"; pop.id = "sgn-pop";
+  pop.innerHTML = '<h4>My initials</h4><div class="tabs"><button class="btn sm active" data-m="type" type="button">Type</button><button class="btn sm" data-m="draw" type="button">Draw</button></div>' +
+    '<div id="sgn-pm-type"><input id="sgn-ini-text" maxlength="4" placeholder="NL" value="' + esc(cur && cur.text || "") + '" autocomplete="off"></div>' +
+    '<div id="sgn-pm-draw" hidden><canvas class="pad" id="sgn-pad" width="660" height="220"></canvas></div>' +
+    '<div class="prev"><img id="sgn-ini-prev" alt="" ' + (cur ? 'src="' + cur.url + '"' : "hidden") + '></div>' +
+    '<div class="acts"><button class="btn sm" id="sgn-ini-clear" type="button">Clear</button><button class="btn sm" id="sgn-ini-cancel" type="button">Cancel</button><button class="btn sm pri" id="sgn-ini-save" type="button">Save Initials</button></div>';
+  SGN.el.appendChild(pop);
+  var pad = pop.querySelector("#sgn-pad"), pc = pad.getContext("2d"), made = null, drawn = false, down = false;
+  pc.lineWidth = 5; pc.lineCap = "round"; pc.lineJoin = "round"; pc.strokeStyle = SGN_INK;
+  function preview() {
+    var cv = document.createElement("canvas"), t = pop.querySelector("#sgn-ini-text").value.trim(), res = null;
+    if (mode === "type" && t) {
+      cv.width = 800; cv.height = 300; var c = cv.getContext("2d"); c.fillStyle = SGN_INK;
+      c.font = "italic 190px 'Snell Roundhand','Brush Script MT','Segoe Script','Lucida Handwriting',cursive"; c.textBaseline = "middle"; c.fillText(t, 20, 160); res = sgnTrim(cv); if (res) res.text = t;
+    } else if (mode === "draw" && drawn) res = sgnTrim(pad);
+    made = res; var im = pop.querySelector("#sgn-ini-prev"); if (res) { im.src = res.url; im.hidden = false; } else im.hidden = true;
+  }
+  pop.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-m]"); if (!b) return; mode = b.dataset.m;
+    [].forEach.call(pop.querySelectorAll("[data-m]"), function (x) { x.classList.toggle("active", x === b); });
+    pop.querySelector("#sgn-pm-type").hidden = mode !== "type"; pop.querySelector("#sgn-pm-draw").hidden = mode !== "draw"; preview();
+  });
+  pop.querySelector("#sgn-ini-text").oninput = preview;
+  function pt(e) { var r = pad.getBoundingClientRect(); return [(e.clientX - r.left) * pad.width / r.width, (e.clientY - r.top) * pad.height / r.height]; }
+  pad.onpointerdown = function (e) { down = true; try { pad.setPointerCapture(e.pointerId); } catch (x) { /* synthetic pointer */ } var p = pt(e); pc.beginPath(); pc.moveTo(p[0], p[1]); pc.lineTo(p[0] + 0.1, p[1]); pc.stroke(); drawn = true; };
+  pad.onpointermove = function (e) { if (!down) return; var p = pt(e); pc.lineTo(p[0], p[1]); pc.stroke(); };
+  pad.onpointerup = function () { down = false; preview(); };
+  pop.querySelector("#sgn-ini-clear").onclick = function () { pc.clearRect(0, 0, pad.width, pad.height); drawn = false; pop.querySelector("#sgn-ini-text").value = ""; preview(); };
+  pop.querySelector("#sgn-ini-cancel").onclick = sgnClosePop;
+  pop.querySelector("#sgn-ini-save").onclick = function () { preview(); if (!made) { toast("Type or draw your initials first.", true); return; } sgnSaveInitials(made); sgnClosePop(); toast("Initials saved on this computer."); };
+  preview(); var f = pop.querySelector("#sgn-ini-text"); if (f) f.focus();
+}
+/* Reading the rate con (OCR when it is a scan), keeping where each word sits so a box on the right can light up its spot on the left. */
+function sgnRead() {
+  var S = SGN; if (!S || S.reading) return Promise.resolve(); S.reading = true;
+  return Promise.all(S.pages.map(function (p) { return p.pg.getTextContent(); })).then(function (tcs) {
+    var text = tcs.map(function (tc) { return tc.items.map(function (i) { return i.str; }).join(" "); }).join("\n");
+    if (text.replace(/\s/g, "").length >= 40) {
+      S.words = tcs.map(function (tc, pi) {
+        var vp = S.pages[pi].vp1;
+        return tc.items.filter(function (i) { return i.str && i.str.trim(); }).map(function (i) { var tx = pdfjsLib.Util.transform(vp.transform, i.transform), h = Math.abs(tx[3]) || i.height; return { str: i.str, x: tx[4], y: tx[5] - h, w: i.width, h: h }; });
       });
-      return textReady.then(function (finalText) {
-        var p = parseRateCon(finalText, file.name);
-        var scanned = finalText.replace(/\s/g, "").length < 40;
-        busyEnd();
-        return afReview(p, "file").then(function (p2) {
-          if (!p2) return null;                      // cancelled: nothing was created
-          busyStart("Saving order…");
-          return ingestParsed(p2, file.name).then(function (r) {
-            return api("document", {
-              order_id: r.o.id, doc_type: "rate_con", filename: file.name, b64: b64,
-              extracted_fields: p2, matched_by: scanned ? "filename" : "document_text"
-            }).then(function () { return { o: r.o, p: p2, n: r.n, scanned: scanned, ocrUsed: ocrUsed }; });
+      return text;
+    }
+    S.scanned = true;
+    return getOcrWorker().then(function (w) {
+      var all = "", chain = Promise.resolve();
+      S.pages.slice(0, 3).forEach(function (p, pi) {
+        chain = chain.then(function () {
+          if (SGN !== S) return;
+          var vp = p.pg.getViewport({ scale: 2.5 }), cv = document.createElement("canvas"); cv.width = vp.width; cv.height = vp.height;
+          return p.pg.render({ canvasContext: cv.getContext("2d"), viewport: vp }).promise.then(function () { return w.recognize(cv); }).then(function (r) {
+            all += "\n" + (r.data.text || "");
+            S.words[pi] = (r.data.words || []).filter(function (x) { return x.text && x.text.trim(); }).map(function (x) { return { str: x.text, x: x.bbox.x0 / 2.5, y: x.bbox.y0 / 2.5, w: (x.bbox.x1 - x.bbox.x0) / 2.5, h: (x.bbox.y1 - x.bbox.y0) / 2.5 }; });
           });
         });
       });
+      return chain.then(function () { return all; });
+    });
+  }).then(function (text) {
+    if (SGN !== S) return;
+    S.thin = String(text || "").replace(/\s/g, "").length < 40;
+    S.reading = false; S.readDone = true; sgnShowForm(parseRateCon(text || "", S.name));
+  }, function () { if (SGN === S) { S.reading = false; S.readDone = true; sgnShowForm(parseRateCon("", S.name)); } });
+}
+function sgnReadAsRateCon() {
+  var S = SGN; if (!S) return; var side = sgnQ("#sgn-form");
+  side.innerHTML = '<p class="note"><span class="spin" style="display:inline-block;vertical-align:-2px;margin-right:6px"></span>Reading it as a rate con…</p>'; S.asRc = true; sgnRead();
+}
+function sgnShowForm(p) {
+  var S = SGN; if (!S) return; S.parsed = p;
+  var ex = S.kind === "doc" ? order(S.oid) : afFindExisting(p), side = sgnQ("#sgn-form"); S.existing = ex;
+  var note = S.kind === "doc" ? '<p class="note">This is what was read from this rate con. <b>Fill In Blank Boxes</b> puts it on the order; nothing already on the order is changed.</p>' :
+    ex ? '<div class="note-bar" style="margin:0 0 10px">This matches order <b>' + esc(ex.rexius_order_no || ex.broker_load_no || "") + "</b>. Only its blank boxes will be filled in; nothing already on it is changed.</div>" :
+    '<p class="note">Check what was read against the rate con on the left. Click a box and its spot on the PDF lights up. Fix anything, add your initials and date, then create the order. Nothing is saved until you do.</p>';
+  side.innerHTML = note + '<div class="af-review">' + afFormHtml(p) + "</div>";
+  S.form = afFormBind(side, p); sgnFooter();
+}
+function sgnFocus(e) {
+  var S = SGN, i = e.target.closest && e.target.closest("[data-afr]"); if (!S || !i) return;
+  [].forEach.call(S.el.querySelectorAll(".sgn-hit"), function (h) { h.remove(); });
+  var spot = sgnFind(i.value); if (!spot) return;
+  var d = document.createElement("div"); d.className = "sgn-hit"; d.style.left = (spot.x - 3) * S.scale + "px"; d.style.top = (spot.y - 3) * S.scale + "px"; d.style.width = (spot.w + 6) * S.scale + "px"; d.style.height = (spot.h + 6) * S.scale + "px";
+  var ov = S.el.querySelector('.sgn-ov[data-page="' + spot.page + '"]'); if (!ov) return; ov.appendChild(d); d.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+function sgnFind(value) {
+  var S = SGN, needle = String(value || "").toLowerCase().replace(/[$,\s]/g, "");
+  if (needle.length < 3) return null;
+  for (var pi = 0; pi < (S.words || []).length; pi++) {
+    var ws = S.words[pi] || [];
+    for (var a = 0; a < ws.length; a++) {
+      var acc = "", first = ws[a].str.toLowerCase().replace(/[$,\s]/g, "").length;
+      for (var b = a; b < Math.min(ws.length, a + 8); b++) {
+        acc += ws[b].str.toLowerCase().replace(/[$,\s]/g, "");
+        var at = acc.indexOf(needle);
+        if (at >= 0 && at < first) {                       // the match must start inside the first word, so no stray words come along
+          var sel = ws.slice(a, b + 1), x0 = Math.min.apply(null, sel.map(function (q) { return q.x; })), y0 = Math.min.apply(null, sel.map(function (q) { return q.y; })),
+            x1 = Math.max.apply(null, sel.map(function (q) { return q.x + q.w; })), y1 = Math.max.apply(null, sel.map(function (q) { return q.y + q.h; }));
+          return { page: pi, x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+        }
+        if (acc.length > needle.length + 40) break;
+      }
+    }
+  }
+  return null;
+}
+/* Footer: what the buttons are depends on how the window was opened. */
+function sgnFooter() {
+  var S = SGN; if (!S) return; var box = sgnQ("#sgn-ft-btns"); if (!box) return;
+  var keep = '';
+  if (S.kind === "intake") {
+    box.innerHTML = '<label class="keep"><input type="checkbox" id="sgn-keep" ' + (S.keep ? "checked" : "") + '> Keep the signed copy on the order</label>' +
+      '<div class="row"><button class="btn" id="sgn-cancel" type="button">Cancel</button><span style="flex:1"></span><button class="btn pri" id="sgn-go" type="button"' + (S.readDone ? "" : " disabled") + ">" + (S.existing ? "Fill In Order" : "Create Order") + "</button></div>";
+    var k = box.querySelector("#sgn-keep"); if (k) k.onchange = function () { S.keep = k.checked; };
+    return;
+  }
+  var rc = !!S.parsed;
+  box.innerHTML = '<div class="row"><button class="btn" id="sgn-cancel" type="button">Close</button><span style="flex:1"></span>' +
+    '<button class="btn' + (rc ? "" : " pri") + '" id="sgn-save" type="button" title="Adds the signed copy to this order\'s documents (the original stays)">Save Copy On Order</button>' +
+    (rc ? '<button class="btn pri" id="sgn-fill" type="button">Fill In Blank Boxes</button>' : "") + "</div>";
+}
+// Intake: hand back the edited boxes and (if wanted) the signed copy; the caller creates the order and attaches the files.
+function sgnGo() {
+  var S = SGN; if (!S || !S.form || !S.readDone) return;
+  var p2 = S.form.collect();
+  var wantSigned = S.keep && S.stamps.length;
+  var finish = function (bytes) { var res = { p: p2, signed: bytes || null, signedName: sgnFileName(), scanned: !!S.thin }; S.done = true; sgnClose(); S.resolve(res); };
+  if (!wantSigned) { finish(null); return; }
+  (S.signedBytes ? Promise.resolve(S.signedBytes) : sgnBuild()).then(finish, function (err) { toast("Couldn't write the signed PDF: " + err.message, true); });
+}
+function sgnFill() {
+  var S = SGN; if (!S || !S.form) return; var o = order(S.oid); if (!o) { toast("That order is gone.", true); return; }
+  var p2 = S.form.collect(), oid = S.oid;
+  busyStart("Filling in the order…");
+  afApply(o, p2).then(reload).then(function () { busyEnd(); sgnClose(); openOrder(oid); toast("Blank boxes filled in from the rate con."); })
+    .catch(function (e) { busyEnd(); toast(e.message, true); });
+}
+function sgnSaveCopy() {
+  var S = SGN; if (!S) return;
+  if (!S.stamps.length) { toast("Add your initials or a date first.", true); return; }
+  var oid = S.oid, d = S.doc, name = sgnFileName();
+  (S.signedBytes ? Promise.resolve(S.signedBytes) : sgnBuild()).then(function (bytes) {
+    busyStart("Saving the signed copy…");
+    return api("document", { order_id: oid, doc_type: d.doc_type, filename: name, b64: b64FromBytes(bytes), extracted_fields: { signed: true, of_name: d.original_filename || "" }, matched_by: "manual" });
+  }).then(reload).then(function () { busyEnd(); sgnClose(); openOrder(oid); toast("Signed copy saved on the order."); })
+    .catch(function (e) { busyEnd(); toast(e.message || "Couldn't save the signed copy.", true); });
+}
+/* A document already on an order, opened to read or sign. */
+function signDocument(docId) {
+  var d = (DB.documents || []).filter(function (x) { return x.id === docId; })[0]; if (!d) return;
+  if (!/\.pdf$/i.test(d.original_filename || "")) { toast("Only PDFs can be signed here.", true); return; }
+  busyStart("Opening the document…");
+  fetchStoredFile(d.storage_path).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
+    busyEnd(); return sgnOpen({ kind: "doc", bytes: new Uint8Array(buf), name: d.original_filename, oid: DRAWER_OID || d.order_id, doc: d });
+  }).catch(function (e) { busyEnd(); toast("Couldn't open it: " + e.message, true); });
+}
+/* The file chip on each document: the PDF icon and its title. Drag it onto the desktop or into an email (Chrome and Edge), or click it to save. The
+   file is fetched ahead of time (it has to be on hand the moment a drag starts). */
+var DOCBLOB = {};
+// One line in an order's Documents list: its type, the file chip (drag it out or click to save), View, and Sign for a PDF.
+function docRowHtml(d) {
+  var nm = d.original_filename || "";
+  return '<div class="docrow"><span class="pill">' + esc(String(d.doc_type || "other").replace("_", " ")) + "</span>" + docChipHtml(d) +
+    '<button class="btn sm" data-viewpath="' + esc(d.storage_path) + '" data-viewname="' + esc(nm) + '">View</button>' +
+    (/\.pdf$/i.test(nm) ? '<button class="btn sm" data-signdoc="' + esc(d.id) + '" type="button" title="Open it to add initials or a date, or to read it as a rate con">Sign</button>' : "") + "</div>";
+}
+document.addEventListener("click", function (e) { var b = e.target.closest && e.target.closest("[data-signdoc]"); if (b) signDocument(b.getAttribute("data-signdoc")); });
+function docChipHtml(d) {
+  var path = d.storage_path, ready = !!DOCBLOB[path], nm = d.original_filename || "(file)";
+  return '<span class="pdfchip' + (ready ? "" : " wait") + '" draggable="true" data-docchip="' + esc(path) + '" data-filepath="' + esc(path) + '" data-filename="' + esc(nm) + '" data-filemode="download" ' +
+    'title="Drag it onto your desktop or into an email. Click to save.">' + icon("pdf") + '<span class="nm">' + esc(nm) + "</span></span>";
+}
+function docMime(name) { var x = String(name || "").split(".").pop().toLowerCase(); return ({ pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", txt: "text/plain", csv: "text/csv" })[x] || "application/octet-stream"; }
+function docPrefetch(path) {
+  if (DOCBLOB[path]) return Promise.resolve(DOCBLOB[path]);
+  if (!path || DOCBLOB[path] === 0) return Promise.resolve(null);
+  DOCBLOB[path] = 0;
+  return fetchStoredFile(path).then(function (r) { return r.blob(); }).then(function (b) {
+    DOCBLOB[path] = URL.createObjectURL(new Blob([b], { type: docMime(path) }));
+    [].forEach.call(document.querySelectorAll('[data-docchip]'), function (c) { if (c.getAttribute("data-docchip") === path) c.classList.remove("wait"); });
+    return DOCBLOB[path];
+  }, function () { delete DOCBLOB[path]; return null; });
+}
+function docPrefetchAll() { [].forEach.call(document.querySelectorAll("[data-docchip]"), function (c) { docPrefetch(c.getAttribute("data-docchip")); }); }
+document.addEventListener("dragstart", function (e) {
+  var c = e.target.closest && e.target.closest("[data-docchip]"); if (!c) return;
+  var path = c.getAttribute("data-docchip"), url = DOCBLOB[path], name = (c.getAttribute("data-filename") || "document.pdf").replace(/:/g, "-");
+  if (!url) { e.preventDefault(); docPrefetch(path); toast("Getting the file ready. Try again in a second.", false); return; }
+  e.dataTransfer.effectAllowed = "copy";
+  e.dataTransfer.setData("DownloadURL", docMime(name) + ":" + name + ":" + url);
+  e.dataTransfer.setData("text/plain", name);
+}, false);
+document.addEventListener("pointerenter", function (e) { var c = e.target.closest && e.target.closest("[data-docchip]"); if (c) docPrefetch(c.getAttribute("data-docchip")); }, true);
+function ingestRateCon(file) {
+  var b64 = null, bytes = null;
+  return file.arrayBuffer().then(function (buf) {
+    bytes = new Uint8Array(buf); b64 = b64FromBytes(bytes);
+    // The PDF opens beside the boxes (reading it, with OCR for a scan, happens inside the window); nothing is created until Create Order.
+    return sgnOpen({ kind: "intake", bytes: bytes, name: file.name });
+  }).then(function (res) {
+    if (!res) return null;                              // cancelled: nothing was created
+    var p2 = res.p;
+    busyStart("Saving order…");
+    return ingestParsed(p2, file.name).then(function (r) {
+      return api("document", {
+        order_id: r.o.id, doc_type: "rate_con", filename: file.name, b64: b64,
+        extracted_fields: p2, matched_by: res.scanned ? "filename" : "document_text"
+      }).then(function () {
+        if (!res.signed) return null;
+        return api("document", { order_id: r.o.id, doc_type: "rate_con", filename: res.signedName, b64: b64FromBytes(res.signed),
+          extracted_fields: { signed: true, of_name: file.name }, matched_by: "manual" });
+      }).then(function () { return { o: r.o, p: p2, n: r.n, scanned: res.scanned, signed: !!res.signed }; });
     });
   }).then(function (r) {
     if (!r) { busyEnd(); return; }
@@ -8039,9 +8492,9 @@ function ingestRateCon(file) {
       busyEnd();
       openOrder(r.o.id);
       if (r.o._match && r.o._match !== "created") {
-        toast("Filled in order " + (r.o.rexius_order_no || r.o.broker_load_no || "") + " — rate con attached.");
+        toast("Filled in order " + (r.o.rexius_order_no || r.o.broker_load_no || "") + " — rate con attached" + (r.signed ? " with your signed copy." : "."));
       } else {
-        toast(r.scanned ? "Order created. The scan had little text, so check the boxes." : "Order created from the rate con.");
+        toast(r.scanned ? "Order created. The scan had little text, so check the boxes." : "Order created from the rate con" + (r.signed ? ", signed copy attached." : "."));
       }
     });
   }).catch(function (e) { busyEnd(); toast("Rate con failed: " + e.message, true); });
@@ -9628,23 +10081,38 @@ $("#gsearch").addEventListener("keydown", function (e) {
 $("#file-ratecon").addEventListener("change", function () { if (this.files[0]) ingestRateCon(this.files[0]); this.value = ""; });
 $("#file-batch").addEventListener("change", function () { if (this.files[0]) ingestBatch(this.files[0]); this.value = ""; });
 $("#file-loose").addEventListener("change", function () { if (this.files[0]) ingestLoose(this.files[0]); this.value = ""; });
+// What a dropped file is, judged from its name. "" = no clue (the window asks). Anchored on word boundaries so "inv" doesn't match "Inventory" (D82).
+function dropDocType(name, o) {
+  return /pod|bol|signed/i.test(name) ? "pod" :
+    /delivery.?receipt|driver.?receipt|unsigned.?receipt/i.test(name) ? "delivery_receipt" :
+    /invoice|\binv\b/i.test(name) ? "invoice" :
+    /ratecon|\brate\b|\brc\b/i.test(name) ? "rate_con" :
+    o && o.kind === "internal" ? "delivery_receipt" : "";
+}
+// Files with no clue in their name: say what each one is. Resolves the chosen types, or null if cancelled.
+function docTypeChooser(files, guesses) {
+  return new Promise(function (resolve) {
+    var opts = [["rate_con", "Rate Con"], ["pod", "POD / BOL"], ["invoice", "Invoice"], ["other", "Other"]];
+    var rows = files.map(function (f, i) {
+      return '<tr><td><div class="cell">' + esc(f.name) + '</div></td><td style="width:150px"><div class="cell"><select data-dtype="' + i + '" class="cell-i">' +
+        opts.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (guesses[i] || "other") ? " selected" : "") + ">" + o[1] + "</option>"; }).join("") + "</select></div></td></tr>";
+    }).join("");
+    openModal('<div class="modal-hd"><h2>What are these?</h2></div><div class="modal-body"><p style="margin:0 0 10px;color:var(--ink-2)">The file names don&rsquo;t say. Pick what each one is; a rate con can then be signed or read from its row.</p>' +
+      '<table class="data" style="min-width:0"><tbody>' + rows + '</tbody></table></div><div class="modal-ft"><button class="btn" id="dtype-cancel" type="button">Cancel</button><span style="flex:1"></span><button class="btn pri" id="dtype-go" type="button">Attach</button></div>');
+    $("#dtype-cancel").onclick = function () { closeModal(); resolve(null); };
+    $("#dtype-go").onclick = function () { var out = files.map(function (f, i) { return $('#modal [data-dtype="' + i + '"]').value; }); closeModal(); resolve(out); };
+  });
+}
 $("#file-doc").addEventListener("change", function () {
   var oid = DRAWER_OID, files = [].slice.call(this.files); this.value = "";
   if (!oid || !files.length) return;
-  var targetOrder = order(oid);
-  Promise.all(files.map(function (f) {
-    return fileB64(f).then(function (b64) {
-      // Anchor the short abbreviations on word boundaries so "inv" doesn't match
-      // "Inventory" and "rc" doesn't match "Search"/"March" (D82).
-      var t = /pod|bol|signed/i.test(f.name) ? "pod" :
-              /delivery.?receipt|driver.?receipt|unsigned.?receipt/i.test(f.name) ? "delivery_receipt" :
-              /invoice|\binv\b/i.test(f.name) ? "invoice" :
-              /ratecon|\brate\b|\brc\b/i.test(f.name) ? "rate_con" :
-              targetOrder && targetOrder.kind === "internal" ? "delivery_receipt" : "other";
-      return api("document", { order_id: oid, doc_type: t, filename: f.name, b64: b64, matched_by: "manual" });
-    });
-  })).then(reload).then(function () { openOrder(oid); toast(files.length + " document(s) attached"); })
-    .catch(function (e2) { toast(e2.message, true); });
+  var targetOrder = order(oid), guesses = files.map(function (f) { return dropDocType(f.name, targetOrder); });
+  (guesses.some(function (g) { return !g; }) ? docTypeChooser(files, guesses) : Promise.resolve(guesses)).then(function (types) {
+    if (!types) return;
+    return Promise.all(files.map(function (f, i) {
+      return fileB64(f).then(function (b64) { return api("document", { order_id: oid, doc_type: types[i], filename: f.name, b64: b64, matched_by: "manual" }); });
+    })).then(reload).then(function () { openOrder(oid); toast(files.length + " document(s) attached"); });
+  }).catch(function (e2) { toast(e2.message, true); });
 });
 document.addEventListener("blur", function (e) {
   var i = e.target.closest && e.target.closest("[data-of]");
@@ -9740,6 +10208,19 @@ document.addEventListener("blur", function (e) {
         function () { return orderFieldSet(oid, "transfer_department_id", next); });
     })
     .catch(function (err) { toast(err.message, true); });
+}, true);
+/* Employee # (Fleet, and the spare-drivers list): saved on blur to the driver. A refused number (already someone else's) puts the old one back. */
+document.addEventListener("blur", function (e) {
+  var i = e.target.closest && e.target.closest("[data-empno]");
+  if (!i) return;
+  var id = i.dataset.empno, was = i.dataset.was || "", now = i.value.trim();
+  if (now === was) { i.value = was; return; }
+  api("driver/employee-no", { driver_id: id, employee_no: now }).then(function (r) {
+    var saved = (r && r.employee_no) || ""; if (saved) EMP.by[id] = saved; else delete EMP.by[id];
+    EMP.at = Date.now();
+    [].forEach.call(document.querySelectorAll('[data-empno="' + id + '"]'), function (x) { x.value = saved; x.dataset.was = saved; });
+    toast(saved ? "Employee # saved" : "Employee # cleared");
+  }).catch(function (err) { i.value = was; toast(err.message, true); });
 }, true);
 /* Fleet driver name (D45) — free-text; on blur, set the truck's current driver
    by name (creates the driver if new, or unassigns when cleared). */

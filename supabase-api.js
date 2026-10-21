@@ -248,7 +248,7 @@ var HISTORY_LABELS = {
   "transfer/create": "Mark transfer done", "transfer/delete": "Undo transfer",
   "sync-delivery-dates": "Sync delivery dates", "driver": "Add driver",
   "truck": "Add truck", "assign-truck": "Assign truck",
-  "truck/driver": "Change truck driver", "location": "Add location",
+  "truck/driver": "Change truck driver", "driver/employee-no": "Set employee number", "location": "Add location",
   "department": "Add department", "customer": "Add customer",
   "category": "Edit scheduler category", "sheet": "Change sheet",
   "sheet/cell": "Edit sheet cell", "grid/cell-fmt": "Format database cell",
@@ -299,7 +299,7 @@ function scopeFor(route, d) {
     "truck/off": ["dispatch", "sched"], "unschedule": ["dispatch", "sched"],
     "day-note": ["dispatch", "sched"],
     "driver": ["database", "fleet"], "truck": ["database", "fleet"],
-    "assign-truck": ["database", "fleet"], "truck/driver": ["database", "fleet"],
+    "assign-truck": ["database", "fleet"], "truck/driver": ["database", "fleet"], "driver/employee-no": ["database", "fleet"],
     "location": ["database", "pickdrop"], "department": ["database", "departments"],
     "customer": ["database", d.kind === "external" ? "brokers" : "bagger"]
   }[route];
@@ -744,6 +744,8 @@ var ROUTES = {
   "truck": viaRpc("api_truck_add"),
   "assign-truck": viaRpc("api_assign_truck"),
   "truck/driver": viaRpc("api_truck_driver"),
+  "driver/employee-nos": function (d) { return rpc("api_driver_employee_nos", { d: d || {} }); },
+  "driver/employee-no": viaRpc("api_driver_employee_no_set"),
   "location": function (d, route) {
     return rest("POST", "locations",
       pick(d, ["name", "address", "city", "state", "postal_code", "phone", "appointment_note", "notes"]),
@@ -810,14 +812,14 @@ function api(path, body) {
   var fn = ROUTES[route];
   if (!fn) return Promise.reject(new Error("no route /api/" + route));
   // Saves in flight / saves started: the live-update check waits for these so it never redraws around your own save.
-  var isRead = route === "bootstrap" || route === "bootstrap/poll" || route === "history" || route.indexOf("report") === 0;
+  var isRead = route === "bootstrap" || route === "bootstrap/poll" || route === "history" || route === "driver/employee-nos" || route.indexOf("report") === 0;
   if (!isRead) { API_WRITES.seq++; API_WRITES.open++; }
   return Promise.resolve().then(function () { return fn(body || {}, route, q); })
     .finally(function () { if (!isRead) API_WRITES.open--; })
     .catch(function (err) {
       // A failed save may leave something on screen that didn't stick; make
       // the next load a complete one so the screen matches the database.
-      if (route !== "bootstrap" && route !== "bootstrap/poll") BOOT_DIRTY = true;
+      if (route !== "bootstrap" && route !== "bootstrap/poll" && route !== "driver/employee-nos") BOOT_DIRTY = true;
       throw err;
     });
 }

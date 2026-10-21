@@ -179,6 +179,8 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | Colors, spacing, fonts | `app.css` (tokens at the top) |
 | Rate-con reading (what it fills, what it misses) | `ratecon-parser.js` (per-broker handlers), then `app.js` → `ingestRateCon`, `ingestParsed`, `afApply` |
 | The window that confirms a rate con or pasted load before an order is made (no tags in the side window any more) | `app.js` → `afReview`, then `ingestParsed` and `afApply` (fills only blank boxes) |
+| The wide **Sign window**: a dragged-in rate con (or a document's **Sign** button) beside the review boxes, with initials / date / text stamps and the signed copy as a draggable file chip | `app.js` → `sgnOpen` (section "Sign window"), `afFormHtml` / `afFormBind` (the boxes), `ingestRateCon`, `signDocument`, `sgnBuild` (pdf-lib), styles `.sgn*` in `app.css` |
+| The PDF **file chip** on each document row (drag it out, or click to save) and the "what are these?" window for dropped files | `app.js` → `docRowHtml`, `docChipHtml`, `docPrefetch` (`DOCBLOB`), `dropDocType`, `docTypeChooser`; `packageDocs` (a signed copy replaces its original) |
 | Paste Load Info | `app.js` → `pasteLoadModal`, `runPasteLoad` |
 | Live updates when a second dispatcher changes something | `app.js` → `livePoll`, `liveBusy`, `liveApply` (every 4 seconds); `supabase-api.js` → route `bootstrap/poll` (asks `api_bootstrap_since`, which reads the History log) |
 | New Order button (header): External / Bag Order / Internal Freight | `app.js` → `newOrderModal`, `newExternalModal`, `newBagPanel`, `newBagGo` (a bag order number that exists opens that order; a new one is added) |
