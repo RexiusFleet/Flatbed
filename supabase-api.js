@@ -248,7 +248,7 @@ var HISTORY_LABELS = {
   "transfer/create": "Mark transfer done", "transfer/delete": "Undo transfer",
   "sync-delivery-dates": "Sync delivery dates", "driver": "Add driver",
   "truck": "Add truck", "assign-truck": "Assign truck",
-  "truck/driver": "Change truck driver", "driver/employee-no": "Set employee number", "location": "Add location",
+  "truck/driver": "Change truck driver", "driver/employee-no": "Set employee number", "driver/phone": "Set driver phone", "location": "Add location",
   "department": "Add department", "customer": "Add customer",
   "category": "Edit scheduler category", "sheet": "Change sheet",
   "sheet/cell": "Edit sheet cell", "grid/cell-fmt": "Format database cell",
@@ -299,7 +299,7 @@ function scopeFor(route, d) {
     "truck/off": ["dispatch", "sched"], "unschedule": ["dispatch", "sched"],
     "day-note": ["dispatch", "sched"],
     "driver": ["database", "fleet"], "truck": ["database", "fleet"],
-    "assign-truck": ["database", "fleet"], "truck/driver": ["database", "fleet"], "driver/employee-no": ["database", "fleet"],
+    "assign-truck": ["database", "fleet"], "truck/driver": ["database", "fleet"], "driver/employee-no": ["database", "fleet"], "driver/phone": ["database", "fleet"],
     "location": ["database", "pickdrop"], "department": ["database", "departments"],
     "customer": ["database", d.kind === "external" ? "brokers" : "bagger"]
   }[route];
@@ -746,6 +746,7 @@ var ROUTES = {
   "truck/driver": viaRpc("api_truck_driver"),
   "driver/employee-nos": function (d) { return rpc("api_driver_employee_nos", { d: d || {} }); },
   "driver/employee-no": viaRpc("api_driver_employee_no_set"),
+  "driver/phone": viaRpc("api_driver_phone_set"),
   "location": function (d, route) {
     return rest("POST", "locations",
       pick(d, ["name", "address", "city", "state", "postal_code", "phone", "appointment_note", "notes"]),

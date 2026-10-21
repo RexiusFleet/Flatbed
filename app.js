@@ -4650,30 +4650,41 @@ function designationRuleColor(categoryId) {
 }
 /* Employee numbers (drivers.employee_no). Not part of the normal bootstrap: read on demand through api_driver_employee_nos and
    kept in EMP.by {driver_id: number}. EMP.ok is false when that SQL has not been run yet (the column then says so). */
-var EMP = { by: {}, at: 0, loading: false, ok: null, err: "" };
+var EMP = { by: {}, phone: {}, at: 0, loading: false, ok: null, err: "", pending: false };
 function empEnsure() {
   if (EMP.loading || EMP.ok === false || (EMP.at && Date.now() - EMP.at < 60000)) return;
   EMP.loading = true;
   api("driver/employee-nos").then(function (list) {
-    EMP.by = {}; (list || []).forEach(function (r) { EMP.by[r.driver_id] = r.employee_no; }); EMP.ok = true; EMP.at = Date.now();
+    EMP.by = {}; EMP.phone = {};
+    (list || []).forEach(function (r) { if (r.employee_no) EMP.by[r.driver_id] = r.employee_no; if (r.phone) EMP.phone[r.driver_id] = r.phone; });
+    EMP.ok = true; EMP.at = Date.now();
   }, function (e) { EMP.ok = false; EMP.err = e.message || ""; }).then(function () {
     EMP.loading = false;
-    var ae = document.activeElement;
-    if (SEC === "database" && !(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) render();
+    if (SEC === "database") render();       // render() itself waits while a number is being typed (empBusy)
   });
 }
-function empInput(driverId) {
+// kind "no" = the employee number box, "phone" = the phone box. Both belong to the driver, not the truck.
+function empInput(driverId, kind) {
   if (EMP.ok === false) return '<span style="color:var(--ink-3)" title="Run the employee numbers SQL first">not set up</span>';
-  return '<input class="cell-i n" data-empno="' + esc(driverId) + '" data-was="' + esc(EMP.by[driverId] || "") + '" placeholder="Employee #" value="' + esc(EMP.by[driverId] || "") + '" autocomplete="off">';
+  var phone = kind === "phone", val = (phone ? EMP.phone : EMP.by)[driverId] || "";
+  return '<input class="cell-i n" ' + (phone ? "data-empphone" : "data-empno") + '="' + esc(driverId) + '" data-was="' + esc(val) + '" placeholder="' + (phone ? "Phone" : "Employee #") +
+    '" value="' + esc(val) + '" autocomplete="off"' + (phone ? ' inputmode="tel"' : "") + ">";
+}
+// A number or phone box is being typed in (focused, or holding text that is not saved yet): a redraw would wipe it, so render() waits.
+function empBusy() {
+  var ae = document.activeElement;
+  if (ae && ae.dataset && (ae.dataset.empno != null || ae.dataset.empphone != null)) return true;
+  return [].some.call(document.querySelectorAll("input[data-empno],input[data-empphone]"), function (i) { return i.value.trim() !== (i.dataset.was || ""); });
 }
 // Drivers with no truck right now (a spare driver) have no row in Fleet, so they get a small list of their own under it.
 function spareDriversHtml() {
   empEnsure();
   var list = (DB.drivers || []).filter(function (d) { return d.active !== false && !d.truck; });
   if (!list.length || EMP.ok === false) return "";
-  return '<div class="fleet-spare"><h3>Drivers without a truck</h3><table class="data" style="width:340px;min-width:0"><tbody>' +
-    list.map(function (d) { return '<tr><td><div class="cell"><b>' + esc(d.full_name) + '</b></div></td><td style="width:150px"><div class="cell">' + empInput(d.id) + "</div></td></tr>"; }).join("") +
-    "</tbody></table></div>";
+  return '<div class="fleet-spare"><h3>Drivers without a truck</h3>' +
+    list.map(function (d) {
+      return '<div class="row"><b>' + esc(d.full_name) + "</b><div>" + empInput(d.id, "no") + "</div><div>" + empInput(d.id, "phone") + "</div></div>";
+    }).join("") + "</div>";
 }
 /* One cell for a field in a record context — dispatches on the field's `ui`
    special-renderer, else a generic editable cell writing to its real column. */
@@ -4684,7 +4695,12 @@ function fieldCell(f, ctx) {
     // The number belongs to the DRIVER (reached through the truck's current driver), so a truck change never moves it.
     var t5 = ctx.trucks.obj; empEnsure();
     if (!t5.driver_id) return '<td><div class="cell" style="color:var(--ink-3)">—</div></td>';
-    return '<td><div class="cell">' + empInput(t5.driver_id) + "</div></td>";
+    return '<td><div class="cell">' + empInput(t5.driver_id, "no") + "</div></td>";
+  }
+  if (f.ui === "driverphone") {
+    var t6 = ctx.trucks.obj; empEnsure();
+    if (!t6.driver_id) return '<td><div class="cell" style="color:var(--ink-3)">—</div></td>';
+    return '<td><div class="cell">' + empInput(t6.driver_id, "phone") + "</div></td>";
   }
   if (f.ui === "truckdriver") { var t2 = ctx.trucks.obj; return '<td><div class="cell"><input class="cell-i" data-truckdriver="' + ctx.trucks.id + '" value="' + esc(t2.driver_name || "") + '"></div></td>'; }
   if (f.ui === "color") {
@@ -4762,6 +4778,7 @@ function fieldRawValue(f, ctx) {
   }
   if (f.ui === "truckdriver") return (ctx.trucks && ctx.trucks.obj.driver_name) || "";
   if (f.ui === "employeeno") return (ctx.trucks && EMP.by[ctx.trucks.obj.driver_id]) || "";
+  if (f.ui === "driverphone") return (ctx.trucks && EMP.phone[ctx.trucks.obj.driver_id]) || "";
   if (f.ui === "color") {
     if (f.storage === "column:drivers.color") return (ctx.trucks && ctx.trucks.obj.driver_color) || "";
     var rparts = f.storage.indexOf("column:") === 0 ? f.storage.slice(7).split(".") : null;
@@ -6481,6 +6498,8 @@ function syncOrderLabel(o) {
 }
 document.addEventListener("click", function (e) { if (e.target.closest && e.target.closest("#mrv-save")) mrvSave(); });
 function render() {
+  // A drawn-again page would wipe an Employee # or Phone box that is being typed in: wait until you leave it (its blur handler redraws then).
+  if (typeof empBusy === "function" && empBusy()) { EMP.pending = true; return; }
   if ((SUB === "cw" || SUB === "driver") && needsHistory(CW_START) && !HISTORY_FETCH)
     ensureHistory().then(function (got) { if (got) render(); });
   reindexLookups(); CELLS = cellContents(); buildOffDays(); buildDayNotes(); buildCatColor(); buildSheetCells(); buildGridFmt(); renderFmtBar();
@@ -10209,18 +10228,45 @@ document.addEventListener("blur", function (e) {
     })
     .catch(function (err) { toast(err.message, true); });
 }, true);
-/* Employee # (Fleet, and the spare-drivers list): saved on blur to the driver. A refused number (already someone else's) puts the old one back. */
+/* Employee # and Phone (Fleet, and the spare-drivers list): saved when you leave the box. A refused number (already someone else's) puts the old one back.
+   A ten-digit phone is tidied to (541) 555-0123; anything else is kept as typed. */
+function empTidyPhone(v) {
+  var d = String(v).replace(/\D/g, "");
+  if (d.length === 11 && d.charAt(0) === "1") d = d.slice(1);
+  return d.length === 10 && !/[a-z]/i.test(v) ? "(" + d.slice(0, 3) + ") " + d.slice(3, 6) + "-" + d.slice(6) : String(v).trim();
+}
 document.addEventListener("blur", function (e) {
-  var i = e.target.closest && e.target.closest("[data-empno]");
+  var i = e.target.closest && e.target.closest("[data-empno],[data-empphone]");
   if (!i) return;
-  var id = i.dataset.empno, was = i.dataset.was || "", now = i.value.trim();
-  if (now === was) { i.value = was; return; }
-  api("driver/employee-no", { driver_id: id, employee_no: now }).then(function (r) {
-    var saved = (r && r.employee_no) || ""; if (saved) EMP.by[id] = saved; else delete EMP.by[id];
+  var phone = i.dataset.empphone != null, id = phone ? i.dataset.empphone : i.dataset.empno, was = i.dataset.was || "";
+  var now = phone ? empTidyPhone(i.value) : i.value.trim();
+  var sel = phone ? '[data-empphone="' + id + '"]' : '[data-empno="' + id + '"]';
+  var done = function () { if (EMP.pending && !empBusy()) { EMP.pending = false; render(); } };
+  if (now === was) { i.value = was; done(); return; }
+  var body = { driver_id: id }; body[phone ? "phone" : "employee_no"] = now;
+  api(phone ? "driver/phone" : "driver/employee-no", body).then(function (r) {
+    var saved = (r && (phone ? r.phone : r.employee_no)) || "", map = phone ? EMP.phone : EMP.by;
+    if (saved) map[id] = saved; else delete map[id];
     EMP.at = Date.now();
-    [].forEach.call(document.querySelectorAll('[data-empno="' + id + '"]'), function (x) { x.value = saved; x.dataset.was = saved; });
-    toast(saved ? "Employee # saved" : "Employee # cleared");
-  }).catch(function (err) { i.value = was; toast(err.message, true); });
+    [].forEach.call(document.querySelectorAll(sel), function (x) { x.value = saved; x.dataset.was = saved; });
+    toast(phone ? (saved ? "Phone saved" : "Phone cleared") : (saved ? "Employee # saved" : "Employee # cleared"));
+  }).catch(function (err) { i.value = was; toast(err.message, true); }).then(done);
+}, true);
+/* Keys in those boxes, like a sheet: Tab goes to the next box (Employee # then Phone, then the next driver; Shift+Tab goes back), Enter and the
+   up/down arrows move down and up the same column, Esc puts the old value back. */
+document.addEventListener("keydown", function (e) {
+  var i = e.target.closest && e.target.closest("[data-empno],[data-empphone]");
+  if (!i) return;
+  var wrap = i.closest("#main") || document, all = [].slice.call(wrap.querySelectorAll("input[data-empno],input[data-empphone]"));
+  var same = all.filter(function (x) { return (x.dataset.empno != null) === (i.dataset.empno != null); });
+  var go = null;
+  if (e.key === "Tab") go = all[all.indexOf(i) + (e.shiftKey ? -1 : 1)];
+  else if (e.key === "Enter" || e.key === "ArrowDown") go = same[same.indexOf(i) + 1];
+  else if (e.key === "ArrowUp") go = same[same.indexOf(i) - 1];
+  else if (e.key === "Escape") { i.value = i.dataset.was || ""; i.blur(); return; }
+  else return;
+  e.preventDefault(); e.stopPropagation();
+  if (go) { go.focus(); go.select(); } else i.blur();
 }, true);
 /* Fleet driver name (D45) — free-text; on blur, set the truck's current driver
    by name (creates the driver if new, or unassigns when cleared). */
