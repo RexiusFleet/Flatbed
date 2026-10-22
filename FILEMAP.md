@@ -11,7 +11,7 @@ button, or a word, and it points you to the file and the part of the file.
  Dashboard (dispatcher, signs in)       Driver page /driver/      Bag plant page /bagplant/
    https://rexiusfleet.github.io/Flatbed/   (Kevin's app, signs in)    (Kevin's app, read-only)
    │  index.html loads, in order:           │ driver/index.html         │ bagplant/index.html
-   │    vendor/*.js ─ PDF reading, merging, OCR (in the browser)        │   (both load driver/driver.js,
+   │    (vendor/*.js ─ PDF reading, merging, OCR: loaded on first use)   │   (both load driver/driver.js,
    │    config.js ─── which Supabase project (public URL + public key)  │    publish-schedule.js, config.js)
    │    publish-schedule.js ─ builds the schedule drivers/bag plant see │
    │    supabase-api.js ─ the "phone line" to Supabase: sign-in + data  │
@@ -78,16 +78,16 @@ and with their Refresh button.
 | `supabase-api.js` | Sign-in (shared login), the Supabase request helpers, the route table that turns `api("…")` calls into Supabase calls, document storage helpers, report CSV builder, History labels. | Adding a new kind of save/load, or changing how login works. |
 | `app.js` | The whole dashboard UI, about 12,900 lines in one file. **Built, do not edit by hand:** it is the files in `src/js/` joined in order (see §3). | Never directly; edit `src/js/`. |
 | `src/js/` | The source of `app.js`: `head.js` (opens the one shared scope), one file per section `01-core.js` … `13-history.js`, `tail.js` (closes it). All sections share one private scope, so a function in one file is callable from every other. | Almost any change to screens, buttons, behavior. Then run `node build.js`. |
-| `build.js` | Joins `src/js/*` into `app.js`. `node build.js` rebuilds; `node build.js --check` changes nothing and fails if anything is out of date. Node only, no packages. | Adding a new section file (add it to `JS_PARTS`). |
+| `build.js` | Joins `src/js/*` into `app.js` and sets every `?v=` cache tag in the three html files to a short hash of that file, so a browser re-fetches a file exactly when it changed. `node build.js` rebuilds; `node build.js --check` changes nothing and fails if anything is out of date. Node only, no packages. | Adding a new section file (add it to `JS_PARTS`). |
 | `publish-schedule.js` | Builds the week (each driver tab + Current Week) that **Publish Schedule** saves for the driver and bag plant pages. Global `Dept12BuildSchedule`. Keep it matching `vDriverView`. | Changing the driver-tab layout. |
 | `ratecon-parser.js` | The rate con reader: `Dept12RateCon.parse(text, opts)` turns OCR text, a PDF text layer, or a pasted email into load #, PO, rate, broker, pickup, delivery (with appointment text), each marked `ok` or `check`. One handler per broker layout (Tradewinds, Nationwide, Aaron Wilson / Smokey Mountain, OpenRoad, Iosco, the ITS dispatch family, Oasis, Vanport, Inland, labeled-form brokers) plus a generic reader, an email reader, and a reader for a customer's own dispatch screen pasted from an email ("Dispatched 09/22/26", "Cust PO. #", fuel surcharge). It reads numbers, rate and the stops; it does not read notes. Runs in the browser and in node, so it can be tested on its own. | A new broker's rate cons read wrong: add or fix its handler. |
 | `app.css` | All styling (colors, spacing, fonts). Design tokens at the top (`--brand`, `--fs-…`). Also used by the driver and bag plant pages. | Anything visual. |
 | `driver/index.html`, `driver/driver.js`, `driver/driver.css`, `driver/scanner.js` | The driver page (`/driver/`): needs the app sign-in (`REQUIRE_APP_LOGIN` at the top of `driver.js`; `?app=1` forces it on). The company app passes the login and employee number in the link hash (`#access_token=…&refresh_token=…&emp=…`) or through `window.dept12App` (`setSession`, `setEmployee`, `signOut`); a sign-in form is the fallback. The employee number is checked in the database; no match = Current Week only, no personal tab. The old name picker is still in the code behind `NAME_PICKER`. Names show as first names (`dFirst`). Current Week + own tab, notes, POD/BOL scanner (`scanner.js`: take a photo, drag the four corners onto the page, it straightens it and removes shadows; Adjust Edges after), "Seen by". Reads only the published schedule. Also try `/driver/?demo` for sample data. `driver.js` has its own copy of the chip rendering (`dvChip`/`dvPlace` in `app.js` is the dashboard's copy of the same view; keep both in step). | Anything drivers see. |
 | `bagplant/index.html` | The bag plant page (`/bagplant/`). Same `driver/driver.js` (and the same sign-in), switched to bag plant mode by `FLATBED_MODE`. Backhaul flags are hidden from it. | Rarely; look changes go in `driver.js`/`driver.css`. |
 | `rexius-logo.png` | Header/login logo. | — |
-| `vendor/pdf.min.js`, `pdf.worker.min.js` | pdf.js — reads text out of PDFs (rate cons, invoices). | Never (third-party). |
-| `vendor/pdf-lib.min.js` | Splits and merges PDFs (invoice batches, billing packages). | Never. |
-| `vendor/tesseract*.js`, `worker.min.js`, `eng.traineddata.gz` | OCR for scanned PDFs with no text. | Never. |
+| `vendor/pdf.min.js`, `pdf.worker.min.js` | pdf.js — reads text out of PDFs (rate cons, invoices). Not in index.html: `loadVendor("pdfjs")` in `src/js/02-chips-extract.js` loads it the first time a PDF is read. | Never (third-party). |
+| `vendor/pdf-lib.min.js` | Splits and merges PDFs (invoice batches, billing packages, the signed copy) and builds the driver scanner's PDF. Loaded on first use: `loadVendor("pdflib")` on the dashboard, `loadPdfLib` in `driver/scanner.js` (starts when the scanner opens). | Never. |
+| `vendor/tesseract*.js`, `worker.min.js`, `eng.traineddata.gz` | OCR for scanned PDFs with no text. Loaded on first use (`loadVendor("tess")` via `getOcrWorker`); opening External Orders warms it up. | Never. |
 | `.gitignore` | Stops secret files and business data from ever being uploaded. | Rarely. Keep it. |
 
 **Not in this repo (on purpose, local-only on the owner's computer):**
@@ -114,12 +114,12 @@ silently override each other (the later file wins): search before naming.
 
 | File in `src/js/` (banner in `app.js`) | What lives there | Key functions |
 |---|---|---|
-| `01-core.js` | Global state, helpers, preferences (theme, accent, font), sidebar navigation, keyboard shortcuts, order-number formatting. | `NAV` list (in 05), `renderSideNav`, `runShortcut`, `formatOrderNumber`, `canView`/`canEdit`, `toast` |
+| `01-core.js` | Global state, helpers, preferences (theme, accent, font), sidebar navigation, keyboard shortcuts, order-number formatting. | `NAV` list (in 05), `renderSideNav`, `runShortcut`, `formatOrderNumber`, `toast` |
 | `02-chips-extract.js` | Lookups (`order()`, `party()`), what a **chip** says and what color it is, date helpers, **PDF text + OCR + rate-con parsing** (`parseRateCon` wraps `ratecon-parser.js`), broker matching, and rate-con **autofill** (`afApply`, `afMatchLocation`). | `buildChip`, `chipHtml`, `pushColorFor`, `cellHasLoad`, `parseRateCon`, `extractInvoiceInfo`, `ocrPdf`, `mergePdfs` |
-| `03-drawer-billing.js` | The **order drawer** (the panel that slides in when you click a chip or row), pickup/delivery pickers, billing packages. | `openOrder` (external), `openInternalOrder` (bag), `openTransferOrder` (internal freight), `routeSectionHtml` (the Pickup/Drop table with Add Stop and drag reorder), `rateInputHtml` (External Rate), `locCombo`, `partyCombo`, `doPackage`, `billDone` |
+| `03-drawer-billing.js` | The **order drawer** (the panel that slides in when you click a chip or row), pickup/delivery pickers, billing packages. | `openOrder` (external), `openInternalOrder` (bag), `openTransferOrder` (internal freight), `rateInputHtml` (External Rate), `locCombo`, `partyCombo`, `doPackage`, `billDone` |
 | `04-views.js` | **Every screen's layout**: Scheduler, Current Week, Driver Tabs, the three order trackers (sortable column headers via `tsortTh`), Billing, Database grids, custom sheets, Reports (dashboard tiles, pivot builder, saved/pinned reports: `RPT_SYSTEM`, `rptRun`, `rptDashHtml`, `rptWinOpen`). | `vScheduler`, `vCurrentWeek`, `vDriverView`, `vInternal`, `vInternalFreight`, `vOrders`, `vBilling`, `vDatabase`, `vSheet`, `vReports`, `toolbarHtml` |
 | `05-settings-nav-search.js` | Settings pages, the Staging rail, the **`render()` dispatcher** (decides which screen to draw), `reload()`, global search box, **Sync Delivery Dates** and the Motive mileage review window (`MOT`, `motBuckets`, `mrvCalc`). | `render`, `reload`, `vSettings`, `renderRail`, `renderSearch`, `NAV`, `runSyncAll`, `mrvOpen` |
-| `06-modals-grids.js` | Popups (add customer/location/truck, Add New Location, bulk add orders, day note, confirm), document viewer, spreadsheet-style cell editing, **document ingestion** (rate con / loose POD / invoice batch). | `openModal`, `addLocationModal`, `parseLocationText`, `openViewer`, `startEdit`/`commitEdit`, `ingestRateCon`, `ingestLoose`, `ingestBatch` |
+| `06-modals-grids.js` | Popups (add customer/location/truck, Add New Location, bulk add orders, day note, confirm), document viewer, spreadsheet-style cell editing, **document ingestion** (rate con / loose POD / invoice batch). | `openModal`, `addLocationModal`, `parseLocationText`, `routeSectionHtml`, `openViewer`, `startEdit`/`commitEdit`, `ingestRateCon`, `ingestLoose`, `ingestBatch` |
 | `07-events.js` | The big **click / change / keyboard handlers** — where each button's action is wired. | Search the button's id or `data-…` attribute here, e.g. `"motive-sync"`, `data-report`, `new-order` |
 | `08-undo.js` | ⌘Z / ⌘⇧Z undo-redo, and the save helpers that record undo steps. | `histPush`, `moveLoad`, `scheduleNote`, `orderFieldSet`, `freightValueSet` |
 | `09-color.js` | Scheduler cell colors, truck-off days, copy/paste of cells, right-click menus, adding/removing day rows. | `openCtxMenu`, `openDayMenu`, `setTruckOff`, `copyCell`/`pasteCell`, `addDayRow` |
@@ -204,10 +204,12 @@ find it with `grep -n "function name" src/js/*.js`, edit it there, then run
 | A chip going back to the plain look after an edit until you publish again | `app.js` → `PUB.dirty`, `pubOrderIds`, `pubSetDirty`, and the `pushed` check at the top of `chipHtml` |
 | Driver page: loads and typed notes | `driver/driver.js` → `vDriverGrid`, `vDriverCards`, `tabChipHtml`; `driver/driver.css` → `.dvx-note-row` |
 | Invoice reading | `app.js` → `extractInvoiceInfo` |
+| The PDF/OCR libraries loading on first use (none load with the page) | `app.js` → `loadVendor`, `VENDOR` (`src/js/02-chips-extract.js`); driver page: `driver/scanner.js` → `loadPdfLib` |
+| Cache tags (`?v=…`) on the script and style links | Set by `node build.js`; never edit them by hand |
 | Keyboard shortcuts | `src/js/01-core.js` → `BASE_SHORTCUTS`, `runShortcut` |
 | Sidebar menu items | `src/js/05-settings-nav-search.js` → `var NAV` |
 | What drivers and the bag plant see | `publish-schedule.js` (the data) and `driver/driver.js` (the look); keep `vDriverView` in `app.js` matching |
-| Pickup/Drop table, External Rate, backhaul | `src/js/03-drawer-billing.js` → `routeSectionHtml`, `rateInputHtml` |
+| Pickup/Drop table, External Rate, backhaul | `src/js/06-modals-grids.js` → `routeSectionHtml` (the Pickup/Drop table with Add Stop and drag reorder); `src/js/03-drawer-billing.js` → `rateInputHtml` |
 | Reports dashboard / pivot builder | `src/js/04-views.js` → `RPT_SYSTEM`, `rptRun` |
 | Delete rules for orders | `app.js` → `canDeleteOrder` (and the matching `api_order_delete` rules in Supabase) |
 | Report columns | Supabase → `api_report_rows` / `api_report`; headers in `supabase-api.js` → `REPORT_LABELS` |

@@ -1356,7 +1356,10 @@ function sgnOpen(opts) {
     side.innerHTML = isRc || intake ? '<p class="note"><span class="spin" style="display:inline-block;vertical-align:-2px;margin-right:6px"></span>Reading the rate con…</p>' :
       '<p class="note">Add your initials and date on the page, then save the signed copy on this order, or drag the file out. The original stays as it is.</p>' +
       '<p class="note" style="margin-top:12px">Is this a rate con you want read? <button class="btn sm" id="sgn-read" type="button">Read As Rate Con</button></p>';
-    pdfjsLib.getDocument({ data: opts.bytes.slice(0) }).promise.then(function (pdf) {
+    loadVendor("pdfjs").then(function () {
+      loadVendor("pdflib").catch(function () {});   // ready for Save before it's clicked
+      return pdfjsLib.getDocument({ data: opts.bytes.slice(0) }).promise;
+    }).then(function (pdf) {
       SGN.pdf = pdf; var jobs = []; for (var i = 1; i <= pdf.numPages; i++) jobs.push(pdf.getPage(i)); return Promise.all(jobs);
     }).then(function (pgs) {
       if (!SGN) return;
@@ -1509,7 +1512,9 @@ function sgnWinAnsi(t) { return String(t).replace(/[^\x20-\x7e\xa0-\xff]/g, "?")
 // Writes the stamps into a copy of the PDF. Positions go through the page's own transform, so a rotated scan still comes out upright and where it was placed.
 function sgnBuild() {
   var S = SGN;
-  return PDFLib.PDFDocument.load(S.bytes).then(function (doc) {
+  return loadVendor("pdflib").then(function () {
+    return PDFLib.PDFDocument.load(S.bytes);
+  }).then(function (doc) {
     return doc.embedFont(PDFLib.StandardFonts.Helvetica).then(function (font) {
       var ink = PDFLib.rgb(0.043, 0.114, 0.361);
       return S.stamps.reduce(function (chain, st) {
@@ -2028,7 +2033,7 @@ function matchInvoiceText(text) {
 }
 function ingestBatch(file) {
   busyStart("Splitting batch…");
-  return file.arrayBuffer().then(function (buf) { return PDFLib.PDFDocument.load(buf); }).then(function (pdf) {
+  return Promise.all([file.arrayBuffer(), loadVendor("pdflib")]).then(function (r) { return PDFLib.PDFDocument.load(r[0]); }).then(function (pdf) {
     var total = pdf.getPageCount(), count = Math.ceil(total / 2), tally = { auto: 0, suggested: 0, open: 0, failed: 0 };
     BATCH_REVIEW = { name: file.name, total: count, done: 0 };
     render();

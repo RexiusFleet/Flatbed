@@ -582,12 +582,38 @@ function isoToMdy(iso) {
   return p[1] + "/" + p[2] + "/" + p[0];
 }
 
-/* ── PDF extraction — ported from legacy/invoicing-local ─────────────────── */
-if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.js";
+/* ── PDF libraries, loaded on first use ───────────────────────────────────
+   pdf.js (read PDFs), Tesseract (OCR) and pdf-lib (write/merge PDFs) are about
+   900 KB together, so the page doesn't load them at startup: the first feature
+   that needs one calls loadVendor(...).then(...). Each file loads once; a
+   failed load can be retried by the next use. */
+var VENDOR = {
+  pdfjs:  { src: "vendor/pdf.min.js",       global: "pdfjsLib" },
+  tess:   { src: "vendor/tesseract.min.js", global: "Tesseract" },
+  pdflib: { src: "vendor/pdf-lib.min.js",   global: "PDFLib" }
+}, VENDOR_LOADING = {};
+function loadVendor() {
+  return Promise.all(Array.prototype.map.call(arguments, function (name) {
+    var v = VENDOR[name];
+    if (window[v.global]) return Promise.resolve();
+    return VENDOR_LOADING[name] || (VENDOR_LOADING[name] = new Promise(function (res, rej) {
+      var s = document.createElement("script");
+      s.src = v.src;
+      s.onload = function () {
+        if (name === "pdfjs") pdfjsLib.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.js";
+        res();
+      };
+      s.onerror = function () { delete VENDOR_LOADING[name]; s.remove(); rej(new Error("Couldn't load " + v.src)); };
+      document.head.appendChild(s);
+    }));
+  }));
+}
 
+/* ── PDF extraction — ported from legacy/invoicing-local ─────────────────── */
 function pdfText(b64) {
-  if (!window.pdfjsLib) return Promise.resolve("");
-  return pdfjsLib.getDocument({ data: bytesFromB64(b64) }).promise.then(function (pdf) {
+  return loadVendor("pdfjs").then(function () {
+    return pdfjsLib.getDocument({ data: bytesFromB64(b64) }).promise;
+  }).then(function (pdf) {
     var jobs = [];
     for (var p = 1; p <= pdf.numPages; p++) jobs.push(pdf.getPage(p).then(function (pg) {
       return pg.getTextContent().then(function (c) { return c.items.map(function (i) { return i.str; }).join(" "); });
@@ -601,17 +627,19 @@ function pdfText(b64) {
    on fixtures/Rosboro 884895.pdf (D6). Vendored the same way as pdf.js: a
    Tesseract.js worker running fully client-side against the vendored English
    model, so this works offline and needs no server or cloud OCR account. */
-var OCR_WORKER = null;
+var OCR_WORKER = null, OCR_WARMED = false;
 function getOcrWorker() {
-  if (!window.Tesseract) return Promise.reject(new Error("OCR engine not loaded"));
   if (!OCR_WORKER) {
-    var base = new URL("vendor/", location.href).href; // must be absolute — the worker's own base URL is a blob:, so relative paths don't resolve. Relative to the page so a sub-path static host works.
-    OCR_WORKER = Tesseract.createWorker("eng", 1, {
-      workerPath: base + "worker.min.js",
-      corePath: base + "tesseract-core.wasm.js",
-      langPath: base.slice(0, -1),
-      gzip: true
+    OCR_WORKER = loadVendor("tess").then(function () {
+      var base = new URL("vendor/", location.href).href; // must be absolute — the worker's own base URL is a blob:, so relative paths don't resolve. Relative to the page so a sub-path static host works.
+      return Tesseract.createWorker("eng", 1, {
+        workerPath: base + "worker.min.js",
+        corePath: base + "tesseract-core.wasm.js",
+        langPath: base.slice(0, -1),
+        gzip: true
+      });
     });
+    OCR_WORKER.catch(function () { OCR_WORKER = null; });   // let the next use try again
   }
   return OCR_WORKER;
 }
@@ -626,8 +654,9 @@ function pdfPageImage(pdf, pageNum) {
 }
 function ocrPdf(b64, onProgress, opts) {
   opts = opts || {};
-  if (!window.Tesseract || !window.pdfjsLib) return Promise.resolve("");
-  return pdfjsLib.getDocument({ data: bytesFromB64(b64) }).promise.then(function (pdf) {
+  return loadVendor("pdfjs").then(function () {
+    return pdfjsLib.getDocument({ data: bytesFromB64(b64) }).promise;
+  }).then(function (pdf) {
     return getOcrWorker().then(function (worker) {
       var last = opts.maxPages ? Math.min(pdf.numPages, opts.maxPages) : pdf.numPages;
       var pages = []; for (var i = 1; i <= last; i++) pages.push(i);
@@ -733,8 +762,9 @@ function loadImageEl(src) {
   return new Promise(function (res, rej) { var im = new Image(); im.onload = function () { res(im); }; im.onerror = rej; im.src = src; });
 }
 function readInvoiceBands(b64) {
-  if (!window.Tesseract || !window.pdfjsLib) return Promise.resolve(null);
-  return pdfjsLib.getDocument({ data: bytesFromB64(b64) }).promise.then(function (pdf) {
+  return loadVendor("pdfjs").then(function () {
+    return pdfjsLib.getDocument({ data: bytesFromB64(b64) }).promise;
+  }).then(function (pdf) {
     return pdfPageImage(pdf, 1);
   }).then(loadImageEl).then(function (img) {
     return getOcrWorker().then(function (worker) {
@@ -806,8 +836,9 @@ function invoiceCandidates(info) {
    position-aware item-coordinate pass only makes sense against a real
    text layer, so it's skipped on the OCR path. */
 function extractInvoiceInfo(b64) {
-  if (!window.pdfjsLib) return Promise.resolve({ invoiceNum: null, customerName: null });
-  return pdfjsLib.getDocument({ data: bytesFromB64(b64) }).promise.then(function (pdf) {
+  return loadVendor("pdfjs").then(function () {
+    return pdfjsLib.getDocument({ data: bytesFromB64(b64) }).promise;
+  }).then(function (pdf) {
     return pdf.getPage(1).then(function (page) {
       return page.getTextContent().then(function (content) {
         var items = content.items, W = page.view[2], H = page.view[3];
@@ -858,7 +889,9 @@ function extractInvoiceInfo(b64) {
   }).catch(function () { return { invoiceNum: null, solomon: null, text: "" }; });
 }
 function mergePdfs(b64s) {
-  return PDFLib.PDFDocument.create().then(function (out) {
+  return loadVendor("pdflib").then(function () {
+    return PDFLib.PDFDocument.create();
+  }).then(function (out) {
     return b64s.reduce(function (p, b) {
       return p.then(function () {
         return PDFLib.PDFDocument.load(bytesFromB64(b)).then(function (src) {

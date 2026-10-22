@@ -1215,7 +1215,10 @@ function vOrders(kind) {
   }).sort(externalOrderCompare);
   var liveRows = rows.filter(function (o) { return !o.billed_date; });
   var billedRows = rows.filter(function (o) { return o.billed_date; });
-  if (!OCR_WORKER && window.Tesseract) setTimeout(function () { getOcrWorker().catch(function () {}); }, 1500);   // load the OCR engine now so the first rate con doesn't wait for it
+  if (!OCR_WORKER && !OCR_WARMED) {   // load the PDF reader and OCR engine now so the first rate con doesn't wait for them
+    OCR_WARMED = true;
+    setTimeout(function () { loadVendor("pdfjs").catch(function () {}); getOcrWorker().catch(function () {}); }, 1500);
+  }
   var h = toolbarHtml("External Orders", {
     className: "orders-toolbar", context: yearPicker(),
     secondary: ordersToolbarExtras() + trackerBulkButtonsHtml("ext"),

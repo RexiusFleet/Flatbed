@@ -9,6 +9,20 @@
 (function () {
 "use strict";
 
+// pdf-lib (525 KB) isn't loaded with the page: it starts loading when the
+// scanner opens, so it's there by the time Done is pressed.
+var PDFLIB_SRC = new URL("../vendor/pdf-lib.min.js", document.currentScript.src).href, PDFLIB_LOADING = null;
+function loadPdfLib() {
+  if (window.PDFLib) return Promise.resolve();
+  return PDFLIB_LOADING || (PDFLIB_LOADING = new Promise(function (res, rej) {
+    var s = document.createElement("script");
+    s.src = PDFLIB_SRC;
+    s.onload = function () { res(); };
+    s.onerror = function () { PDFLIB_LOADING = null; s.remove(); rej(new Error("Couldn't load pdf-lib")); };
+    document.head.appendChild(s);
+  }));
+}
+
 var MAX_SRC = 3400;      // longest side of the photo we work from, px (was 2000: that alone made text soft)
 var MAX_OUT = 2200;      // longest side of a finished page: 2200px = 200 dpi on a letter page
 var $ = function (s, r) { return (r || document).querySelector(s); };
@@ -387,6 +401,7 @@ var ST = null;   // { title, onDone, pages:[{out, thumb}], step }
 
 function open(opts) {
   close();
+  loadPdfLib().catch(function () {});   // tried again at Done
   ST = { title: opts.title || "", onDone: opts.onDone, pages: [], step: "capture" };
   var el = document.createElement("div");
   el.className = "scan"; el.id = "scan"; el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true");
@@ -549,9 +564,10 @@ function onFile(e) {
 }
 function finish() {
   var pages = ST.pages.slice(), done = ST.onDone;
-  if (!window.PDFLib) { alertIn("The PDF tool didn't load. Check the connection and try again."); return; }
   ST.step = "busy"; ST.busyText = "Saving PDF…"; paint();
-  later(function () {
+  loadPdfLib().then(function () { later(build); },
+    function () { if (!ST) return; ST.step = "review"; paint(); alertIn("The PDF tool didn't load. Check the connection and try again."); });
+  function build() {
     var P = window.PDFLib;
     P.PDFDocument.create().then(function (doc) {
       return pages.reduce(function (chain, p) {
@@ -569,7 +585,7 @@ function finish() {
       close();
       if (done) done(new Blob([bytes], { type: "application/pdf" }), pages.length);
     }, function (err) { ST.step = "review"; paint(); alertIn("Couldn't make the PDF: " + (err && err.message || err)); });
-  });
+  }
 }
 function onClick(e) {
   var b = e.target.closest("[data-sc]"); if (!b || !ST) return;
