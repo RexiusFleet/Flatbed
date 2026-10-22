@@ -1098,6 +1098,13 @@ function transferChipColor(o) {
   return (dept && dept.color && dept.color.charAt(0) === "#") ? dept.color : "";
 }
 function driver(id) { for (var i = 0; i < DB.drivers.length; i++) if (DB.drivers[i].id === id) return DB.drivers[i]; return null; }
+/* Names are kept in full; the app shows the first name. Two active drivers with the same first name get a last initial (Matt S.). */
+function dFirst(full) {
+  var parts = String(full || "").trim().split(/\s+/); if (!parts[0]) return "";
+  var first = parts[0].toLowerCase(), same = (DB.drivers || []).filter(function (d) { return d.active !== false && String(d.full_name || "").trim().split(/\s+/)[0].toLowerCase() === first; });
+  if (same.length > 1 && parts.length > 1) return parts[0] + " " + parts[parts.length - 1].charAt(0).toUpperCase() + ".";
+  return parts[0];
+}
 function truckById(id) { for (var i = 0; i < DB.trucks.length; i++) if (DB.trucks[i].id === id) return DB.trucks[i]; return null; }
 /* External push-coloring (D85 Phase 2): once a load's pushed_at is set (the
    driver-tab push, D37), its chip follows the truck's CURRENT driver color —
@@ -2914,7 +2921,7 @@ function dcClass(t) { return t.driver_color ? " has-dc" : ""; }
 function dcStyle(t) { return t.driver_color ? "--dc:" + esc(dcSolid(t.driver_color)) + ";" : ""; }
 function truckColHeader(t) {
   var dc = t.driver_color ? ' style="--dc:' + esc(t.driver_color) + '"' : "";
-  return '<span class="drv"' + dc + '>' + esc(t.driver_name || "— unassigned —") + "</span>" +
+  return '<span class="drv"' + dc + '>' + esc(dFirst(t.driver_name) || "— unassigned —") + "</span>" +
     '<span class="trk">' + esc(t.number) + " " + esc(t.eq || "") + "</span>";
 }
 /* Outside-carrier lane header (D115) — pinned to the far right of the main
@@ -3348,7 +3355,7 @@ function seenHtml() {
       '<div class="seen-grid"><span class="lbl">Driver</span><span class="lbl">Current Week</span><span class="lbl">Their Tab</span>' +
       drivers.map(function (t) {
         var a = seenState(t, "cw", push), b = seenState(t, "own", push);
-        return "<b>" + esc(t.driver_name) + '<span class="trk"> ' + esc(t.number) + "</span></b>" +
+        return "<b>" + esc(dFirst(t.driver_name)) + '<span class="trk"> ' + esc(t.number) + "</span></b>" +
           '<span class="seen-st ' + a.cls + '">' + esc(a.txt) + '</span><span class="seen-st ' + b.cls + '">' + esc(b.txt) + "</span>";
       }).join("") + "</div>" +
       '<div class="seen-ft">Click an item to open its order. It is marked read when you open it.</div></div>';
@@ -3844,12 +3851,12 @@ function vDriverView() {
   h += '<div class="driver-app dv-tabs-wrap"><nav class="db-tabs" role="tablist" aria-label="Driver tabs">' +
     DB.trucks.map(function (t) {
       return '<button class="sub-tab" role="tab" data-dvpick="' + t.id + '" aria-selected="' + (t.id === DRIVER_VIEW) + '">' +
-        esc(t.driver_name || "Unassigned") + '<span class="trk">' + esc(t.number) + "</span></button>";
+        esc(dFirst(t.driver_name) || "Unassigned") + '<span class="trk">' + esc(t.number) + "</span></button>";
     }).join("") + "</nav></div>";
   var dvTruck = truckById(DRIVER_VIEW);
   // The same columns, in the same order, as a driver's own tab.
   h += '<div class="driver-app dv-embed"><div class="dv">' +
-    '<div class="hd">' + esc((dvTruck && dvTruck.driver_name) || "Load") + '</div><div class="hd">Rexius Order #</div>' +
+    '<div class="hd">' + esc((dvTruck && dFirst(dvTruck.driver_name)) || "Load") + '</div><div class="hd">Rexius Order #</div>' +
     '<div class="hd">Dispatch Notes</div><div class="hd">PO / PU #</div><div class="hd">Delivery #</div>' +
     '<div class="hd">Load #</div><div class="hd">Driver Notes</div>';
   if (!dvTruck) return h + "</div></div></div>";
@@ -4673,7 +4680,7 @@ function empInput(driverId, kind) {
 // A number or phone box is being typed in (focused, or holding text that is not saved yet): a redraw would wipe it, so render() waits.
 function empBusy() {
   var ae = document.activeElement;
-  if (ae && ae.dataset && (ae.dataset.empno != null || ae.dataset.empphone != null)) return true;
+  if (ae && ae.dataset && (ae.dataset.empno != null || ae.dataset.empphone != null || ae.dataset.sparename != null || ae.dataset.truckdriver != null)) return true;
   return [].some.call(document.querySelectorAll("input[data-empno],input[data-empphone]"), function (i) { return i.value.trim() !== (i.dataset.was || ""); });
 }
 // Drivers with no truck right now (a spare driver) have no row in Fleet, so they get a small list of their own under it.
@@ -4681,12 +4688,37 @@ function spareDriversHtml() {
   empEnsure();
   var list = (DB.drivers || []).filter(function (d) { return d.active !== false && !d.truck; });
   if (!list.length || EMP.ok === false) return "";
+  var open = (DB.trucks || []).filter(function (t) { return !t.driver_id; });
   return '<div class="fleet-spare"><h3>Drivers without a truck</h3>' +
+    '<div class="row hdr"><span>Full Name</span><span>Employee #</span><span>Phone</span><span>Truck</span><span></span></div>' +
     list.map(function (d) {
-      return '<div class="row"><b>' + esc(d.full_name) + "</b><div>" + empInput(d.id, "no") + "</div><div>" + empInput(d.id, "phone") + "</div>" +
+      return '<div class="row"><input data-sparename="' + esc(d.id) + '" value="' + esc(d.full_name) + '" aria-label="Full name"><div>' + empInput(d.id, "no") + "</div><div>" + empInput(d.id, "phone") + "</div>" +
+        '<select data-sparetruck="' + esc(d.id) + '" data-name="' + esc(d.full_name) + '" aria-label="Put on a truck"><option value="">No truck</option>' +
+        open.map(function (t) { return '<option value="' + esc(t.id) + '">Truck ' + esc(t.number) + "</option>"; }).join("") + "</select>" +
         '<button class="btn del sm" type="button" data-deldriver="' + esc(d.id) + '" data-name="' + esc(d.full_name) + '">Delete</button></div>';
     }).join("") + "</div>";
 }
+/* Spare driver rows: the name box renames the driver (one undo step); the Truck box puts them on an open truck. */
+document.addEventListener("blur", function (e) {
+  var i = e.target.closest && e.target.closest("[data-sparename]"); if (!i) return;
+  var id = i.dataset.sparename, prev = i.defaultValue || "", next = i.value.trim();
+  if (next === prev.trim()) { i.value = prev; return; }
+  if (!next) { i.value = prev; toast("A driver needs a name", true); return; }
+  var rename = function (n) { return api("row", { table: "drivers", id: id, values: { full_name: n } }); };
+  rename(next).then(reload).then(function () {
+    histPush("rename driver", function () { return rename(prev.trim()).then(reload); }, function () { return rename(next).then(reload); });
+  }).catch(function (err) { i.value = prev; toast(err.message, true); });
+}, true);
+document.addEventListener("change", function (e) {
+  var s = e.target.closest && e.target.closest("select[data-sparetruck]"); if (!s || !s.value) return;
+  var tid = s.value, nm = s.dataset.name, truck = truckById(tid);
+  api("truck/driver", { truck_id: tid, driver_name: nm }).then(reload).then(function () {
+    toast(nm + " is on truck " + (truck ? truck.number : ""));
+    histPush("put driver on truck",
+      function () { return api("truck/driver", { truck_id: tid, driver_name: "" }).then(reload); },
+      function () { return api("truck/driver", { truck_id: tid, driver_name: nm }).then(reload); });
+  }).catch(function (err) { s.value = ""; toast(err.message, true); });
+});
 /* Delete a driver (the Drivers without a truck list). A driver who has never been on a Scheduler load goes completely; one who has can't be deleted without
    breaking the schedule history, so the answer offers Make Inactive, which hides them everywhere. */
 document.addEventListener("click", function (e) {
@@ -10270,6 +10302,16 @@ document.addEventListener("blur", function (e) {
     EMP.at = Date.now();
     [].forEach.call(document.querySelectorAll(sel), function (x) { x.value = saved; x.dataset.was = saved; });
     toast(phone ? (saved ? "Phone saved" : "Phone cleared") : (saved ? "Employee # saved" : "Employee # cleared"));
+    var setTo = function (v) {
+      var b = { driver_id: id }; b[phone ? "phone" : "employee_no"] = v;
+      return api(phone ? "driver/phone" : "driver/employee-no", b).then(function (r2) {
+        var sv = (r2 && (phone ? r2.phone : r2.employee_no)) || "";
+        if (sv) map[id] = sv; else delete map[id];
+        EMP.at = Date.now();
+        [].forEach.call(document.querySelectorAll(sel), function (x) { x.value = sv; x.dataset.was = sv; });
+      });
+    };
+    histPush(phone ? "edit phone" : "edit employee number", function () { return setTo(was); }, function () { return setTo(saved); });
   }).catch(function (err) { i.value = was; toast(err.message, true); }).then(done);
 }, true);
 /* Keys in those boxes, like a sheet: Tab goes to the next box (Employee # then Phone, then the next driver; Shift+Tab goes back), Enter and the
@@ -10288,13 +10330,31 @@ document.addEventListener("keydown", function (e) {
   e.preventDefault(); e.stopPropagation();
   if (go) { go.focus(); go.select(); } else i.blur();
 }, true);
-/* Fleet driver name (D45) — free-text; on blur, set the truck's current driver
-   by name (creates the driver if new, or unassigns when cleared). */
+/* Fleet driver name (D45) — free-text; on blur:
+   - unchanged: nothing happens;
+   - cleared: the truck is unassigned (the driver stays, in "Drivers without a truck");
+   - the name of ANOTHER existing driver: that driver is put on this truck;
+   - any other new name on a truck that has a driver: that driver is RENAMED (it used to create a new driver and unassign the old one);
+   - a truck with no driver: the named driver is created / assigned.
+   Every case is one undo step. */
 document.addEventListener("blur", function (e) {
   var i = e.target.closest && e.target.closest("[data-truckdriver]");
   if (!i) return;
-  api("truck/driver", { truck_id: i.dataset.truckdriver, driver_name: i.value })
-    .then(reload).catch(function (err) { toast(err.message, true); });
+  var tid = i.dataset.truckdriver, prev = i.defaultValue || "", next = i.value.trim();
+  if (next === prev.trim()) { i.value = prev; return; }
+  var t = truckById(tid), cur = t && t.driver_id ? t.driver_id : "";
+  var low = next.toLowerCase();
+  var other = next ? (DB.drivers || []).filter(function (d) { return d.id !== cur && String(d.full_name || "").trim().toLowerCase() === low; })[0] : null;
+  var assign = function (name) { return api("truck/driver", { truck_id: tid, driver_name: name }); };
+  var rename = function (name) { return api("row", { table: "drivers", id: cur, values: { full_name: name } }); };
+  var renaming = !!(cur && next && !other);
+  var doIt = renaming ? function () { return rename(next); } : function () { return assign(next); };
+  var undoIt = renaming ? function () { return rename(prev.trim()); } : function () { return assign(prev.trim()); };
+  doIt().then(reload).then(function () {
+    histPush(renaming ? "rename driver" : "change truck driver",
+      function () { return undoIt().then(reload); },
+      function () { return doIt().then(reload); });
+  }).catch(function (err) { i.value = prev; toast(err.message, true); });
 }, true);
 /* Internal freight rate/minimum (D170) — persisted server-side, not a
    per-device pref, since it's a real business figure. Saves on blur; the

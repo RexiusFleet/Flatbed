@@ -2011,9 +2011,11 @@ body.bill-dragging{user-select:none;-webkit-user-select:none;cursor:ns-resize}
 /* Fleet: drivers who have no truck right now (they get their Employee # here) */
 .fleet-spare{padding:14px 12px 20px;flex:none}
 .fleet-spare h3{font-size:var(--fs-body-lg);font-weight:700;margin:0 0 8px;color:var(--ink)}
-.fleet-spare .row{display:grid;grid-template-columns:150px 150px 150px 84px;gap:8px;align-items:center;padding:3px 0}
+.fleet-spare .row{display:grid;grid-template-columns:170px 150px 150px 120px 84px;gap:8px;align-items:center;padding:3px 0}
 .fleet-spare .row input{width:100%;box-sizing:border-box;background:var(--paper);border:1px solid var(--rule-2);border-radius:var(--r-sm);padding:5px 8px;font-size:var(--fs-body-sm);color:var(--ink)}
-.fleet-spare .row input:focus{outline:none;border-color:var(--focus)}
+.fleet-spare .row input:focus,.fleet-spare .row select:focus{outline:none;border-color:var(--focus)}
+.fleet-spare .row select{width:100%;box-sizing:border-box;background:var(--paper);border:1px solid var(--rule-2);border-radius:var(--r-sm);padding:5px 6px;font-size:var(--fs-body-sm);color:var(--ink)}
+.fleet-spare .row.hdr{font-size:var(--fs-caption);text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
 
 /* ── Sign window (rate con review and signing) ── */
 .sgn{position:fixed;inset:0;z-index:330;background:var(--paper);display:flex;flex-direction:column;outline:none}

@@ -406,6 +406,13 @@ function ordNo(o) { return o && o.rexius_order_no || ""; }
 function rexiusOrderNo(key) { return ordNo(orderForKey(key)); }
 function loadNo(key) { var o = orderForKey(key); return o && o.broker_load_no || ""; }
 function fleet() { return (S.payload && S.payload.drivers || []).filter(function (d) { return d.driver; }); }
+/* Names are kept in full in the database; the pages show the first name. Two drivers with the same first name get a last initial (Matt S.). */
+function dFirst(full) {
+  var parts = String(full || "").trim().split(/\s+/); if (!parts[0]) return "";
+  var first = parts[0], same = fleet().filter(function (d) { return String(d.driver).trim().split(/\s+/)[0].toLowerCase() === first.toLowerCase(); });
+  if (same.length > 1 && parts.length > 1) return first + " " + parts[parts.length - 1].charAt(0).toUpperCase() + ".";
+  return first;
+}
 // A typed name matches a driver regardless of case/spacing, or by a first
 // name / start of a name when only one driver fits.
 function driverByName(txt) {
@@ -451,7 +458,7 @@ function allowedTab(tab) {
 function renderHeader() {
   var whoEl = $("#hdr-who");   // the driver page has no name/truck in the header
   if (whoEl) whoEl.innerHTML = !S.who ? "" : isBagPlant() ? "<b>Current Week</b><span>Bag Orders · View Only</span>" :
-    "<b>" + esc(S.who.name) + "</b><span>Truck " + esc(S.who.truck) + "</span>";
+    "<b>" + esc(dFirst(S.who.name)) + "</b><span>Truck " + esc(S.who.truck) + "</span>";
   // The bag order color code sits in the header, just left of Log Out.
   $("#hdr").innerHTML = S.who ? bagKeyHtml() +
     (BAG_PLANT || !NAME_PICKER ? "" : '<button class="btn drv-hbtn" id="signout">Log Out</button>') : "";
@@ -538,8 +545,8 @@ function vCurrentWeek() {
   cw.forEach(function (t) {
     var open = allowedTab(String(t.truck));
     h += '<th class="trkcol' + (t.driver_color ? " has-dc" : "") + '" style="' + (t.driver_color ? "--dc:" + esc(/^#[0-9a-f]{8}$/i.test(t.driver_color) ? t.driver_color.slice(0, 7) : t.driver_color) + ";" : "") + 'width:var(--col-w,150px)' + (open ? "" : ";cursor:default") + '"' +
-      (open ? ' data-tab="' + esc(t.truck) + '" title="Open ' + esc(t.driver || t.truck) + '\'s tab"' : "") + ">" +
-      '<span class="drv"' + (t.driver_color ? ' style="--dc:' + esc(t.driver_color) + '"' : "") + ">" + esc(t.driver || "— unassigned —") + "</span>" +
+      (open ? ' data-tab="' + esc(t.truck) + '" title="Open ' + esc(dFirst(t.driver) || t.truck) + '\'s tab"' : "") + ">" +
+      '<span class="drv"' + (t.driver_color ? ' style="--dc:' + esc(t.driver_color) + '"' : "") + ">" + esc(dFirst(t.driver) || "— unassigned —") + "</span>" +
       '<span class="trk">' + esc(t.truck) + " " + esc(t.equipment_type || "") + "</span></th>";
   });
   h += "</tr></thead><tbody>";
@@ -814,7 +821,7 @@ function dayLoadKeys(d, ds, rows) {
 function vDriverGrid(d) {
   var p = S.payload, today = todayIso();
   var h = '<div class="drv-scroll"><div class="drv-pad" style="padding-top:10px">' +
-    '<div class="dv dv-head"><div class="hd">' + esc(d.driver || "Load") + '</div><div class="hd">Rexius Order #</div><div class="hd">Dispatch Notes</div><div class="hd">PO / PU #</div>' +
+    '<div class="dv dv-head"><div class="hd">' + esc(dFirst(d.driver) || "Load") + '</div><div class="hd">Rexius Order #</div><div class="hd">Dispatch Notes</div><div class="hd">PO / PU #</div>' +
     '<div class="hd">Delivery #</div><div class="hd">Load #</div><div class="hd">Driver Notes</div></div>';
   p.dates.forEach(function (ds, di) {
     var rows = d.rows.slice(di * p.slots_per_day, (di + 1) * p.slots_per_day), keys = dayLoadKeys(d, ds, rows), total = keys.length;
@@ -909,7 +916,7 @@ function renderInner() {
   if (!allowedTab(S.tab)) S.tab = S.who && driverByTruck(S.who.truck) ? String(S.who.truck) : "cw";
   var d = S.tab === "cw" ? null : driverByTruck(S.tab);
   var prev = $("#main .grid-wrap, #main .drv-scroll"), top = prev ? prev.scrollTop : 0, left = prev ? prev.scrollLeft : 0;
-  var title = d ? (d.driver || "Unassigned") + " · " + d.truck : "Current Week";
+  var title = d ? (dFirst(d.driver) || "Unassigned") + " · " + d.truck : "Current Week";
   $("#main").innerHTML = toolbarHtml(title) + noticeHtml() +
     (d ? (NARROW.matches ? vDriverCards(d) : vDriverGrid(d)) : vCurrentWeek());
   logView(d ? "own" : "cw");
