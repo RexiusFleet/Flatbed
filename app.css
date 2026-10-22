@@ -2011,7 +2011,7 @@ body.bill-dragging{user-select:none;-webkit-user-select:none;cursor:ns-resize}
 /* Fleet: drivers who have no truck right now (they get their Employee # here) */
 .fleet-spare{padding:14px 12px 20px;flex:none}
 .fleet-spare h3{font-size:var(--fs-body-lg);font-weight:700;margin:0 0 8px;color:var(--ink)}
-.fleet-spare .row{display:grid;grid-template-columns:170px 150px 150px 120px 84px;gap:8px;align-items:center;padding:3px 0}
+.fleet-spare .row{display:grid;grid-template-columns:170px 150px 150px 120px auto;gap:8px;align-items:center;padding:3px 0}
 .fleet-spare .row input{width:100%;box-sizing:border-box;background:var(--paper);border:1px solid var(--rule-2);border-radius:var(--r-sm);padding:5px 8px;font-size:var(--fs-body-sm);color:var(--ink)}
 .fleet-spare .row input:focus,.fleet-spare .row select:focus{outline:none;border-color:var(--focus)}
 .fleet-spare .row select{width:100%;box-sizing:border-box;background:var(--paper);border:1px solid var(--rule-2);border-radius:var(--r-sm);padding:5px 6px;font-size:var(--fs-body-sm);color:var(--ink)}
@@ -2066,3 +2066,7 @@ body.bill-dragging{user-select:none;-webkit-user-select:none;cursor:ns-resize}
 .sgn-pop input{width:100%;box-sizing:border-box;background:var(--paper);border:1px solid var(--rule-2);border-radius:var(--r-sm);padding:6px 8px;font-size:var(--fs-body)}
 .sgn-pop .acts{display:flex;gap:6px;justify-content:flex-end;margin-top:10px}
 @media (max-width:900px){.sgn-body{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr)}.sgn-view{border-right:0;border-bottom:1px solid var(--rule-2)}}
+
+.fleet-spare .row .btns{display:flex;gap:6px;justify-content:flex-end}
+.fleet-former .row{grid-template-columns:170px 150px 150px 170px auto;color:var(--ink-2)}
+.fleet-former .row b{color:var(--ink);font-weight:600}

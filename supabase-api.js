@@ -744,6 +744,23 @@ var ROUTES = {
   "truck": viaRpc("api_truck_add"),
   "assign-truck": viaRpc("api_assign_truck"),
   "truck/driver": viaRpc("api_truck_driver"),
+  // Former drivers (Active = false are left out of the normal load): [{id, full_name, employee_no, phone, last_day, truck}]
+  "driver/former": function () {
+    return rest("GET", "drivers?active=eq.false&select=id,full_name,employee_no,phone&order=full_name.asc").then(function (rows) {
+      rows = rows || [];
+      if (!rows.length) return [];
+      var ids = rows.map(function (r) { return r.id; }).join(",");
+      return rest("GET", "driver_truck_assignments?driver_id=in.(" + ids + ")&select=driver_id,effective_to,truck_id&order=effective_to.desc.nullsfirst")
+        .then(function (as) { return as || []; }, function (e) { try { console.warn("former drivers: last day not readable", e && e.message); } catch (x) {} return []; })
+        .then(function (as) {
+          return rows.map(function (r) {
+            var a = as.filter(function (x) { return x.driver_id === r.id; })[0];
+            return { id: r.id, full_name: r.full_name, employee_no: r.employee_no || "", phone: r.phone || "",
+                     last_day: a && a.effective_to || "", truck_id: a && a.truck_id || "" };
+          });
+        });
+    });
+  },
   "driver/employee-nos": function (d) { return rpc("api_driver_employee_nos", { d: d || {} }); },
   "driver/employee-no": viaRpc("api_driver_employee_no_set"),
   "driver/phone": viaRpc("api_driver_phone_set"),
@@ -814,14 +831,14 @@ function api(path, body) {
   var fn = ROUTES[route];
   if (!fn) return Promise.reject(new Error("no route /api/" + route));
   // Saves in flight / saves started: the live-update check waits for these so it never redraws around your own save.
-  var isRead = route === "bootstrap" || route === "bootstrap/poll" || route === "history" || route === "driver/employee-nos" || route.indexOf("report") === 0;
+  var isRead = route === "bootstrap" || route === "bootstrap/poll" || route === "history" || route === "driver/employee-nos" || route === "driver/former" || route.indexOf("report") === 0;
   if (!isRead) { API_WRITES.seq++; API_WRITES.open++; }
   return Promise.resolve().then(function () { return fn(body || {}, route, q); })
     .finally(function () { if (!isRead) API_WRITES.open--; })
     .catch(function (err) {
       // A failed save may leave something on screen that didn't stick; make
       // the next load a complete one so the screen matches the database.
-      if (route !== "bootstrap" && route !== "bootstrap/poll" && route !== "driver/employee-nos") BOOT_DIRTY = true;
+      if (route !== "bootstrap" && route !== "bootstrap/poll" && route !== "driver/employee-nos" && route !== "driver/former") BOOT_DIRTY = true;
       throw err;
     });
 }

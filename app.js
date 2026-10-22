@@ -4695,9 +4695,44 @@ function spareDriversHtml() {
       return '<div class="row"><input data-sparename="' + esc(d.id) + '" value="' + esc(d.full_name) + '" aria-label="Full name"><div>' + empInput(d.id, "no") + "</div><div>" + empInput(d.id, "phone") + "</div>" +
         '<select data-sparetruck="' + esc(d.id) + '" data-name="' + esc(d.full_name) + '" aria-label="Put on a truck"><option value="">No truck</option>' +
         open.map(function (t) { return '<option value="' + esc(t.id) + '">Truck ' + esc(t.number) + "</option>"; }).join("") + "</select>" +
-        '<button class="btn del sm" type="button" data-deldriver="' + esc(d.id) + '" data-name="' + esc(d.full_name) + '">Delete</button></div>';
+        '<span class="btns"><button class="btn sm" type="button" data-driveractive="' + esc(d.id) + '" data-to="0" data-name="' + esc(d.full_name) + '">Make Inactive</button>' +
+        '<button class="btn del sm" type="button" data-deldriver="' + esc(d.id) + '" data-name="' + esc(d.full_name) + '">Delete</button></span></div>';
     }).join("") + "</div>";
 }
+/* Former drivers: Active = false. They drop out of the normal load, so this list reads them separately. Their orders and Scheduler history stay on file; they
+   can no longer open the driver page (the employee number check only finds active drivers). "Last day" is when their last truck assignment ended. */
+var FORMER = { list: null, loading: false };
+function formerEnsure() {
+  if (FORMER.list || FORMER.loading) return;
+  FORMER.loading = true;
+  api("driver/former").then(function (l) { FORMER.list = l || []; }, function () { FORMER.list = []; }).then(function () {
+    FORMER.loading = false; if (SEC === "database") render();
+  });
+}
+function formerDriversHtml() {
+  formerEnsure();
+  if (!FORMER.list || !FORMER.list.length) return "";
+  return '<div class="fleet-spare fleet-former"><h3>Former drivers</h3>' +
+    '<div class="row hdr"><span>Full Name</span><span>Employee #</span><span>Phone</span><span>Last Day</span><span></span></div>' +
+    FORMER.list.map(function (d) {
+      return '<div class="row"><b>' + esc(d.full_name) + "</b><span>" + esc(d.employee_no || "—") + "</span><span>" + esc(d.phone || "—") + "</span>" +
+        "<span>" + (d.last_day ? esc(prettyDate(String(d.last_day).slice(0, 10))) + (d.truck_id && truckById(d.truck_id) ? " · Truck " + esc(truckById(d.truck_id).number) : "") : "—") + "</span>" +
+        '<span class="btns"><button class="btn sm" type="button" data-driveractive="' + esc(d.id) + '" data-to="1" data-name="' + esc(d.full_name) + '">Reinstate</button>' +
+        '<button class="btn del sm" type="button" data-deldriver="' + esc(d.id) + '" data-name="' + esc(d.full_name) + '">Delete</button></span></div>';
+    }).join("") + "</div>";
+}
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("[data-driveractive]"); if (!b) return;
+  var id = b.getAttribute("data-driveractive"), on = b.getAttribute("data-to") === "1", nm = b.getAttribute("data-name") || "This driver";
+  var set = function (v) { return api("row", { table: "drivers", id: id, values: { active: v } }).then(function () { FORMER.list = null; EMP.at = 0; }).then(reload); };
+  var go = function () {
+    set(on).then(function () {
+      toast(nm + (on ? " is back as a driver" : " is now a former driver"));
+      histPush(on ? "reinstate driver" : "make driver inactive", function () { return set(!on); }, function () { return set(on); });
+    }).catch(function (err) { toast(err.message, true); });
+  };
+  if (on) go(); else confirmModal("Make " + nm + " a former driver? Their orders and history stay, and they can no longer open the driver page. You can reinstate them any time.", go, "Make Inactive");
+});
 /* Spare driver rows: the name box renames the driver (one undo step); the Truck box puts them on an open truck. */
 document.addEventListener("blur", function (e) {
   var i = e.target.closest && e.target.closest("[data-sparename]"); if (!i) return;
@@ -4725,12 +4760,12 @@ document.addEventListener("click", function (e) {
   var b = e.target.closest && e.target.closest("[data-deldriver]"); if (!b) return;
   var id = b.getAttribute("data-deldriver"), nm = b.getAttribute("data-name") || "this driver";
   confirmModal("Delete " + nm + "? Their employee number, phone and truck history go with them. This can't be undone.", function () {
-    api("driver/delete", { driver_id: id }).then(reload).then(function () { toast(nm + " deleted"); }).catch(function (err) {
+    api("driver/delete", { driver_id: id }).then(function () { FORMER.list = null; EMP.at = 0; }).then(reload).then(function () { toast(nm + " deleted"); }).catch(function (err) {
       var msg = (err && err.message) || "Couldn't delete.";
       if (/inactive instead/i.test(msg)) {
         setTimeout(function () {
           confirmModal(msg + " Make " + nm + " inactive?", function () {
-            api("row", { table: "drivers", id: id, values: { active: false } }).then(reload).then(function () { toast(nm + " is inactive and hidden"); })
+            api("row", { table: "drivers", id: id, values: { active: false } }).then(function () { FORMER.list = null; }).then(reload).then(function () { toast(nm + " is now a former driver"); })
               .catch(function (e2) { toast(e2.message, true); });
           }, "Make Inactive");
         }, 0);
@@ -4937,7 +4972,7 @@ function vBuiltin(ent) {
     { bagger: '<button class="btn pri" data-addcust="bagger">+ Add Customer</button>',
       brokers: '<button class="btn pri" data-addcust="external">+ Add Customer</button>',
       pickdrop: '<button class="btn pri" id="add-pickdrop">+ Add Location</button>',
-      fleet: '<button class="btn pri" id="add-truck">+ Add Truck</button>',
+      fleet: '<button class="btn" id="add-driver">+ Add Driver</button><button class="btn pri" id="add-truck">+ Add Truck</button>',
       departments: '<button class="btn pri" id="add-department">+ Add Department</button>' }[slug];
   // Fixed layout (via .gridfixed) so column drag-resize is pixel-precise; table
   // width is the exact sum of column widths so a column grows the table, not its
@@ -4998,7 +5033,7 @@ function vBuiltin(ent) {
       }).join("") + '<td class="col-plus-cell"></td></tr>';
   });
   h += "</tbody></table>";
-  if (slug === "fleet") h += spareDriversHtml();
+  if (slug === "fleet") h += spareDriversHtml() + formerDriversHtml();
   if (!rows.length) h += emptyStateHtml(
     archiveCfg && archivedView ? "No archived " + archiveCfg.plural : "No rows yet");
   return h + "</div>";
@@ -7300,10 +7335,17 @@ function addLocationModal(typedText, target) {
 
 /* Add-truck popup (D57) — a fill-out window like the other Database grids,
    replacing the inline toolbar inputs. */
+/* Drivers and trucks are added separately; a driver is then put on a truck from the truck's Driver box (or the Truck box in the spare-drivers list),
+   and can be switched to another truck whenever. */
+function addDriverModal() {
+  var body = mfield("full_name", "Full Name", "text") + mfield("employee_no", "Employee #", "text") + mfield("phone", "Phone", "text");
+  openModal('<div class="modal-hd"><h2>Add driver</h2></div><div class="modal-body">' + body + "</div>" +
+    '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
+    '<button class="btn pri" id="modal-save-driver">Add Driver</button></div>');
+}
 function addTruckModal() {
   var body = mfield("number", "Truck #", "text") +
     mfield("eq", "Type", "text") +
-    mfield("driver_name", "Driver", "text") +
     customFieldsHtml("fleet");
   openModal('<div class="modal-hd"><h2>Add truck</h2></div><div class="modal-body">' + body + "</div>" +
     '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
@@ -9180,9 +9222,9 @@ document.addEventListener("click", function (e) {
     "[data-addrow],[data-delrows],[data-archiverows],[data-delarchived],[data-archiveview],[data-orderdelrows],[data-ordercancelrows],[data-delete-doc],[data-frreset],[data-catadd],[data-catdel],[data-sortsave],[data-sortclear]," +
     "[data-addsheet],[data-sheet-addrow],[data-sheet-addcol],[data-sheet-rename]," +
     "[data-managecols],[data-colup],[data-coldown],[data-adddb]," +
-    "#theme,#sync-all,#jump-btn,#today-jump,#logo-home,#add-truck," +
+    "#theme,#sync-all,#jump-btn,#today-jump,#logo-home,#add-truck,#add-driver," +
     "#add-pickdrop,#add-department,#new-order,#xfer-add,#xfer-bulk,#xfer-save-bulk,#dw-close,#group-btn,#scrim,#nav-scrim,#int-add,#int-bulk,#int-save-bulk,#push-driver-tabs," +
-    "#modal-cancel,#modal-save,#modal-save-loc,#modal-save-dept,#modal-save-truck,#col-save,#col-delete,#condfmt-save,#field-save,#field-options-save,#db-save,#confirm-del,#confirm-archive-delete,#confirm-customer-archive,#ss-toggle,#ifr-toggle,[data-sbpin],[data-rptper]," +
+    "#modal-cancel,#modal-save,#modal-save-loc,#modal-save-dept,#modal-save-truck,#modal-save-driver,#col-save,#col-delete,#condfmt-save,#field-save,#field-options-save,#db-save,#confirm-del,#confirm-archive-delete,#confirm-customer-archive,#ss-toggle,#ifr-toggle,[data-sbpin],[data-rptper]," +
     "#profile-btn,[data-profile],[data-setpref],[data-showsched],[data-screc],[data-screset],[data-scresetall]," +
     "[data-cw-step],[data-schedsize-step],[data-schedsize-reset],[data-accent-pick],[data-accent-save],[data-accent-forget],[data-custom-accent-toggle],[data-numbering-save]," +
     "#navtoggle,[data-navto],[data-navsec],[data-navcycle],[data-bill-done],[data-bill-dl],[data-reopen-bill]," +
@@ -9854,6 +9896,22 @@ document.addEventListener("click", function (e) {
   }
   if (t.id === "group-btn") { groupMerge(); return; }
   if (t.id === "add-truck") { addTruckModal(); return; }
+  if (t.id === "add-driver") { addDriverModal(); return; }
+  if (t.id === "modal-save-driver") {
+    var dv = {};
+    [].forEach.call(document.querySelectorAll("#modal [data-cf]"), function (f) { dv[f.dataset.cf] = f.value.trim(); });
+    if (!dv.full_name) { toast("Full name is required", true); return; }
+    var dup = (DB.drivers || []).filter(function (d) { return String(d.full_name || "").trim().toLowerCase() === dv.full_name.toLowerCase(); })[0];
+    if (dup) { toast(dv.full_name + " is already a driver", true); return; }
+    api("driver", { full_name: dv.full_name }).then(function (row) {
+      var id = row && row.id, steps = Promise.resolve();
+      if (id && dv.employee_no) steps = steps.then(function () { return api("driver/employee-no", { driver_id: id, employee_no: dv.employee_no }); });
+      if (id && dv.phone) steps = steps.then(function () { return api("driver/phone", { driver_id: id, phone: empTidyPhone(dv.phone) }); });
+      return steps;
+    }).then(function () { EMP.at = 0; }).then(reload).then(function () { closeModal(); toast(dv.full_name + " added. Put them on a truck from the Truck box below."); })
+      .catch(function (err) { toast(err.message, true); });
+    return;
+  }
   if (t.id === "modal-save-truck") {
     var trd = {};
     [].forEach.call(document.querySelectorAll("#modal [data-cf]"), function (f) {
