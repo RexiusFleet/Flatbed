@@ -4754,7 +4754,7 @@ function fieldCell(f, ctx) {
     if (!t6.driver_id) return '<td><div class="cell" style="color:var(--ink-3)">—</div></td>';
     return '<td><div class="cell">' + empInput(t6.driver_id, "phone") + "</div></td>";
   }
-  if (f.ui === "truckdriver") { var t2 = ctx.trucks.obj; return '<td><div class="cell"><input class="cell-i" data-truckdriver="' + ctx.trucks.id + '" value="' + esc(t2.driver_name || "") + '"></div></td>'; }
+  if (f.ui === "truckdriver") { var t2 = ctx.trucks.obj; return '<td><div class="cell"><input class="cell-i" list="fleetdrivers" data-truckdriver="' + ctx.trucks.id + '" value="' + esc(t2.driver_name || "") + '"></div></td>'; }
   if (f.ui === "color") {
     // Fleet's driver color lives on `drivers`, reached through the truck's
     // CURRENT driver_id — the row context has no `ctx.drivers` slot, so this
@@ -4982,6 +4982,7 @@ function vBuiltin(ent) {
     var eqTypes = [];
     DB.trucks.forEach(function (t) { if (t.eq && eqTypes.indexOf(t.eq) < 0) eqTypes.push(t.eq); });
     ["F", "BT", "CV"].forEach(function (x) { if (eqTypes.indexOf(x) < 0) eqTypes.push(x); });
+    h += '<datalist id="fleetdrivers">' + (DB.drivers || []).filter(function (d) { return d.active !== false; }).map(function (d) { return '<option value="' + esc(d.full_name) + '">'; }).join("") + "</datalist>";
     h += '<datalist id="eqtypes">' + eqTypes.map(function (x) { return '<option value="' + esc(x) + '">'; }).join("") + "</datalist>";
   }
   h += '<div class="grid-wrap"><table class="data gridfixed" style="width:' + tblW + 'px"><thead><tr>' + selTh(gk) +
