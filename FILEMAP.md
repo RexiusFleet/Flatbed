@@ -15,7 +15,7 @@ button, or a word, and it points you to the file and the part of the file.
    │    config.js ─── which Supabase project (public URL + public key)  │    publish-schedule.js, config.js)
    │    publish-schedule.js ─ builds the schedule drivers/bag plant see │
    │    supabase-api.js ─ the "phone line" to Supabase: sign-in + data  │
-   │    app.js ───── the whole dashboard                                │
+   │    app.js ───── the whole dashboard (built from src/js/ by build.js)│
    │    app.css ──── how it looks (driver pages reuse it + driver.css)  │
    ▼                                        ▼                           ▼
  Supabase project  hejfskuvehauviocqhxu  (supabase.com dashboard)
@@ -76,7 +76,9 @@ and with their Refresh button.
 | `index.html` | The page skeleton: header, sidebar, main area, Staging rail, drawer. Loads the scripts in order. | Adding a new script or a new always-there element. |
 | `config.js` | Supabase project URL + publishable key. Public by design. | Moving to a different Supabase project. **Never put a secret key here.** |
 | `supabase-api.js` | Sign-in (shared login), the Supabase request helpers, the route table that turns `api("…")` calls into Supabase calls, document storage helpers, report CSV builder, History labels. | Adding a new kind of save/load, or changing how login works. |
-| `app.js` | The whole dashboard UI — about 10,700 lines, split into 13 labeled sections (see §3). | Almost any change to screens, buttons, behavior. |
+| `app.js` | The whole dashboard UI, about 12,900 lines in one file. **Built, do not edit by hand:** it is the files in `src/js/` joined in order (see §3). | Never directly; edit `src/js/`. |
+| `src/js/` | The source of `app.js`: `head.js` (opens the one shared scope), one file per section `01-core.js` … `13-history.js`, `tail.js` (closes it). All sections share one private scope, so a function in one file is callable from every other. | Almost any change to screens, buttons, behavior. Then run `node build.js`. |
+| `build.js` | Joins `src/js/*` into `app.js`. `node build.js` rebuilds; `node build.js --check` changes nothing and fails if anything is out of date. Node only, no packages. | Adding a new section file (add it to `JS_PARTS`). |
 | `publish-schedule.js` | Builds the week (each driver tab + Current Week) that **Publish Schedule** saves for the driver and bag plant pages. Global `Dept12BuildSchedule`. Keep it matching `vDriverView`. | Changing the driver-tab layout. |
 | `ratecon-parser.js` | The rate con reader: `Dept12RateCon.parse(text, opts)` turns OCR text, a PDF text layer, or a pasted email into load #, PO, rate, broker, pickup, delivery (with appointment text), each marked `ok` or `check`. One handler per broker layout (Tradewinds, Nationwide, Aaron Wilson / Smokey Mountain, OpenRoad, Iosco, the ITS dispatch family, Oasis, Vanport, Inland, labeled-form brokers) plus a generic reader, an email reader, and a reader for a customer's own dispatch screen pasted from an email ("Dispatched 09/22/26", "Cust PO. #", fuel surcharge). It reads numbers, rate and the stops; it does not read notes. Runs in the browser and in node, so it can be tested on its own. | A new broker's rate cons read wrong: add or fix its handler. |
 | `app.css` | All styling (colors, spacing, fonts). Design tokens at the top (`--brand`, `--fs-…`). Also used by the driver and bag plant pages. | Anything visual. |
@@ -101,24 +103,30 @@ removed repo files**.
 
 ## 3. Inside `app.js` — section by section
 
-`app.js` is one file split by banner comments. Search for the banner to
-jump there, e.g. ⌘F `═══ 04-views`.
+Each section is its own file in `src/js/`, e.g. `04-views` is
+`src/js/04-views.js`. `node build.js` joins them, in order, into `app.js`,
+which keeps the same `═══ 04-views` banners, so a search there still lands in
+the right place. Edit the `src/js/` file, never `app.js`. Everything shares
+one private scope (one IIFE: `src/js/head.js` opens it, `src/js/tail.js`
+closes it), so files call each other's functions freely and no name leaks
+onto `window`. Two functions with the same name anywhere in `src/js/` would
+silently override each other (the later file wins): search before naming.
 
-| Banner (search this) | What lives there | Key functions |
+| File in `src/js/` (banner in `app.js`) | What lives there | Key functions |
 |---|---|---|
-| `═══ 01-core` | Global state, helpers, preferences (theme, accent, font), sidebar navigation, keyboard shortcuts, order-number formatting. | `NAV` list (in 05), `renderSideNav`, `runShortcut`, `formatOrderNumber`, `canView`/`canEdit`, `toast` |
-| `═══ 02-chips-extract` | Lookups (`order()`, `party()`), what a **chip** says and what color it is, date helpers, **PDF text + OCR + rate-con parsing** (`parseRateCon` wraps `ratecon-parser.js`), broker matching, and the **autofill tags** (`afApply`, `afBadge`, `afMatchLocation`). | `buildChip`, `chipHtml`, `pushColorFor`, `cellHasLoad`, `parseRateCon`, `extractInvoiceInfo`, `ocrPdf`, `mergePdfs` |
-| `═══ 03-drawer-billing` | The **order drawer** (the panel that slides in when you click a chip or row), pickup/delivery pickers, billing packages. | `openOrder` (external), `openInternalOrder` (bag), `openTransferOrder` (internal freight), `routeSectionHtml` (the Pickup/Drop table with Add Stop and drag reorder), `rateInputHtml` (External Rate), `locCombo`, `partyCombo`, `doPackage`, `billDone` |
-| `═══ 04-views` | **Every screen's layout**: Scheduler, Current Week, Driver Tabs, the three order trackers (sortable column headers via `tsortTh`), Billing, Database grids, custom sheets, Reports (dashboard tiles, pivot builder, saved/pinned reports: `RPT_SYSTEM`, `rptRun`, `rptDashHtml`, `rptWinOpen`). | `vScheduler`, `vCurrentWeek`, `vDriverView`, `vInternal`, `vInternalFreight`, `vOrders`, `vBilling`, `vDatabase`, `vSheet`, `vReports`, `toolbarHtml` |
-| `═══ 05-settings-nav-search` | Settings pages, the Staging rail, the **`render()` dispatcher** (decides which screen to draw), `reload()`, global search box, **Sync Delivery Dates** and the Motive mileage review window (`MOT`, `motBuckets`, `mrvCalc`). | `render`, `reload`, `vSettings`, `renderRail`, `renderSearch`, `NAV`, `runSyncAll`, `mrvOpen` |
-| `═══ 06-modals-grids` | Popups (add customer/location/truck, Add New Location, bulk add orders, day note, confirm), document viewer, spreadsheet-style cell editing, **document ingestion** (rate con / loose POD / invoice batch). | `openModal`, `addLocationModal`, `parseLocationText`, `openViewer`, `startEdit`/`commitEdit`, `ingestRateCon`, `ingestLoose`, `ingestBatch` |
-| `═══ 07-events` | The big **click / change / keyboard handlers** — where each button's action is wired. | Search the button's id or `data-…` attribute here, e.g. `"motive-sync"`, `data-report`, `new-order` |
-| `═══ 08-undo` | ⌘Z / ⌘⇧Z undo-redo, and the save helpers that record undo steps. | `histPush`, `moveLoad`, `scheduleNote`, `orderFieldSet`, `freightValueSet` |
-| `═══ 09-color` | Scheduler cell colors, truck-off days, copy/paste of cells, right-click menus, adding/removing day rows. | `openCtxMenu`, `openDayMenu`, `setTruckOff`, `copyCell`/`pasteCell`, `addDayRow` |
-| `═══ 10-select` | Multi-cell selection (drag box), fill handle, dragging a note by its border, smart date fields. | `selStart`, `fillHandleDown`, `noteDragStart`, `smartDateFeed` |
-| `═══ 11-toolbar` | The formatting toolbar (fill, text color, bold, borders, font, size, zoom) and drag-and-drop of chips onto cells/Staging. | `renderFmtBar`, `applyFormat`, `applyZoom`, `dropLoadOnCell` |
-| `═══ 12-touch-boot` | Touch-screen dragging, sidebar resize, and **startup** (`bootDashboard`). | `bootDashboard`, `startTouchDrag` |
-| `═══ 13-history` | The admin **History** panel (list, group by day, revert). | `renderHistoryPanel`, `openHistoryRevertPreview` |
+| `01-core.js` | Global state, helpers, preferences (theme, accent, font), sidebar navigation, keyboard shortcuts, order-number formatting. | `NAV` list (in 05), `renderSideNav`, `runShortcut`, `formatOrderNumber`, `canView`/`canEdit`, `toast` |
+| `02-chips-extract.js` | Lookups (`order()`, `party()`), what a **chip** says and what color it is, date helpers, **PDF text + OCR + rate-con parsing** (`parseRateCon` wraps `ratecon-parser.js`), broker matching, and rate-con **autofill** (`afApply`, `afMatchLocation`). | `buildChip`, `chipHtml`, `pushColorFor`, `cellHasLoad`, `parseRateCon`, `extractInvoiceInfo`, `ocrPdf`, `mergePdfs` |
+| `03-drawer-billing.js` | The **order drawer** (the panel that slides in when you click a chip or row), pickup/delivery pickers, billing packages. | `openOrder` (external), `openInternalOrder` (bag), `openTransferOrder` (internal freight), `routeSectionHtml` (the Pickup/Drop table with Add Stop and drag reorder), `rateInputHtml` (External Rate), `locCombo`, `partyCombo`, `doPackage`, `billDone` |
+| `04-views.js` | **Every screen's layout**: Scheduler, Current Week, Driver Tabs, the three order trackers (sortable column headers via `tsortTh`), Billing, Database grids, custom sheets, Reports (dashboard tiles, pivot builder, saved/pinned reports: `RPT_SYSTEM`, `rptRun`, `rptDashHtml`, `rptWinOpen`). | `vScheduler`, `vCurrentWeek`, `vDriverView`, `vInternal`, `vInternalFreight`, `vOrders`, `vBilling`, `vDatabase`, `vSheet`, `vReports`, `toolbarHtml` |
+| `05-settings-nav-search.js` | Settings pages, the Staging rail, the **`render()` dispatcher** (decides which screen to draw), `reload()`, global search box, **Sync Delivery Dates** and the Motive mileage review window (`MOT`, `motBuckets`, `mrvCalc`). | `render`, `reload`, `vSettings`, `renderRail`, `renderSearch`, `NAV`, `runSyncAll`, `mrvOpen` |
+| `06-modals-grids.js` | Popups (add customer/location/truck, Add New Location, bulk add orders, day note, confirm), document viewer, spreadsheet-style cell editing, **document ingestion** (rate con / loose POD / invoice batch). | `openModal`, `addLocationModal`, `parseLocationText`, `openViewer`, `startEdit`/`commitEdit`, `ingestRateCon`, `ingestLoose`, `ingestBatch` |
+| `07-events.js` | The big **click / change / keyboard handlers** — where each button's action is wired. | Search the button's id or `data-…` attribute here, e.g. `"motive-sync"`, `data-report`, `new-order` |
+| `08-undo.js` | ⌘Z / ⌘⇧Z undo-redo, and the save helpers that record undo steps. | `histPush`, `moveLoad`, `scheduleNote`, `orderFieldSet`, `freightValueSet` |
+| `09-color.js` | Scheduler cell colors, truck-off days, copy/paste of cells, right-click menus, adding/removing day rows. | `openCtxMenu`, `openDayMenu`, `setTruckOff`, `copyCell`/`pasteCell`, `addDayRow` |
+| `10-select.js` | Multi-cell selection (drag box), fill handle, dragging a note by its border. | `selStart`, `fillHandleDown`, `noteDragStart` |
+| `11-toolbar.js` | The formatting toolbar (fill, text color, bold, borders, font, size, zoom) and drag-and-drop of chips onto cells/Staging. | `renderFmtBar`, `applyFormat`, `applyZoom`, `dropLoadOnCell` |
+| `12-touch-boot.js` | Touch-screen dragging, sidebar resize, and **startup** (`bootDashboard`). | `bootDashboard`, `startTouchDrag` |
+| `13-history.js` | The admin **History** panel (list, group by day, revert). | `renderHistoryPanel`, `openHistoryRevertPreview` |
 
 ---
 
@@ -172,13 +180,17 @@ jump there, e.g. ⌘F `═══ 04-views`.
 
 ## 7. Find it fast
 
+Where it says `app.js` → a name, the code is in one of the `src/js/` files:
+find it with `grep -n "function name" src/js/*.js`, edit it there, then run
+`node build.js`.
+
 | I want to change… | Go to |
 |---|---|
-| What a chip says or its color | `app.js` → `═══ 02-chips-extract` → `buildChip`, `chipHtml`, `pushColorFor` |
-| A screen's layout or columns | `app.js` → `═══ 04-views` → the `v…` function in §4 |
-| What a button does | `app.js` → `═══ 07-events` → search the button's id; then `supabase-api.js` → `ROUTES` |
+| What a chip says or its color | `src/js/02-chips-extract.js` → `buildChip`, `chipHtml`, `pushColorFor` |
+| A screen's layout or columns | `src/js/04-views.js` → the `v…` function in §4 |
+| What a button does | `src/js/07-events.js` → search the button's id; then `supabase-api.js` → `ROUTES` |
 | A rule (numbering, locks, what can be moved) | Supabase → the matching `api_…` function (§4 lists which) |
-| A popup / form | `app.js` → `═══ 06-modals-grids` → `…Modal` |
+| A popup / form | `src/js/06-modals-grids.js` → `…Modal` |
 | Colors, spacing, fonts | `app.css` (tokens at the top) |
 | Rate-con reading (what it fills, what it misses) | `ratecon-parser.js` (per-broker handlers), then `app.js` → `ingestRateCon`, `ingestParsed`, `afApply` |
 | The window that confirms a rate con or pasted load before an order is made (no tags in the side window any more) | `app.js` → `afReview`, then `ingestParsed` and `afApply` (fills only blank boxes) |
@@ -192,11 +204,11 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | A chip going back to the plain look after an edit until you publish again | `app.js` → `PUB.dirty`, `pubOrderIds`, `pubSetDirty`, and the `pushed` check at the top of `chipHtml` |
 | Driver page: loads and typed notes | `driver/driver.js` → `vDriverGrid`, `vDriverCards`, `tabChipHtml`; `driver/driver.css` → `.dvx-note-row` |
 | Invoice reading | `app.js` → `extractInvoiceInfo` |
-| Keyboard shortcuts | `app.js` → `═══ 01-core` → `BASE_SHORTCUTS`, `runShortcut` |
-| Sidebar menu items | `app.js` → `═══ 05-settings-nav-search` → `var NAV` |
+| Keyboard shortcuts | `src/js/01-core.js` → `BASE_SHORTCUTS`, `runShortcut` |
+| Sidebar menu items | `src/js/05-settings-nav-search.js` → `var NAV` |
 | What drivers and the bag plant see | `publish-schedule.js` (the data) and `driver/driver.js` (the look); keep `vDriverView` in `app.js` matching |
-| Pickup/Drop table, External Rate, backhaul | `app.js` → `═══ 03-drawer-billing` → `routeSectionHtml`, `rateInputHtml` |
-| Reports dashboard / pivot builder | `app.js` → `═══ 04-views` → `RPT_SYSTEM`, `rptRun` |
+| Pickup/Drop table, External Rate, backhaul | `src/js/03-drawer-billing.js` → `routeSectionHtml`, `rateInputHtml` |
+| Reports dashboard / pivot builder | `src/js/04-views.js` → `RPT_SYSTEM`, `rptRun` |
 | Delete rules for orders | `app.js` → `canDeleteOrder` (and the matching `api_order_delete` rules in Supabase) |
 | Report columns | Supabase → `api_report_rows` / `api_report`; headers in `supabase-api.js` → `REPORT_LABELS` |
 | Who can sign in | Supabase → Authentication → Users, plus `dept12_private.allowed_logins` (dispatchers) and `dept12_private.app_logins` (company app login) |
