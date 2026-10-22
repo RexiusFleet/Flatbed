@@ -82,15 +82,113 @@ var SYNC_ICON = '<span class="ico" aria-hidden="true"><svg width="12" height="12
 var BAG_PLANT = window.FLATBED_MODE === "bagplant";
 var DEMO = /[?&]demo\b/.test(location.search);   // built-in sample schedule for design work
 
-// Public, read/write-limited functions in Supabase (no sign-in; only the public key).
+/* ── The app's sign-in ───────────────────────────────────────────────────────────────────────────────────
+   Today these pages are open: they use only the public key. App mode puts the SAME kind of sign-in on them that the dashboard has
+   (Supabase email and password, a session kept in the browser and refreshed automatically): until someone is signed in, the page is
+   dead and empty and asks nothing of the database. The Rexius app signs in as its own login (flatbedauth@rexius.com, which can call
+   only the driver and bag plant functions) and tells the page which EMPLOYEE NUMBER is looking; the database turns the number into the
+   driver and truck. Nothing the page types decides who someone is.
+   REQUIRE_APP_LOGIN is the switch: false = the pages stay open as they are today; true = sign-in required. For trying it first, add
+   ?app=1 to the address (works while the switch is false). The app can hand the page what it needs three ways:
+     1. in the link:        .../driver/#access_token=...&refresh_token=...&emp=4521      (the hash is erased from the address at once)
+     2. from its own code:  window.dept12App.setSession({access_token, refresh_token, expires_in}); window.dept12App.setEmployee("4521")
+     3. by typing:          fill #login-email and #login-password and click #login-go (the same form a person sees) */
+var REQUIRE_APP_LOGIN = true;
+var APP_MODE = !DEMO && (REQUIRE_APP_LOGIN || /[?&]app\b/.test(location.search));
+var APP_SESSION_KEY = "dept12-app-session";
+var APP = { session: null, emp: "", empState: "", err: "", busy: false };
+function appNeedLogin() { var e = new Error("Sign in to see the schedule."); e.needLogin = true; return e; }
+function appSaveSession(j) {
+  var prev = APP.session || {};
+  APP.session = { access_token: j.access_token, refresh_token: j.refresh_token || prev.refresh_token || "",
+    expires_at: j.expires_at || (Math.floor(Date.now() / 1000) + (parseInt(j.expires_in, 10) || 3600)),
+    email: (j.user && j.user.email) || prev.email || "" };
+  storeJson(APP_SESSION_KEY, APP.session);
+}
+function appClearSession() { APP.session = null; store(APP_SESSION_KEY, null); }
+function appAuth(path, body) {
+  return fetch(SB_URL + "/auth/v1/" + path, { method: "POST", headers: { "apikey": SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    .catch(function (e) { e.network = true; throw e; })
+    .then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) { var e = new Error(j.error_description || j.msg || j.message || ("Sign-in failed (" + r.status + ")")); e.status = r.status; throw e; }
+        return j;
+      });
+    });
+}
+var APP_REFRESHING = null;
+// A valid access token, refreshed a minute before it runs out. A refused refresh signs the page out; no answer at all does not.
+function appToken() {
+  var s = APP.session;
+  if (!s) return Promise.reject(appNeedLogin());
+  if (s.expires_at - 60 > Date.now() / 1000) return Promise.resolve(s.access_token);
+  if (!s.refresh_token) { appClearSession(); return Promise.reject(appNeedLogin()); }
+  if (!APP_REFRESHING) APP_REFRESHING = appAuth("token?grant_type=refresh_token", { refresh_token: s.refresh_token }).then(function (j) {
+    APP_REFRESHING = null; appSaveSession(j); return APP.session.access_token;
+  }, function (e) { APP_REFRESHING = null; if (!e.network) appClearSession(); throw e.network ? e : appNeedLogin(); });
+  return APP_REFRESHING;
+}
+function appEmp() {
+  if (APP.emp) return APP.emp;
+  try { return sessionStorage.getItem("dept12-app-emp") || ""; } catch (e) { return ""; }     // kept for this tab, so a reload still knows who it is
+}
+function appSetEmp(n) {
+  APP.emp = String(n == null ? "" : n).trim();
+  try { if (APP.emp) sessionStorage.setItem("dept12-app-emp", APP.emp); else sessionStorage.removeItem("dept12-app-emp"); } catch (e) { /* private mode */ }
+}
+// Whatever the link carries: tokens only in the hash (so they never reach a server log), the employee number in the hash or ?emp=.
+function appReadLink() {
+  var h = {}, q = {};
+  try { new URLSearchParams(location.hash.replace(/^#/, "")).forEach(function (v, k) { h[k] = v; }); } catch (e) { /* no hash */ }
+  try { new URLSearchParams(location.search).forEach(function (v, k) { q[k] = v; }); } catch (e) { /* no query */ }
+  if (h.access_token) appSaveSession({ access_token: h.access_token, refresh_token: h.refresh_token, expires_at: parseInt(h.expires_at, 10) || 0, expires_in: h.expires_in });
+  var emp = h.emp || h.employee || q.emp || q.employee;
+  if (emp) appSetEmp(emp);
+  if (h.access_token || h.emp || h.employee) { try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { /* old browser */ } }
+}
+// Employee number -> the driver and truck (the database decides). Sets S.who, or says why not.
+function appResolve() {
+  if (BAG_PLANT) return Promise.resolve();
+  var emp = appEmp();
+  if (!emp) { APP.empState = "none"; S.who = null; return Promise.resolve(); }
+  return rpcPublic("app_driver_by_employee", { p_emp: emp }).then(function (r) {
+    if (!r) { APP.empState = "unknown"; S.who = null; return; }
+    APP.empState = "ok"; S.who = { role: "driver", truck: r.truck == null ? "" : String(r.truck), name: r.name, emp: emp };
+    S.tab = S.who.truck ? S.who.truck : "cw"; store("dept12DriverTab", S.tab);
+  }, function (e) { if (e && e.needLogin) return; APP.empState = "error"; APP.err = e.message || String(e); S.who = null; });
+}
+function appStart() {            // after a sign-in or a hand-off: work out who, then show the schedule
+  return appResolve().then(function () { S.payload = null; S.source = ""; render(); load(); loadScans(); });
+}
+function appLogin() {
+  var em = ($("#login-email") || {}).value, pw = ($("#login-password") || {}).value;
+  if (APP.busy || !em || !pw) return;
+  APP.busy = true; APP.err = ""; var b = $("#login-go"); if (b) b.disabled = true; var er = $("#login-err"); if (er) er.textContent = "";
+  appAuth("token?grant_type=password", { email: em.trim(), password: pw }).then(function (j) { appSaveSession(j); APP.busy = false; return appStart(); }, function (e) {
+    APP.busy = false; APP.err = e.message || "Sign-in failed"; var b2 = $("#login-go"); if (b2) b2.disabled = false; var e2 = $("#login-err"); if (e2) e2.textContent = APP.err;
+  });
+}
+window.dept12App = {
+  setSession: function (j) { if (j && j.access_token) { appSaveSession(j); if (APP_MODE) appStart(); } },
+  setEmployee: function (n) { appSetEmp(n); if (APP_MODE && APP.session) appStart(); },
+  signOut: function () { appClearSession(); APP.empState = ""; S.who = BAG_PLANT ? { role: "bagplant", name: "Bag Plant" } : null; S.payload = null; render(); }
+};
+
+// Functions in Supabase. With the public key alone today; in app mode with the signed-in session (the page sends the session's token).
 function rpcPublic(fn, args) {
   if (!SB_URL || !SB_KEY) return Promise.reject(new Error("The schedule isn't connected yet."));
-  return fetch(SB_URL + "/rest/v1/rpc/" + fn, {
-    method: "POST", headers: { "apikey": SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(args || {})
-  }).catch(function (e) { e.network = true; throw e; }).then(function (r) {   // no answer at all (Safari says "Load failed")
+  return (APP_MODE ? appToken() : Promise.resolve(null)).then(function (token) {
+    var h = { "apikey": SB_KEY, "Content-Type": "application/json" };
+    if (token) h["Authorization"] = "Bearer " + token;
+    return fetch(SB_URL + "/rest/v1/rpc/" + fn, { method: "POST", headers: h, body: JSON.stringify(args || {}) })
+      .catch(function (e) { e.network = true; throw e; });      // no answer at all (Safari says "Load failed")
+  }).then(function (r) {
     return r.text().then(function (t) {
       var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) { /* plain text */ }
-      if (!r.ok) throw new Error((j && j.message) || ("Request failed (" + r.status + ")"));
+      if (!r.ok) {
+        if (APP_MODE && r.status === 401) { appClearSession(); APP.err = "Your sign-in ended. Sign in again."; try { render(); } catch (x) { /* nothing to draw yet */ } throw appNeedLogin(); }
+        throw new Error((j && j.message) || ("Request failed (" + r.status + ")"));
+      }
       return j;
     });
   });
@@ -111,7 +209,7 @@ function rpcPublicRead(fn, args) {
 // S.who: null (sign-in screen) | {role:"driver", truck, name} | {role:"bagplant"} on the bag plant page
 var S = {
   who: BAG_PLANT ? { role: "bagplant", name: "Bag Plant" } :
-    (function (w) { return w && w.role === "driver" ? w : null; })(storeJson("dept12DriverWho")), tab: BAG_PLANT ? "cw" : (store("dept12DriverTab") || "cw"),
+    APP_MODE ? null : (function (w) { return w && w.role === "driver" ? w : null; })(storeJson("dept12DriverWho")), tab: BAG_PLANT ? "cw" : (store("dept12DriverTab") || "cw"),
   payload: null, loadKeys: {}, source: "", loadedAt: null, error: "", loading: false,
   scrollTo: null, keepScroll: false, loadOrder: {}, noteKey: null, scans: {}, chipTitle: {},
   serverNotes: {}, serverScans: {}, viewSent: {}, refreshedAt: null
@@ -143,12 +241,13 @@ function logView(kind) {
   var last = S.viewSent[kind] || 0;
   if (Date.now() - last < 300000) return;
   S.viewSent[kind] = Date.now();
-  rpcPublic("public_log_view", { p_truck: String(S.who.truck), p_kind: kind, p_driver: S.who.name }).catch(function () { S.viewSent[kind] = 0; });
+  (APP_MODE ? rpcPublic("app_log_view", { p_emp: S.who.emp, p_kind: kind })
+            : rpcPublic("public_log_view", { p_truck: String(S.who.truck), p_kind: kind, p_driver: S.who.name })).catch(function () { S.viewSent[kind] = 0; });
 }
 
 /* ── Data ─────────────────────────────────────────────────────────────── */
 function load() {
-  if (S.loading) return;
+  if (S.loading || (APP_MODE && !APP.session)) return;      // nothing is asked of the database until someone is signed in
   S.loading = true; renderBusy();
   var raw = null;
   var first;
@@ -323,6 +422,7 @@ function driverByName(txt) {
    when this is the real schedule (a brief outage showing sample data must
    not sign everyone out). */
 function reconcileWho() {
+  if (APP_MODE) return;       // in app mode the database says who this is (by employee number); the published list does not override it
   if (!S.who || S.who.role !== "driver" || !S.payload) return;
   var me = driverByTruck(S.who.truck);
   if (me && me.driver === S.who.name) return;
@@ -389,6 +489,16 @@ function vLogin() {
   return h + "</div></div>";
 }
 
+// The sign-in screen of app mode (same look as the dashboard's): shown, and nothing else, until someone is signed in.
+function vAppLogin() {
+  var brand = '<div class="brand drv-login-brand"><span class="brand-mark"><img src="../rexius-logo.png" alt="Rexius"></span>' +
+    "<h1>" + (BAG_PLANT ? "Flatbed Schedule Bagger View" : "Flatbed Schedule") + "</h1></div>";
+  return '<div class="drv-login login-gate"><div class="login-card">' + brand + "<p>Sign in to see the schedule.</p>" +
+    '<input id="login-email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" aria-label="Email" placeholder="Email">' +
+    '<input id="login-password" type="password" autocomplete="current-password" aria-label="Password" placeholder="Password">' +
+    '<button class="btn pri" id="login-go" type="button">Continue</button><div id="login-err" class="login-err">' + esc(APP.err) + "</div></div></div>";
+}
+
 /* ── Toolbar ──────────────────────────────────────────────────────────── */
 function bagKeyHtml() {
   var items = [["Early", "#D9EAD3"], ["Anytime", "#FFF2CC"], ["Early East", "#F1C232"], ["Anytime East", "#783F04"]];
@@ -404,6 +514,11 @@ function toolbarHtml(title) {
     (BAG_PLANT ? "" : '<button class="btn pri" id="refresh"' + (S.loading ? " disabled" : "") + ">" + SYNC_ICON + (S.loading ? "Refreshing" : "Refresh") + "</button>") + "</div>";
 }
 function noticeHtml() {
+  if (APP_MODE && !BAG_PLANT && !S.who) {
+    // No employee number, or one the database doesn't know: just Current Week, no personal tab and no banner. Only a real failure is said out loud.
+    return (APP.empState === "error" ? '<div class="drv-note"><b>Couldn\'t check who you are.</b> ' + esc(APP.err) + "</div>" : "") +
+      (S.error ? '<div class="drv-note"><b>Couldn\'t refresh.</b> ' + esc(S.error) + " Showing the last loaded schedule.</div>" : "");
+  }
   if (!S.who && !NAME_PICKER && !DEMO) return '<div class="drv-note"><b>Current Week.</b> Your own tab, notes and scans return with the new sign-in.</div>' +
     (S.error ? '<div class="drv-note"><b>Couldn\'t refresh.</b> ' + esc(S.error) + " Showing the last loaded schedule.</div>" : "");
   if (DEMO) return '<div class="drv-note"><b>Demo data.</b> Built-in sample schedule for testing the layout.</div>';
@@ -567,7 +682,8 @@ function saveNote(key, text) {
     storeJson("dept12DriverNotes", all);
     return Promise.resolve(true);
   }
-  return rpcPublic("public_add_driver_note", { p_order_id: oid, p_driver: S.who.name, p_truck: String(S.who.truck), p_body: t })
+  return (APP_MODE ? rpcPublic("app_add_driver_note", { p_emp: S.who.emp, p_order_id: oid, p_body: t })
+                    : rpcPublic("public_add_driver_note", { p_order_id: oid, p_driver: S.who.name, p_truck: String(S.who.truck), p_body: t }))
     .then(function (r) {
       (S.serverNotes[oid] = S.serverNotes[oid] || []).push({ id: r.id, truck: S.who.truck, driver: S.who.name, text: t, at: r.created_at });
       return true;
@@ -608,11 +724,14 @@ function sendScan(key, blob, pages) {
   var oid = S.loadOrder[key];
   if (DEMO || !oid) return saveScan(key, blob, pages);   // sample mode: this device only
   var path = oid + "/" + Date.now() + ".pdf";
-  return fetch(SB_URL + "/storage/v1/object/driver-scans/" + path, {
-    method: "POST", headers: { "apikey": SB_KEY, "Content-Type": "application/pdf", "x-upsert": "false" }, body: blob
+  return (APP_MODE ? appToken() : Promise.resolve(null)).then(function (token) {
+    var h = { "apikey": SB_KEY, "Content-Type": "application/pdf", "x-upsert": "false" };
+    if (token) h["Authorization"] = "Bearer " + token;
+    return fetch(SB_URL + "/storage/v1/object/driver-scans/" + path, { method: "POST", headers: h, body: blob });
   }).then(function (r) {
     if (!r.ok) throw new Error("the upload failed (" + r.status + ")");
-    return rpcPublic("public_register_scan", { p_order_id: oid, p_path: path, p_pages: pages, p_driver: S.who.name, p_truck: String(S.who.truck) });
+    return APP_MODE ? rpcPublic("app_register_scan", { p_emp: S.who.emp, p_order_id: oid, p_path: path, p_pages: pages })
+                    : rpcPublic("public_register_scan", { p_order_id: oid, p_path: path, p_pages: pages, p_driver: S.who.name, p_truck: String(S.who.truck) });
   }).then(function () { return saveScan(key, blob, pages).catch(function () { /* the dashboard has it either way */ }); });
 }
 // Latest scan per load made on this device, for the View PDF link.
@@ -753,6 +872,13 @@ function render() {
   try { renderInner(); } catch (e) { showFatal(e); if (window.console) console.error(e); }
 }
 function renderInner() {
+  if (APP_MODE && !APP.session) {            // dead and empty until someone is signed in
+    document.body.classList.add("drv-signed-out"); document.body.classList.toggle("drv-bagplant", BAG_PLANT);
+    var tb = $("#tabs"); if (tb) { tb.hidden = true; tb.innerHTML = ""; }
+    $("#hdr").innerHTML = ""; var w0 = $("#hdr-who"); if (w0) w0.innerHTML = "";
+    if (!$("#login-email")) $("#main").innerHTML = vAppLogin(); else { var er = $("#login-err"); if (er) er.textContent = APP.err; }
+    return;
+  }
   document.body.classList.toggle("drv-signed-out", NAME_PICKER && (!S.who || !S.payload));
   document.body.classList.toggle("drv-bagplant", isBagPlant());
   renderHeader();
@@ -838,6 +964,7 @@ document.addEventListener("click", function (e) {
   var id = (e.target.closest("button") || {}).id;
   if (id === "refresh") { S.keepScroll = true; load(); }
   else if (id === "signout") signOut();
+  else if (id === "login-go" && APP_MODE) appLogin();
   else if (id === "login-go") {
     var d = driverByName($("#login-driver").value);
     if (d) signInAs({ role: "driver", truck: String(d.truck), name: d.driver });
@@ -859,7 +986,7 @@ setInterval(retryIfEmpty, 60000);
 // and loads it again only if that is newer than what is showing. The drivers' page does not do this: they press Refresh themselves.
 var CHECK_MS = 2 * 60 * 1000;
 function checkPublished() {
-  if (!BAG_PLANT || DEMO || S.loading || S.noteKey) return;
+  if (!BAG_PLANT || DEMO || S.loading || S.noteKey || (APP_MODE && !APP.session)) return;
   rpcPublicRead("public_published_at", {}).then(function (ts) {
     var t = ts ? Date.parse(ts) : 0;
     if (t && (!S.loadedAt || t > S.loadedAt.getTime()) && !S.loading && !S.noteKey) { S.keepScroll = true; load(); }
@@ -880,6 +1007,7 @@ document.addEventListener("change", function (e) {
 document.addEventListener("keydown", function (e) {
   if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches(".chip[data-go]")) { e.preventDefault(); e.target.click(); }
   if (e.key === "Enter" && e.target.id === "login-driver") { e.preventDefault(); $("#login-go").click(); }
+  if (e.key === "Enter" && (e.target.id === "login-email" || e.target.id === "login-password")) { e.preventDefault(); appLogin(); }
 });
 NARROW.addEventListener("change", function () { S.keepScroll = true; render(); });
 var resizeT = null;
@@ -988,7 +1116,13 @@ function sampleData(dates) {
   return { trucks: trucks, loads: loads, notes: notes, off_days: off, orders: orders, stops: stops };
 }
 
-render();
-load();
-loadScans();
+if (APP_MODE) {
+  appReadLink();                                           // a session / employee number handed over in the link
+  if (!APP.session) APP.session = storeJson(APP_SESSION_KEY);   // else the one kept from last time
+  if (APP.session) appStart(); else render();              // no session: the sign-in screen, nothing else
+} else {
+  render();
+  load();
+  loadScans();
+}
 })();

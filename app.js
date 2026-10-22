@@ -4683,9 +4683,29 @@ function spareDriversHtml() {
   if (!list.length || EMP.ok === false) return "";
   return '<div class="fleet-spare"><h3>Drivers without a truck</h3>' +
     list.map(function (d) {
-      return '<div class="row"><b>' + esc(d.full_name) + "</b><div>" + empInput(d.id, "no") + "</div><div>" + empInput(d.id, "phone") + "</div></div>";
+      return '<div class="row"><b>' + esc(d.full_name) + "</b><div>" + empInput(d.id, "no") + "</div><div>" + empInput(d.id, "phone") + "</div>" +
+        '<button class="btn del sm" type="button" data-deldriver="' + esc(d.id) + '" data-name="' + esc(d.full_name) + '">Delete</button></div>';
     }).join("") + "</div>";
 }
+/* Delete a driver (the Drivers without a truck list). A driver who has never been on a Scheduler load goes completely; one who has can't be deleted without
+   breaking the schedule history, so the answer offers Make Inactive, which hides them everywhere. */
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("[data-deldriver]"); if (!b) return;
+  var id = b.getAttribute("data-deldriver"), nm = b.getAttribute("data-name") || "this driver";
+  confirmModal("Delete " + nm + "? Their employee number, phone and truck history go with them. This can't be undone.", function () {
+    api("driver/delete", { driver_id: id }).then(reload).then(function () { toast(nm + " deleted"); }).catch(function (err) {
+      var msg = (err && err.message) || "Couldn't delete.";
+      if (/inactive instead/i.test(msg)) {
+        setTimeout(function () {
+          confirmModal(msg + " Make " + nm + " inactive?", function () {
+            api("row", { table: "drivers", id: id, values: { active: false } }).then(reload).then(function () { toast(nm + " is inactive and hidden"); })
+              .catch(function (e2) { toast(e2.message, true); });
+          }, "Make Inactive");
+        }, 0);
+      } else toast(msg, true);
+    });
+  }, "Delete Driver");
+});
 /* One cell for a field in a record context — dispatches on the field's `ui`
    special-renderer, else a generic editable cell writing to its real column. */
 function fieldCell(f, ctx) {
