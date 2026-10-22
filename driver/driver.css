@@ -143,8 +143,6 @@ body.drv-signed-out .header-row{display:none}
 /* Wider, taller cells than the dashboard's default so the dashboard-style chip (title, City → City, numbers, flags) fits whole. */
 .driver-app{--row-h:108px;--col-w:210px}
 .drv-bagplant .chip{cursor:default}
-.drv-bagplant .chip.bp-bag{border:0;border-radius:var(--r-md);padding:8px 10px;gap:3px;
-  box-shadow:inset 0 0 0 2px rgba(0,0,0,.18)}
 .drv-bagplant .bp-cust{font-size:clamp(14px,calc(var(--col-w,150px) / 10),22px);font-weight:850;line-height:1.15;letter-spacing:-.01em;
   white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .drv-bagplant .bp-where{font-size:clamp(11px,calc(var(--col-w,150px) / 15),15px);font-weight:700;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

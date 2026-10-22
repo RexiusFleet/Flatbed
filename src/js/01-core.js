@@ -291,11 +291,6 @@ var PREFS = {
    directly adjustable, so comfortable is the only layout and the stale device
    preference is intentionally retired. */
 localStorage.removeItem("pref_density");
-function normalizeHex(hex) {
-  var v = String(hex || "").trim();
-  if (/^#[0-9a-f]{3}$/i.test(v)) v = "#" + v.slice(1).split("").map(function (c) { return c + c; }).join("");
-  return /^#[0-9a-f]{6}$/i.test(v) ? v.toUpperCase() : "";
-}
 function colorRgb(hex) {
   var n = parseInt(normalizeHex(hex).slice(1), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];

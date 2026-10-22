@@ -297,11 +297,6 @@ var PREFS = {
    directly adjustable, so comfortable is the only layout and the stale device
    preference is intentionally retired. */
 localStorage.removeItem("pref_density");
-function normalizeHex(hex) {
-  var v = String(hex || "").trim();
-  if (/^#[0-9a-f]{3}$/i.test(v)) v = "#" + v.slice(1).split("").map(function (c) { return c + c; }).join("");
-  return /^#[0-9a-f]{6}$/i.test(v) ? v.toUpperCase() : "";
-}
 function colorRgb(hex) {
   var n = parseInt(normalizeHex(hex).slice(1), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
@@ -1627,31 +1622,11 @@ function ocrPdf(b64, onProgress, opts) {
   }).catch(function (e) { console.error("OCR failed", e); return ""; });
 }
 
-/* normBroker / GENERIC_SET / distinctiveTokens / matchBrokerForFile —
-   legacy/invoicing-local/index.html:1500, :1539, :1552, :1567 */
+/* normBroker — legacy/invoicing-local/index.html:1500 */
 var STRIP_WORDS = /\b(INC|LLC|CO|CORP|LTD|INCORPORATED|COMPANY|COMPANIES|INDUSTRIES|INDUSTRY|TRANSPORTATION|TRANSPORT|LOGISTICS|LOGISTIC|FREIGHT|TRUCKING|TRUCK|SERVICES|SERVICE|GROUP|INTERNATIONAL|INTL|SUPPLY|ENTERPRISES|ENTERPRISE|BROKER|BROKERS|BROKERAGE|CARRIER|CARRIERS|DISTRIBUTION|WAREHOUSING|HOLDINGS)\b/g;
-var GENERIC_SET = (function () {
-  var m = {};
-  ("INC LLC CO CORP LTD INCORPORATED COMPANY COMPANIES INDUSTRIES INDUSTRY TRANSPORTATION TRANSPORT " +
-   "LOGISTICS LOGISTIC FREIGHT TRUCKING TRUCK SERVICES SERVICE GROUP INTERNATIONAL INTL SUPPLY " +
-   "ENTERPRISES ENTERPRISE BROKER BROKERS BROKERAGE CARRIER CARRIERS DISTRIBUTION WAREHOUSING HOLDINGS " +
-   "THE AND OF INVOICE INVOICES INV LOAD LOADS POD PODS RATECON REXIUS FINAL COPY SIGNED SCAN SCANNED " +
-   "DOC DOCUMENT PACKAGE PKG BILLING PAID").split(" ").forEach(function (w) { m[w] = 1; });
-  return m;
-})();
 function normBroker(s) {
   return (s || "").toUpperCase().replace(/\+\+.*$/, "").replace(/[^A-Z0-9\s]/g, " ")
     .replace(/\b\d+\b/g, " ").replace(STRIP_WORDS, " ").replace(/\s+/g, " ").trim();
-}
-function distinctiveTokens(s) {
-  var raw = (s || "").toUpperCase().replace(/\+\+.*$/, "").replace(/[^A-Z0-9]+/g, " ").trim();
-  if (!raw) return [];
-  var toks = raw.split(/\s+/);
-  var sig = toks.filter(function (t) { return t.length >= 2 && !/^[0-9]+$/.test(t) && !GENERIC_SET[t]; });
-  if (!sig.length) sig = toks.filter(function (t) { return t && !/^[0-9]+$/.test(t); });
-  var seen = {}, out = [];
-  sig.forEach(function (t) { if (!seen[t]) { seen[t] = 1; out.push(t); } });
-  return out;
 }
 /* The legacy app matched against the whole "outside customer list" tab, which is
    the AP-billing directory — it holds mills and direct customers, not just
@@ -1682,21 +1657,6 @@ function findBroker(raw) {                       // Jaccard, threshold 0.45
     if (score > bestScore) { bestScore = score; best = b; }
   });
   return bestScore >= 0.45 ? { broker: best, score: bestScore } : null;
-}
-function matchBrokerForFile(text) {              // token coverage, threshold 0.4
-  var ft = distinctiveTokens(text); if (!ft.length) return null;
-  var fset = {}; ft.forEach(function (t) { fset[t] = 1; });
-  var best = null, bestScore = 0, bestShared = 0;
-  brokerList().forEach(function (b) {
-    var bt = distinctiveTokens(b.name); if (!bt.length) return;
-    var shared = 0; bt.forEach(function (t) { if (fset[t]) shared++; });
-    if (!shared) return;
-    var score = (shared / ft.length) * 0.7 + (shared / bt.length) * 0.3;
-    if (score > bestScore || (score === bestScore && shared > bestShared)) {
-      bestScore = score; bestShared = shared; best = b;
-    }
-  });
-  return best && bestScore >= 0.4 ? { broker: best, score: bestScore } : null;
 }
 var SOLOMON = /\d{2}-\d{4}-\d{4}/;              /* legacy tms Code.js:517, :876 */
 
