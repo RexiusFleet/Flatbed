@@ -71,8 +71,6 @@ function textOn(hex) {
 }
 function fillStyle(hex) { return hex ? "background:" + esc(hex) + ";color:" + textOn(hex) + ";" : ""; }
 
-var SUN_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1 1M12 12l1 1M3 13l1-1M12 4l1-1"/></svg>';
-var MOON_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M13.5 10A6 6 0 0 1 6 2.5a6 6 0 1 0 7.5 7.5z"/></svg>';
 var SCAN_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 2h6l3 3v9H4z"/><path d="M10 2v3h3M6.5 9l1.5 1.5L11 7.5"/></svg>';
 var SYNC_ICON = '<span class="ico" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 8a6 6 0 0 1 10.2-4.2M14 8a6 6 0 0 1-10.2 4.2M12 2v3h-3M4 14v-3h3"/></svg></span>';
 
@@ -497,12 +495,15 @@ function vLogin() {
 }
 
 // The sign-in screen of app mode (same look as the dashboard's): shown, and nothing else, until someone is signed in.
+/* The same sign-in card as the dashboard (renderLoginGate in supabase-api.js): same markup, same app.css styles, same accounts. */
 function vAppLogin() {
-  var brand = '<div class="brand drv-login-brand"><span class="brand-mark"><img src="../rexius-logo.png" alt="Rexius"></span>' +
-    "<h1>" + (BAG_PLANT ? "Flatbed Schedule Bagger View" : "Flatbed Schedule") + "</h1></div>";
-  return '<div class="drv-login login-gate"><div class="login-card">' + brand + "<p>Sign in to see the schedule.</p>" +
-    '<input id="login-email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" aria-label="Email" placeholder="Email">' +
-    '<input id="login-password" type="password" autocomplete="current-password" aria-label="Password" placeholder="Password">' +
+  return '<div class="drv-login login-gate"><div class="login-card">' +
+    '<div class="brand" aria-label="Dept 12 Flatbed Trucking">' +
+    '<span class="brand-mark"><img src="../rexius-logo.png" alt="Rexius"></span>' +
+    '<span class="brand-copy"><b>Dept 12</b><span>Flatbed Trucking</span></span></div>' +
+    "<h2>Sign in</h2><p>Sign in with your Dept 12 account.</p>" +
+    '<input id="login-email" type="email" autocomplete="username" placeholder="Email">' +
+    '<input id="login-password" type="password" autocomplete="current-password" placeholder="Password">' +
     '<button class="btn pri" id="login-go" type="button">Continue</button><div id="login-err" class="login-err">' + esc(APP.err) + "</div></div></div>";
 }
 

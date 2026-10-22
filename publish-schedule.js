@@ -23,7 +23,6 @@ const LEGEND_COLORS = {
   "anytime|true": "#783F04"
   // brown  — Anytime EAST
 };
-const DARK_FILLS = /* @__PURE__ */ new Set(["#783F04", "#FF0000"]);
 const TRUCK_OFF_COLOR = "#000000";
 const s = (v) => (v === null || v === void 0 ? "" : String(v)).trim();
 function pyRound(x) {
@@ -31,9 +30,6 @@ function pyRound(x) {
   if (diff > 0.5) return f + 1;
   if (diff < 0.5) return f;
   return f % 2 === 0 ? f : f + 1;
-}
-function pyQuote(q) {
-  return encodeURIComponent(q).replace(/%2F/g, "/").replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
 }
 function fmtLocation(name, address, city, state, phone) {
   const citystate = [s(city), s(state)].filter(Boolean).join(" ");
@@ -101,16 +97,6 @@ function currentWeekChipText(o, stops) {
     return stopLines.length ? [header, stopLines.join("\n")].join("\n\n") : header;
   }
   return internalChipText(o, o.pallet_count);
-}
-function hexToRgb01(h) {
-  let x = (h || "").replace(/^#+/, "");
-  if (x.length === 8) x = x.slice(0, 6);
-  if (x.length !== 6) return null;
-  return {
-    red: parseInt(x.slice(0, 2), 16) / 255,
-    green: parseInt(x.slice(2, 4), 16) / 255,
-    blue: parseInt(x.slice(4, 6), 16) / 255
-  };
 }
 function lightenHex(h, whiteMix = 0.78) {
   let x = (h || "").replace(/^#+/, "");

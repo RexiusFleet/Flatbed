@@ -43,7 +43,6 @@ function money(s) {
 function title(s) {
   return String(s || "").replace(/\s+/g, " ").trim();
 }
-function digitsOnly(s) { return String(s || "").replace(/\D/g, ""); }
 // Cut a line at the first right-hand-column label ("Time:", "Quantity:", ...) so a two-column layout leaves only the left cell.
 function leftCell(l, cuts) {
   var re = new RegExp("\\s+(?:" + cuts + ")(?![A-Za-z0-9]).*$", "i");
@@ -354,7 +353,6 @@ function stopsInline(t) {
 /* Fallback: every "City, ST ZIP" that is not Rexius or the broker's own letterhead, with the two lines above it as name and street. */
 function stopsGeneric(t) {
   var L = lines(t), out = [], seen = {};
-  var firstDeliveryWord = -1;
   for (var i = 0; i < L.length; i++) {
     var csz = cityStateZip(L[i]);
     if (!csz || !csz.zip) continue;

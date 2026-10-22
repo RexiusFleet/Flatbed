@@ -1559,31 +1559,6 @@ function isoToMdy(iso) {
   var p = iso.split("-");
   return p[1] + "/" + p[2] + "/" + p[0];
 }
-/* Parses whatever's currently typed into MM/DD/YYYY digits — "8/22/2026",
-   "08222026", "8-22-26", mid-typing "8/22" — into an ISO date. A missing
-   or 2-digit year is inferred: 2-digit expands to 2000+YY; a fully absent
-   year falls back to fallbackIso's year (the field's own last real value)
-   else today's real year — so "8 [advance] 22 [commit]" alone is enough,
-   matching Nate's ask, without forcing a third segment. Returns "" if
-   month/day can't be read at all. */
-function mdyToIso(text, fallbackIso) {
-  var digits = (text || "").replace(/\D/g, "");
-  if (digits.length < 3) return "";
-  var mm, dd, yy;
-  if (digits.length >= 4) { mm = digits.slice(0, 2); dd = digits.slice(2, 4); yy = digits.slice(4, 8); }
-  else { mm = digits.slice(0, 1); dd = digits.slice(1, 3); yy = ""; }  // exactly 3 digits: "822" -> 8/22
-  var m = parseInt(mm, 10), d = parseInt(dd, 10);
-  if (!m || !d || m > 12 || d > 31) return "";
-  var y;
-  if (yy.length === 4) y = parseInt(yy, 10);
-  else if (yy.length === 2) y = 2000 + parseInt(yy, 10);
-  else {
-    var fb = fallbackIso && /^\d{4}-\d{2}-\d{2}$/.test(fallbackIso) ? fallbackIso.slice(0, 4) : null;
-    y = fb ? parseInt(fb, 10) : new Date().getFullYear();
-  }
-  var mmS = String(m).padStart(2, "0"), ddS = String(d).padStart(2, "0");
-  return y + "-" + mmS + "-" + ddS;
-}
 
 /* ── PDF extraction — ported from legacy/invoicing-local ─────────────────── */
 if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.js";
@@ -2204,64 +2179,8 @@ function rateConSuggest(oid) {
   var ef = (d && d.extracted_fields) || {};
   return { pickup: ef.pickup || null, delivery: ef.delivery || null, stops: ef.stops || [] };
 }
-/* A dropped rate con used to only ever SUGGEST pickup/delivery text — Nate
-   always had to confirm or manually "+Create" it (rate cons vary wildly and
-   scanned ones are OCR-noisy, so nothing auto-applied). Nate: "be able to add
-   locations to picks and drops based on the rate con dropping" — the main
-   workflow being dropping a rate con in means that friction is gone now: an
-   extracted stop that doesn't already exist in the Pick/Drop List becomes a
-   real location outright, matched by exact (case-insensitive) name first so
-   re-ingesting the same shipper/consignee doesn't pile up duplicates. This
-   only touches the ADDRESS BOOK, never an order's own pickup/delivery pick —
-   ingestRateCon still only fills that in when the field was blank. */
-function resolveStopToLocationId(stop) {
-  if (!stop || !stop.name) return Promise.resolve(null);
-  var qn = stop.name.trim().toLowerCase();
-  var existing = (DB.locations || []).filter(function (l) { return (l.name || "").trim().toLowerCase() === qn; })[0];
-  if (existing) return Promise.resolve(existing.id);
-  return api("location", { name: stop.name, city: stop.city || null, state: stop.state || null })
-    .then(function (loc) { return loc.id; });
-}
 
-/* ── Rate con autofill markers ────────────────────────────────────────────
-   When a rate con (or pasted load info) fills an order, orders.autofill remembers each box it touched:
-     { broker_load_no: { s: "ok", v: "164792" }, external_rate: { s: "check", v: 500 }, po_number: { s: "missing" } }
-   s: ok = read from a labeled spot, check = a guess, missing = nothing found. v = what it filled in.
-   The side window puts a small tag on those boxes. A tag shows only while the box still holds v (or is still
-   empty, for "missing"), so changing the box removes it by itself; clicking the tag says "I checked it". */
-var AF_LABEL = { ok: "Auto", check: "Check", missing: "Not Found" };
-var AF_TIP = { ok: "Filled from the rate con. Click when you have checked it.",
-               check: "Filled from the rate con, but the reader was not sure. Check it, then click.",
-               missing: "The rate con did not have this. Click to dismiss." };
-function afNorm(x) {
-  if (x == null || x === "") return "";
-  var t = String(x).trim();
-  return t !== "" && !isNaN(Number(t)) ? String(Number(t)) : t;
-}
-function afGet(o, key) {
-  var a = o && o.autofill && o.autofill[key];
-  if (!a) return null;
-  if (a.s === "missing") return afNorm(o[key]) === "" ? a : null;
-  return afNorm(o[key]) === afNorm(a.v) ? a : null;
-}
-// The Auto / Check / Not Found tags are gone: a rate con or pasted load is reviewed in a window first, then filled in.
-function afBadge() { return ""; }
-function afDone(oid, key) {
-  var o = order(oid); if (!o || !o.autofill) return;
-  var next = Object.assign({}, o.autofill); delete next[key];
-  var body = { id: oid, autofill: Object.keys(next).length ? next : null };
-  o.autofill = body.autofill;
-  api("order/update", body).catch(function () { /* the tag is cosmetic: keep going */ });
-  var d = DRAWER_OID === oid ? order(oid) : null;
-  if (d) openOrder(oid);
-}
-document.addEventListener("click", function (e) {
-  var b = e.target.closest && e.target.closest("[data-afdone]"); if (!b) return;
-  e.preventDefault(); e.stopPropagation();
-  var parts = b.getAttribute("data-afdone").split("|");
-  afDone(parts[0], parts[1]);
-}, true);
-
+/* A rate con or pasted load is reviewed in a window first (afReview), then filled into blank boxes only. orders.autofill is also where the shared Staging list lives (_staged). */
 // Street number + first street word, so "4227 W 6TH AVE" and "4227 West 6th Avenue" agree.
 function afStreetKey(a) {
   var m = /^(\d{1,6})(?:-\d+)?\s+(?:(?:N|S|E|W|NE|NW|SE|SW|NORTH|SOUTH|EAST|WEST)\.?\s+)?([A-Za-z0-9]+)/i.exec(String(a || "").trim());
@@ -2553,12 +2472,12 @@ function openOrder(oid) {
     h += '<div class="note-bar"><b>Needs a Rexius order number</b> — can\'t bill out without it.</div>';
 
   h += '<div><div class="sec-h">Order</div><div class="fields">' +
-    "<label>Broker" + afBadge(o, "broker_party_id") + "</label>" + partyCombo(oid, "broker_party_id", o.broker_party_id, "Search brokers") +
+    "<label>Broker</label>" + partyCombo(oid, "broker_party_id", o.broker_party_id, "Search brokers") +
     fld("rexius_order_no", "Order #", o.rexius_order_no, externalOrderPlaceholder()) +
     fld("broker_load_no", "Load #", o.broker_load_no, "") +
     fld("po_number", "PU / PO", o.po_number, "") +
     fld("delivery_number", "Delivery #", o.delivery_number, "") +
-    "<label>Rate" + afBadge(o, "external_rate") + "</label>" + rateInputHtml(o, "") +
+    "<label>Rate</label>" + rateInputHtml(o, "") +
     fld("order_date", "Ordered", o.order_date && String(o.order_date).slice(0, 10), "", "date") +
     fld("delivery_date", "Delivered", o.delivery_date && String(o.delivery_date).slice(0, 10), "", "date") +
     fld("notes", "Private notes", o.notes, "Only you can see this") +
@@ -2775,7 +2694,7 @@ function fld(name, label, val, ph, type) {
   if (o && !o.is_transfer && (name === "driver_note" || (name === "notes" && label === "Private notes")))
     inp = '<span class="fld-pn">' + inp + '<button type="button" class="pn-plus" data-pnfield="' + name + '"' + (val ? "" : " disabled") +
       ' title="Add this note to a customer or location" aria-label="Add this note to a customer or location">+</button></span>';
-  return "<label>" + esc(label) + (o ? afBadge(o, name) : "") + "</label>" + inp;
+  return "<label>" + esc(label) + "</label>" + inp;
 }
 /* Like fld() but saves via /api/freight (D38/D103) instead of /api/order. */
 function frFld(name, label, val, ph) {
@@ -3293,7 +3212,6 @@ function toolbarHtml(title, opts) {
    Current Week and at their own tab on the Flatbed Schedule page (driver/),
    measured against the last Publish Schedule. Read from Supabase
    (driver_views), refreshed every minute. */
-var SEEN_OPEN = false;
 function driverViews() { return DRIVER_VIEWS; }
 function lastPushMs() {
   var ms = LAST_PUBLISH_MS || 0;
@@ -3475,11 +3393,6 @@ document.addEventListener("click", function (e) {
 /* Scheduler bar: the numbers pinned on Reports, for the year of whatever day is at the top of the board, behind a Numbers toggle.
    The Internal Rate box lives on the main toolbar (all pages). */
 var SCHED_STAT = { day: TODAY, motYear: "" }, SCHED_RATES_OPEN = (function () { try { return localStorage.getItem("schedRatesOpen") !== "0"; } catch (e) { return true; } })();
-function schedWeekRange(ds) {
-  var d = new Date(ds + "T12:00:00"), a = new Date(d); a.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-  var b = new Date(a); b.setDate(a.getDate() + 6);
-  return { from: rptIso(a), to: rptIso(b), a: a };
-}
 function schedTopDay() {
   var w = document.getElementById("sched-wrap"); if (!w) return SCHED_STAT.day;
   var r = w.getBoundingClientRect(), el = document.elementFromPoint(r.left + 40, r.top + 110), tr = el && el.closest && el.closest("tr");
@@ -5170,14 +5083,6 @@ function vSheet(id) {
     '<td colspan="' + (sh.n_cols + 1) + '"></td></tr>';
   return h + "</tbody></table></div>";
 }
-function dateRange() {
-  return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">' +
-    '<label style="font-size:var(--fs-body-sm);color:var(--ink-2)">From</label>' +
-    '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-repfrom class="cell-i" style="width:150px;border:1px solid var(--rule);border-radius:6px">' +
-    '<label style="font-size:var(--fs-body-sm);color:var(--ink-2)">To</label>' +
-    '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-repto class="cell-i" style="width:150px;border:1px solid var(--rule);border-radius:6px">' +
-    "</div>";
-}
 /* ── Reports: live dashboard + pivot builder ───────────────────────────────
    The data is the same table "Export Everything" downloads: one row per order with ~70 raw columns
    (route "report-rows" -> api_report 'dump'), plus a few calculated columns added here
@@ -5209,7 +5114,6 @@ function rptFixCfg(c) {
 }
 var RPT_DERIVED = { order_type: 0, party: 0, delivered_month: 0, days_to_deliver: 1, internal_miles: 1, revenue: 1 };
 var RPT_NOT_CANCELLED = { f: "stage", op: "ne", v: "cancelled" };
-function rptV(vals, big) { return { vals: vals, big: big }; }
 var RPT_SYSTEM = [
   { sys: 1, name: "Total revenue", tag: "all order types combined", cfg: { v: 2, rows: ["order_type"], vals: [{ agg: "count", f: "" }, { agg: "sum", f: "revenue" }], big: 1, filters: [RPT_NOT_CANCELLED], per: "dash", dateF: "delivery_date" } },
   { sys: 1, name: "External revenue", tag: "from the invoices on the loads", cfg: { v: 2, rows: ["party"], vals: [{ agg: "count", f: "" }, { agg: "sum", f: "revenue" }], big: 1, filters: [RPT_NOT_CANCELLED, { f: "order_type", op: "eq", v: "External" }], per: "dash", dateF: "delivery_date" } },
@@ -5361,15 +5265,6 @@ function rptDisplay(res) {
   return dc;
 }
 function rptTotalVal(cfg, res) { var i = Math.min(cfg.big == null ? res.vals.length - 1 : cfg.big, res.vals.length - 1); return { v: res.vals[i], x: res.totV[i] }; }
-/* --- dashboard --- */
-function rptPeriodSelect() {
-  var r = rptDashRange();
-  return '<span class="lbl">Period</span><select id="rpt-per" class="rpt-sel">' + [["month", "This Month"], ["3m", "Last 3 Months"], ["ytd", "Year to Date"], ["custom", "Custom"]].map(function (x) {
-    return '<option value="' + x[0] + '"' + (REP.per === x[0] ? " selected" : "") + ">" + x[1] + "</option>"; }).join("") + "</select>" +
-    '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-rptdfrom class="rpt-date" data-last-iso="' + r.from + '" value="' + esc(isoToMdy(r.from)) + '">' +
-    '<span class="lbl">to</span>' +
-    '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-rptdto class="rpt-date" data-last-iso="' + r.to + '" value="' + esc(isoToMdy(r.to)) + '">';
-}
 function rptPeriodStrip() {
   var r = rptDashRange();
   return '<div class="rpt-perbar"><span class="lbl">Period</span><span class="rpt-seg" role="group" aria-label="Period">' + [["month", "This Month"], ["3m", "Last 3 Months"], ["ytd", "Year to Date"], ["custom", "Custom"]].map(function (x) {
@@ -5453,9 +5348,6 @@ function motBarHtml(b) {
 function motDayStateText(day) {
   if (day > motYesterday()) return "Today isn't finished yet";
   return MOT.pulled[day] ? "" : "Not pulled yet";
-}
-function motTrucksForDay(day) {
-  return motTrucks().filter(function (t) { return motRow(t, day) || true; });
 }
 function vMotiveTab() {
   motTabEnsure();
@@ -5836,7 +5728,6 @@ function rptFldSel(attr, val, ph, i) {
   return '<select class="rpt-sel rpt-fsel" ' + attr + (i != null ? ' data-i="' + i + '"' : "") + '><option value="">' + esc(ph || "Choose…") + "</option>" +
     opts.map(function (o) { return '<option value="' + esc(o) + '"' + (o === val ? " selected" : "") + ">" + esc(rptNice(o)) + (o in RPT_DERIVED ? " (calculated)" : "") + "</option>"; }).join("") + "</select>";
 }
-function rptFld(attr, val, ph, i) { return '<input class="rpt-fin" list="rpt-fields" ' + attr + (i != null ? ' data-i="' + i + '"' : "") + ' value="' + esc(val || "") + '" placeholder="' + (ph || "column") + '" autocomplete="off">'; }
 function rptWinControls() {
   var c = REP.win.cfg, h = "";
   h += '<div class="rpt-sec"><div class="rpt-t">Group by</div><div class="rpt-chips">' + (c.rows || []).map(function (f, i) {
@@ -6910,10 +6801,9 @@ function routeSectionHtml(o, sug, locked) {
         '<button type="button" class="' + (isP ? "on" : "") + '" data-routetype="' + i + '|pickup"' + (lockType ? " disabled" : "") + ">Pick</button>" +
         '<button type="button" class="' + (!isP ? "on" : "") + '" data-routetype="' + i + '|delivery"' + (lockType ? " disabled" : "") + ">Drop</button></div></td>" +
       '<td class="rt-loc">' + locCombo(oid, field, st.location_id, suggest) +
-        (function () { var b = custom ? "" : afBadge(o, i === 0 ? "pickup_location_id" : "delivery_location_id");
-          return l && routeAddr(l) || b ? '<div class="rt-addr">' + b + (l && routeAddr(l) ? esc(routeAddr(l)) : "") + "</div>" : ""; })() + "</td>" +
+        (l && routeAddr(l) ? '<div class="rt-addr">' + esc(routeAddr(l)) + "</div>" : "") + "</td>" +
       '<td class="rt-appt"><input class="cell-i" type="text" maxlength="120" data-stopappt="' + i + '" placeholder="e.g. 10/8 7-9 AM" value="' + esc(st.appt || "") + '">' +
-        (custom ? "" : afBadge(o, i === 0 ? "pick_appt_text" : "drop_appt_text")) + "</td></tr>";
+        "</td></tr>";
   });
   h += "</tbody></table></div>";
   if (!locked) {
@@ -8621,12 +8511,6 @@ function busyStart(label) {
   b.setAttribute("role", "status"); b.style.display = "";
 }
 function busyEnd() { var b = $("#busy"); if (b) b.style.display = "none"; }
-// The reader has what an order needs (a load number or PO, the rate, and both stops): no need to read more pages.
-function rateConComplete(text) {
-  var r = window.Dept12RateCon.parse(text, {}), f = r.fields;
-  return !!((f.load_no || f.po) && f.rate != null && r.pickup && r.delivery && r.pickup.city && r.delivery.city);
-}
-function afSummary() { return ""; }
 // Create (or match) the order for a parsed rate con / pasted load info, then fill what it can.
 function ingestParsed(p, filename) {
   return api("order/ingest", {

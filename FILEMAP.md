@@ -9,7 +9,7 @@ button, or a word, and it points you to the file and the part of the file.
 
 ```
  Dashboard (dispatcher, signs in)       Driver page /driver/      Bag plant page /bagplant/
-   https://rexiusfleet.github.io/Flatbed/   (iPads, pick a name)       (kiosk screen, read-only)
+   https://rexiusfleet.github.io/Flatbed/   (Kevin's app, signs in)    (Kevin's app, read-only)
    │  index.html loads, in order:           │ driver/index.html         │ bagplant/index.html
    │    vendor/*.js ─ PDF reading, merging, OCR (in the browser)        │   (both load driver/driver.js,
    │    config.js ─── which Supabase project (public URL + public key)  │    publish-schedule.js, config.js)
@@ -23,15 +23,17 @@ button, or a word, and it points you to the file and the part of the file.
    ├─ Database ───────── all the data (orders, loads, customers, trucks…)
    │    ├─ tables              → Table Editor
    │    ├─ api_* functions     → the dashboard's business rules (staff only, need sign-in)
-   │    └─ public_* functions  → what the driver and bag plant pages call (no sign-in, read the
-   │                             published schedule, add notes, register scans, log views)
+   │    ├─ public_* functions  → read the published schedule, add notes, register scans, log views
+   │    │                         (still open to the public key until the cutover SQL is run)
+   │    └─ app_* functions     → the same, for the driver / bag plant pages signed in as the app login
+   │                             (flatbedauth@rexius.com): they take an employee number and work out the driver
    ├─ Edge Functions ─── code that holds private keys, runs on Supabase's servers
    │    ├─ motive-sync         → ONE function, three jobs picked by `mode` in the request:
    │    │                          (no mode)       old per-order mileage fill
    │    │                          "days"         truck-days (miles, odometers, first on / last off, hours worked)
    │    │                          "unidentified" gives shop yard-move trips to Shop Mechanic 1 / 2 (see §8)
-   │    └─ sheets-push         → RETIRED, delete it in Supabase (see §6)
-   ├─ Edge Function Secrets ─ MOTIVE_API_KEY (GOOGLE_SERVICE_ACCOUNT_JSON is retired, delete it)
+   │    └─ sheets-push         → unused (still deployed; to be deleted in Supabase, see §6)
+   ├─ Edge Function Secrets ─ MOTIVE_API_KEY (GOOGLE_SERVICE_ACCOUNT_JSON is unused)
    └─ Storage ────────── "documents" bucket (private) for PDFs dropped in the app and driver scans
 ```
 
@@ -62,7 +64,8 @@ and with their Refresh button.
 | open Reports | `vReports` → `api("report-rows")` | `api_report_rows` (falls back to `api_report` "dump" if that function is missing); saved/pinned reports use `api_saved_report_*` |
 | export a report | `api("report/<name>")` or the pivot's Export CSV | Database function `api_report` → CSV built in the browser |
 | open History | `13-history` section → `api("history…")` | `api_history_list` / `_preview` / `_revert` |
-| driver opens `/driver/` | `driver/driver.js` | `public_published_schedule`, `public_log_view` ("Seen by"), `public_add_driver_note`, `public_register_scan`, `public_driver_activity` |
+| driver opens `/driver/` or `/bagplant/` (signed in by the company app) | `driver/driver.js` → app mode (`appStart`, `appResolve`, `rpcPublic`) | `app_driver_by_employee` (employee number → driver + current truck), `public_published_schedule`, `app_log_view` ("Seen by"), `app_add_driver_note`, `app_register_scan`, `public_driver_activity` |
+| add / rename / switch / retire a driver in **Database → Fleet** | `app.js` → `addDriverModal`, the `data-truckdriver` blur handler, `spareDriversHtml`, `formerDriversHtml`, `data-driveractive` | `api("driver")` (adds a driver), `truck/driver` → `api_truck_driver` (puts a driver on a truck), `row` (rename, Active), `driver/employee-no`, `driver/phone`, `driver/delete` → `api_driver_delete`, `driver/former` (reads inactive drivers) |
 
 ---
 
@@ -77,8 +80,8 @@ and with their Refresh button.
 | `publish-schedule.js` | Builds the week (each driver tab + Current Week) that **Publish Schedule** saves for the driver and bag plant pages. Global `Dept12BuildSchedule`. Keep it matching `vDriverView`. | Changing the driver-tab layout. |
 | `ratecon-parser.js` | The rate con reader: `Dept12RateCon.parse(text, opts)` turns OCR text, a PDF text layer, or a pasted email into load #, PO, rate, broker, pickup, delivery (with appointment text), each marked `ok` or `check`. One handler per broker layout (Tradewinds, Nationwide, Aaron Wilson / Smokey Mountain, OpenRoad, Iosco, the ITS dispatch family, Oasis, Vanport, Inland, labeled-form brokers) plus a generic reader, an email reader, and a reader for a customer's own dispatch screen pasted from an email ("Dispatched 09/22/26", "Cust PO. #", fuel surcharge). It reads numbers, rate and the stops; it does not read notes. Runs in the browser and in node, so it can be tested on its own. | A new broker's rate cons read wrong: add or fix its handler. |
 | `app.css` | All styling (colors, spacing, fonts). Design tokens at the top (`--brand`, `--fs-…`). Also used by the driver and bag plant pages. | Anything visual. |
-| `driver/index.html`, `driver/driver.js`, `driver/driver.css`, `driver/scanner.js` | The driver page (`/driver/`): pick a name, Current Week + own tab, notes, POD/BOL scanner (`scanner.js`: take a photo, drag the four corners onto the page, it straightens it and removes shadows; Adjust Edges after), "Seen by". Reads only the published schedule. Also try `/driver/?demo` for sample data. `driver.js` has its own copy of the chip rendering (`dvChip`/`dvPlace` in `app.js` is the dashboard's copy of the same view; keep both in step). | Anything drivers see. |
-| `bagplant/index.html` | The bag plant page (`/bagplant/`). Same `driver/driver.js`, switched to bag plant mode by `FLATBED_MODE`. Backhaul flags are hidden from it. | Rarely; look changes go in `driver.js`/`driver.css`. |
+| `driver/index.html`, `driver/driver.js`, `driver/driver.css`, `driver/scanner.js` | The driver page (`/driver/`): needs the app sign-in (`REQUIRE_APP_LOGIN` at the top of `driver.js`; `?app=1` forces it on). The company app passes the login and employee number in the link hash (`#access_token=…&refresh_token=…&emp=…`) or through `window.dept12App` (`setSession`, `setEmployee`, `signOut`); a sign-in form is the fallback. The employee number is checked in the database; no match = Current Week only, no personal tab. The old name picker is still in the code behind `NAME_PICKER`. Names show as first names (`dFirst`). Current Week + own tab, notes, POD/BOL scanner (`scanner.js`: take a photo, drag the four corners onto the page, it straightens it and removes shadows; Adjust Edges after), "Seen by". Reads only the published schedule. Also try `/driver/?demo` for sample data. `driver.js` has its own copy of the chip rendering (`dvChip`/`dvPlace` in `app.js` is the dashboard's copy of the same view; keep both in step). | Anything drivers see. |
+| `bagplant/index.html` | The bag plant page (`/bagplant/`). Same `driver/driver.js` (and the same sign-in), switched to bag plant mode by `FLATBED_MODE`. Backhaul flags are hidden from it. | Rarely; look changes go in `driver.js`/`driver.css`. |
 | `rexius-logo.png` | Header/login logo. | — |
 | `vendor/pdf.min.js`, `pdf.worker.min.js` | pdf.js — reads text out of PDFs (rate cons, invoices). | Never (third-party). |
 | `vendor/pdf-lib.min.js` | Splits and merges PDFs (invoice batches, billing packages). | Never. |
@@ -142,7 +145,7 @@ jump there, e.g. ⌘F `═══ 04-views`.
 
 | Search for | What it does |
 |---|---|
-| `renderLoginGate` / top-of-file comment | How sign-in works. Everyone signed in has full access; accounts are managed in Supabase. |
+| `renderLoginGate` / top-of-file comment | How sign-in works. A login must also be on the approved list in the database (`allowed_logins`) to do anything; accounts are managed in Supabase. |
 | `function sbFetch` | Every request to Supabase goes through here (adds the key + login token, refreshes the login when it expires). |
 | `function rpc` / `function rest` | Call a Database function / read or write a table directly. |
 | `loadBootstrap` | Dashboard data: first load, "only what changed" refreshes, packed-row unpacking, the older-history loader. Falls back to the old `api_bootstrap` if the new functions aren't in the database. |
@@ -159,11 +162,11 @@ jump there, e.g. ⌘F `═══ 04-views`.
 |---|---|
 | **Table Editor** | The data. Main tables: `orders`, `loads`, `load_orders` (which order is on which load), `schedule_notes` (text in Scheduler cells), `truck_off_days`, `day_notes`, `parties` (customers + brokers + carriers), `locations` (Pick/Drop list + bagger stores), `trucks`, `drivers`, `driver_truck_assignments`, `departments`, `order_stops` / `load_stops` (multi-stop routes), `documents`, `categories` (cell colors), `entities` / `fields` / `records` (custom databases), `sheets` / `sheet_cells` (custom sheets), `audit_events` / `audit_changes` (History), `published_schedules` (what Publish Schedule saves), `driver_notes`, driver scan/view activity, `saved_reports` (pinned reports). |
 | **Database → Functions** | Every `api_…` function (the business rules), plus `dept12_…` helpers. Source copy: backup folder → `supabase/migrations/20260924000002_api_functions.sql`. |
-| **Edge Functions** | `motive-sync` (in use: mileage, truck-days, shop trips). `sheets-push` is retired: delete it. The source is pasted into Supabase by hand (Edge Functions → motive-sync → Deploy); the owner's local copy is `supabase/functions/motive-sync/index.ts`, which is not in git. |
+| **Edge Functions** | `motive-sync` (in use: mileage, truck-days, shop trips). `sheets-push` is unused and still deployed (to be deleted). The source is pasted into Supabase by hand (Edge Functions → motive-sync → Deploy); the owner's local copy is `supabase/functions/motive-sync/index.ts`, which is not in git. |
 | **Edge Functions → Secrets** | `MOTIVE_API_KEY` (needs an admin to add). |
-| **Authentication → Users** | The logins. Add people here (sign-ups off), then add their email to `dept12_private.allowed_logins`. |
+| **Authentication → Users** | The logins. Add people here (turn "Allow new users to sign up" OFF), then add their email to `dept12_private.allowed_logins` (dispatchers: full dashboard) or `dept12_private.app_logins` (the company app login: only the driver / bag plant functions). Before every request `dept12_check_request()` refuses a login that is on neither list. |
 | **Storage → documents** | Uploaded PDFs, in folders named by order ID. |
-| **SQL Editor** | Where we paste database changes. |
+| **SQL Editor** | Where we paste database changes. Files in `supabase/sql/` (local): `2026-10-19_01` employee numbers, `2026-10-21_01` driver phone, `_02` lock the public key out of everything but the open driver functions, `_03` app login (flatbedauth) + `app_*` functions, `_04` delete a driver, `_05` CUTOVER (closes the open driver functions; run only when the company app is live), `_06` rollback of the cutover, `_07` temporary dispatcher access for flatbedauth. |
 
 ---
 
@@ -196,7 +199,11 @@ jump there, e.g. ⌘F `═══ 04-views`.
 | Reports dashboard / pivot builder | `app.js` → `═══ 04-views` → `RPT_SYSTEM`, `rptRun` |
 | Delete rules for orders | `app.js` → `canDeleteOrder` (and the matching `api_order_delete` rules in Supabase) |
 | Report columns | Supabase → `api_report_rows` / `api_report`; headers in `supabase-api.js` → `REPORT_LABELS` |
-| Who can sign in | Supabase → Authentication → Users, plus `dept12_private.allowed_logins` (approved emails) |
+| Who can sign in | Supabase → Authentication → Users, plus `dept12_private.allowed_logins` (dispatchers) and `dept12_private.app_logins` (company app login) |
+| Driver page sign-in (login form, hand-off, token refresh, employee check) | `driver/driver.js` → `REQUIRE_APP_LOGIN`, `appReadLink`, `appToken`, `appStart`, `appResolve`, `vAppLogin` |
+| Fleet: add driver, add truck, put a driver on a truck, rename, Make Inactive / Reinstate, Former drivers | `app.js` → `addDriverModal`, `addTruckModal`, `spareDriversHtml`, `formerDriversHtml`; `supabase-api.js` → `driver/former` |
+| Drivers shown by first name (Matt S. when two share one) | `app.js` and `driver/driver.js` → `dFirst` |
+| Employee # and Phone boxes (Fleet) and their keyboard flow | `app.js` → `empInput`, `empEnsure`, `empBusy`, the `data-empno` / `data-empphone` handlers |
 
 ---
 

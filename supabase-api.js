@@ -647,9 +647,6 @@ var ROUTES = {
       return storageRemove([r.storage_path]).then(function () { return { ok: true, id: r.id }; });
     });
   },
-  "create-draft": function () {
-    return Promise.reject(new Error("Outlook drafts are not part of the hosted app."));
-  },
 
   "schedule": viaRpc("api_schedule"),
   "load/carrier": viaRpc("api_load_carrier"),
@@ -661,7 +658,6 @@ var ROUTES = {
   "category": viaRpc("api_category"),
   "freight": viaRpc("api_freight"),
   "internal-freight-rate": viaRpc("api_internal_freight_rate_save"),
-  "internal-freight-rate/calculate": viaRpc("api_internal_freight_rate_calculate"),
   "sync-delivery-dates": viaRpc("api_sync_delivery_dates"),
   // The Reports data: api_report_rows (adds the order id, rate and backhaul columns) once its SQL has been run,
   // otherwise the plain Export Everything report.
@@ -702,7 +698,6 @@ var ROUTES = {
   "transfer/lines": function (d) { return rpc("api_transfer_lines", { d: d || {} }); },
   "transfer/create": viaRpc("api_transfer_create"),
   "transfer/delete": viaRpc("api_transfer_delete"),
-  "motive/sync-miles": function (d, route) { return edgeFunction("motive-sync", d, histHeaders(route, d)); },
   // Publish Schedule: builds what drivers and the bag plant see (the same data the
   // old Google push built, now read-only) and saves it as the latest published copy.
   "sheets/push-driver-tabs": function (d) {
