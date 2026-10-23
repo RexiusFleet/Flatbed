@@ -236,7 +236,7 @@ var HISTORY_LABELS = {
   "order/update": "Edit order", "order/route": "Edit order route",
   "order/cancel": "Cancel order", "order/delete": "Delete order",
   "order/copy": "Copy order", "order/bill": "Change billing status",
-  "document": "Save document", "document/attach": "Attach document",
+  "document": "Save document", "document/attach": "Attach document", "document/driver-visible": "Show document to driver",
   "document/delete": "Delete document", "document/unassign": "Unassign document", "schedule": "Edit schedule",
   "load/carrier": "Schedule outside carrier", "unschedule": "Unschedule load",
   "cell/color": "Color scheduler cell", "cell/format": "Format scheduler cell",
@@ -293,7 +293,7 @@ function scopeFor(route, d) {
     "internal-order": ["orders", "int"], "order/transfer": ["orders", "xfer"],
     "order/route": ["orders", "ext"],
     "order/bill": ["billing", "bill"], "document": ["billing", "bill"],
-    "document/attach": ["billing", "bill"], "document/delete": ["billing", "bill"], "document/unassign": ["billing", "bill"],
+    "document/attach": ["billing", "bill"], "document/delete": ["billing", "bill"], "document/unassign": ["billing", "bill"], "document/driver-visible": ["billing", "bill"],
     "schedule": ["dispatch", "sched"], "load/carrier": ["dispatch", "sched"],
     "cell/color": ["dispatch", "sched"], "cell/format": ["dispatch", "sched"],
     "truck/off": ["dispatch", "sched"], "unschedule": ["dispatch", "sched"],
@@ -642,6 +642,10 @@ var ROUTES = {
       });
     });
   },
+  // "Show To Driver": the flag lives in the document's own extracted_fields; the caller sends the whole updated object.
+  "document/driver-visible": function (d, route) {
+    return rest("PATCH", "documents?id=eq." + encodeURIComponent(d.id), { extracted_fields: d.extracted_fields || {} }, histHeaders(route, d)).then(one);
+  },
   "document/delete": function (d, route) {
     return rpc("api_document_delete", { d: d }, histHeaders(route, d)).then(function (r) {
       return storageRemove([r.storage_path]).then(function () { return { ok: true, id: r.id }; });
@@ -711,6 +715,13 @@ var ROUTES = {
       });
     };
     return window.Dept12BuildSchedule({ start_date: d.start_date, days: d.days }, capture).then(function (payload) {
+      // Paperwork marked "Show To Driver": { order id: [{ id, name, path, type }] }. The driver page opens it from the load.
+      payload.docs = {};
+      (dbNow().documents || []).forEach(function (x) {
+        var ef = x.extracted_fields, nm = x.original_filename || x.storage_path || "";
+        if (!x.order_id || !x.storage_path || !ef || ef.driver_visible !== true || !/\.pdf$/i.test(nm)) return;
+        (payload.docs[x.order_id] = payload.docs[x.order_id] || []).push({ id: x.id, name: x.original_filename || "Paperwork", path: x.storage_path, type: x.doc_type || "" });
+      });
       return rpc("api_publish_schedule", { d: { payload: payload, raw: raw } }).then(function (res) {
         return { pushed: payload.drivers.map(function (x) { return x.truck; }), week_start: payload.week_start,
                  published_at: res && res.published_at };

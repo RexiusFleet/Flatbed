@@ -81,7 +81,6 @@
     }
     function fillStyle(hex) { return hex ? "background:" + esc(hex) + ";color:" + textOn(hex) + ";" : ""; }
 
-    var SCAN_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 2h6l3 3v9H4z"/><path d="M10 2v3h3M6.5 9l1.5 1.5L11 7.5"/></svg>';
     var SYNC_ICON = '<span class="ico" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 8a6 6 0 0 1 10.2-4.2M14 8a6 6 0 0 1-10.2 4.2M12 2v3h-3M4 14v-3h3"/></svg></span>';
 
     /* ── State ────────────────────────────────────────────────────────────── */
@@ -563,7 +562,7 @@
         };
         var h = tab("cw", "Current Week");
         S.payload.drivers.forEach(function (d) {
-            if (allowedTab(String(d.truck))) h += tab(d.truck, d.driver || "Unassigned", d.truck);
+            if (allowedTab(String(d.truck))) h += tab(d.truck, dFirst(d.driver) || "Unassigned", d.truck);
         });
         tabs.innerHTML = h;
         var on = tabs.querySelector("[aria-selected=true]");
@@ -859,12 +858,13 @@
         var sv = S.serverScans[S.loadOrder[key]];
         return sv ? { pages: sv.pages || 1, at: new Date(sv.at), url: "" } : null;
     }
+    // A scan and paperwork are listed the same way: a PDF file chip with its name. Nothing is shown when there are none.
+    var PDF_ICON = '<span class="ico"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 2h6l3 3v9H4z"/><path d="M10 2v3h3M6 8h4M6 11h4"/></svg></span>';
     function scanHtml(key) {
         var sc = scanInfo(key);
         if (!sc) return "";
-        return '<span class="drv-scanned">' + SCAN_ICON + "<span><b>Scanned</b> · " + sc.pages + " page" + (sc.pages > 1 ? "s" : "") +
-            " · " + esc(timeLabel(sc.at)) + "</span></span>" +
-            (sc.url ? '<a class="btn sm" href="' + esc(sc.url) + '" target="_blank" rel="noopener">View PDF</a>' : "");
+        return sc.url ? '<a class="pdfchip" href="' + esc(sc.url) + '" target="_blank" rel="noopener" title="Open the scan">' + PDF_ICON + '<span class="nm">POD-BOL Scan.pdf</span></a>'
+            : '<span class="pdfchip" title="Sent to the office">' + PDF_ICON + '<span class="nm">POD-BOL Scan.pdf</span></span>';
     }
     function noteBtn(key, big) {
         return S.noteKey !== key ? '<button class="' + (big ? "btn" : "btn sm") + '" data-note="' + esc(key) + '">Add Note</button>' : "";
@@ -899,6 +899,43 @@
         if (el) { el.remove(); document.body.style.overflow = ""; }
     }
     document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeStoreMap(); });
+    /* Paperwork the office marked "Show To Driver" for this load's order: [{ id, name, path }], sent in the published schedule.
+       It opens in the viewer (paperwork.js), where the driver can sign it; the signed copy goes up the same way a scan does. */
+    function paperDocs(key) {
+        var m = S.payload && S.payload.docs;
+        return APP_MODE && m && m[S.loadOrder[key]] || [];
+    }
+    function paperChips(key) {
+        return paperDocs(key).map(function (d, i) {
+            return '<button class="pdfchip" type="button" data-paper="' + esc(key) + "|" + i + '" title="Open ' + esc(d.name) + '">' + PDF_ICON + '<span class="nm">' + esc(d.name) + "</span></button>";
+        }).join("");
+    }
+    function filesHtml(key) {
+        var h = scanHtml(key) + paperChips(key);
+        return h ? '<span class="chip-files">' + h + "</span>" : "";
+    }
+    function openPaper(key, i) {
+        var d = paperDocs(key)[i];
+        if (!d || !window.Dept12Paper) return;
+        window.Dept12Paper.open({
+            title: S.chipTitle[key] || d.name,
+            getBytes: function () {
+                return appToken().then(function (token) {
+                    var h = { "apikey": SB_KEY };
+                    if (token) h["Authorization"] = "Bearer " + token;
+                    return fetch(SB_URL + "/storage/v1/object/authenticated/documents/" + d.path.split("/").map(encodeURIComponent).join("/"), { headers: h });
+                }).then(function (r) {
+                    if (!r.ok) throw new Error("the file could not be opened (" + r.status + ")");
+                    return r.arrayBuffer();
+                });
+            },
+            onDone: function (blob, pages) {
+                return sendScan(key, blob, pages).then(function () {
+                    loadScans(); loadActivity(); toast("Signed copy sent · " + pages + " page" + (pages > 1 ? "s" : ""));
+                });
+            }
+        });
+    }
     function noteButtons(key, big) { return storeMapBtn(key, big) + noteBtn(key, big) + scanBtn(key, big); }
     /* The driver's own tab: each day is a rounded box with a big date; the loads inside it are hard-edged boxes. A line divides one day from the next. */
     function dayHeadHtml(ds, today, cls, loadCount) {
@@ -929,7 +966,7 @@
                 if (!r.chip && !r.notes) return;
                 if (!isLoad) { h += '<div class="dvx-note-row">' + esc(r.chip) + "</div>"; return; }
                 h += '<div><div class="load-txt' + (r.color ? "" : " unfilled") + '" style="' + fillStyle(r.color) + '">' + tabChipHtml(key, r) +
-                    '<div class="chip-scan">' + storeMapBtn(key) + scanBtn(key) + scanHtml(key) + "</div></div></div>" +
+                    '<div class="chip-scan">' + storeMapBtn(key) + scanBtn(key) + filesHtml(key) + "</div></div></div>" +
                     '<div class="mono">' + esc(rexiusOrderNo(key)) + "</div>" +
                     '<div class="dvx-note">' + esc(r.notes || "") + "</div>" +
                     '<div class="mono">' + esc(r.po_number || "") + "</div>" +
@@ -960,7 +997,7 @@
                     (r.notes ? '<div class="dvx-note dvx-note-card-line"><span class="dvx-note-tag">Note</span>' + esc(r.notes) + "</div>" : "") +
                     (fields.length ? "<dl>" + fields.map(function (f) { return "<dt>" + f[0] + "</dt><dd>" + esc(f[1]) + "</dd>"; }).join("") + "</dl>" : "") +
                     '<div class="links"><span class="sp"></span>' + noteButtons(key, true) + "</div>" +
-                    '<div class="drv-card-notes">' + (scanInfo(key) ? '<div class="scan-row">' + scanHtml(key) + "</div>" : "") + notesHtml(key) + "</div></div>";
+                    '<div class="drv-card-notes">' + (filesHtml(key) ? '<div class="scan-row">' + filesHtml(key) + "</div>" : "") + notesHtml(key) + "</div></div>";
             });
             if (!any) h += '<div class="drv-empty">Nothing scheduled</div>';
             h += "</section></div>";
@@ -1053,6 +1090,12 @@
         var smb = e.target.closest("[data-smap]");
         if (smb) { openStoreMap(smb.getAttribute("data-smap")); return; }
         if (e.target.closest("[data-smap-close]")) { closeStoreMap(); return; }
+        var pb = e.target.closest("[data-paper]");
+        if (pb) {
+            var pp = pb.getAttribute("data-paper").split("|");
+            openPaper(pp.slice(0, -1).join("|"), Number(pp[pp.length - 1]));
+            return;
+        }
         var sb = e.target.closest("[data-scan]");
         if (sb) {
             var skey = sb.getAttribute("data-scan");

@@ -8441,9 +8441,27 @@ function docRowHtml(d) {
   var nm = d.original_filename || "";
   return '<div class="docrow"><span class="pill">' + esc(String(d.doc_type || "other").replace("_", " ")) + "</span>" + docChipHtml(d) +
     '<button class="btn sm" data-viewpath="' + esc(d.storage_path) + '" data-viewname="' + esc(nm) + '">View</button>' +
-    (/\.pdf$/i.test(nm) ? '<button class="btn sm" data-signdoc="' + esc(d.id) + '" type="button" title="Open it to add initials or a date, or to read it as a rate con">Sign</button>' : "") + "</div>";
+    (/\.pdf$/i.test(nm) ? '<button class="btn sm" data-signdoc="' + esc(d.id) + '" type="button" title="Open it to add initials or a date, or to read it as a rate con">Sign</button>' : "") +
+    (d.order_id && !d.proto && /\.pdf$/i.test(nm) ? '<button class="btn sm' + (docDriverOn(d) ? " active" : "") + '" data-docdriver="' + esc(d.id) + '" type="button" aria-pressed="' + docDriverOn(d) +
+      '" title="' + (docDriverOn(d) ? "Drivers can open this from the load. Click to hide it." : "Let the driver open this from the load on their tab. Publish Schedule sends it.") + '">Show To Driver</button>' : "") + "</div>";
 }
 document.addEventListener("click", function (e) { var b = e.target.closest && e.target.closest("[data-signdoc]"); if (b) signDocument(b.getAttribute("data-signdoc")); });
+function docDriverOn(d) { return !!(d && d.extracted_fields && d.extracted_fields.driver_visible === true); }
+/* "Show To Driver": the flag is kept in the document's own extracted_fields. Drivers see it after the next Publish Schedule. */
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("[data-docdriver]"); if (!b) return;
+  var id = b.getAttribute("data-docdriver"), d = (DB.documents || []).filter(function (x) { return x.id === id; })[0];
+  if (!d || b.disabled) return;
+  var ef = Object.assign({}, d.extracted_fields || {}), on = !docDriverOn(d);
+  if (on) ef.driver_visible = true; else delete ef.driver_visible;
+  b.disabled = true;
+  api("document/driver-visible", { id: id, extracted_fields: ef }).then(function () { return reload(); }).then(function () {
+    toast(on ? "Drivers will see it after you Publish Schedule" : "Hidden from drivers after you Publish Schedule");
+    histPush(on ? "show document to driver" : "hide document from driver",
+      function () { return api("document/driver-visible", { id: id, extracted_fields: d.extracted_fields || {} }).then(reload); },
+      function () { return api("document/driver-visible", { id: id, extracted_fields: ef }).then(reload); });
+  }).catch(function (err) { b.disabled = false; toast(err.message, true); });
+});
 function docChipHtml(d) {
   var path = d.storage_path, ready = !!DOCBLOB[path], nm = d.original_filename || "(file)";
   return '<span class="pdfchip' + (ready ? "" : " wait") + '" draggable="true" data-docchip="' + esc(path) + '" data-filepath="' + esc(path) + '" data-filename="' + esc(nm) + '" data-filemode="download" ' +
