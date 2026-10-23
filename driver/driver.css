@@ -305,7 +305,7 @@ body.driver-app.drv-bagplant .chip.bp-bag{border:2px solid var(--ink)}
 .load-txt .ls+.ls{margin-top:5px}
 /* Hand-written notes (typed Scheduler cells) get a box as big as a load, so they can't be skipped. */
 .dvx-note-row,.dvx-note-card{box-sizing:border-box;min-height:96px;display:flex;align-items:center;border:1.5px solid var(--ink);border-radius:0;
-  background:color-mix(in srgb,#f2d94e 38%,var(--panel));color:var(--ink);font-size:var(--fs-h3);font-weight:700;line-height:1.3;
+  background:var(--blank-cell);color:var(--ink);font-size:var(--fs-h3);font-weight:700;line-height:1.3;
   padding:10px 12px;margin:6px 0 0;white-space:pre-line;word-break:break-word}
 .dvx-note-row{grid-column:1/-1}
 
@@ -351,3 +351,9 @@ th.carriercol{background:var(--panel-2)}
 /* Refresh stays on the right on a phone, even when the "Last updated" times wrap onto a second line. */
 .driver-app .toolbar{flex-wrap:wrap}
 .driver-app .toolbar #refresh{margin-left:auto}
+
+/* Hand-written cells (typed Scheduler cells) are white on a driver's tab. */
+:root{--blank-cell:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--blank-cell:var(--panel)}}
+:root[data-theme="dark"]{--blank-cell:var(--panel)}
+.dv>.dvx-note-row{background:var(--blank-cell)}
