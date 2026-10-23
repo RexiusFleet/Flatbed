@@ -3831,13 +3831,7 @@ function stagePill(o, on) {
   else if (o.kind === "external" && o.billed_date) { label = "Billed"; cls = "billed"; }
   else if (o.delivery_date) { label = "Delivered"; cls = "on"; }
   else if (on) { label = "Scheduled"; cls = "mid"; }
-  // Outside-carrier is a second axis (D115), so preserve it as a small marker
-  // inside the fixed status segment instead of adding another segment that
-  // would move Copy/Stage or widen the joined control.
-  var carrier = carrierMap()[o.id]
-    ? '<span class="tracker-carrier" title="Brokered to an outside carrier">C</span>'
-    : "";
-  return '<span class="tracker-state ' + cls + '"><span>' + label + "</span>" + carrier + "</span>";
+  return '<span class="tracker-state ' + cls + '"><span>' + label + "</span></span>";
 }
 /* The "Stage →" action only makes sense while an order is still in the
    default Staging bucket — hide it once scheduled/delivered/billed/

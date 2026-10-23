@@ -852,9 +852,6 @@ table.order-tracker .stage-actions{display:inline-flex;align-items:stretch;heigh
 .tracker-state.mid{background:var(--warn);color:#1a1a1a}
 .tracker-state.bad{background:var(--bad);color:var(--paper)}
 .tracker-state.billed{background:var(--billed);color:var(--paper)}
-.tracker-carrier{position:absolute;right:1px;top:1px;width:12px;height:12px;border-radius:50%;
-  display:flex;align-items:center;justify-content:center;background:var(--panel);color:var(--ink);
-  font-family:var(--mono);font-size:var(--fs-caption);line-height:1;letter-spacing:0}
 .tracker-action{width:62px;min-width:62px;max-width:62px;padding:0 6px;gap:4px;border:0;
   border-left:1px solid var(--rule-2);background:var(--panel);color:var(--ink-2);
   font-size:var(--fs-caption);transition:width .16s ease-out,min-width .16s ease-out,max-width .16s ease-out,
