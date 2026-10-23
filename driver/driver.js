@@ -233,7 +233,7 @@
         if (!emp) { APP.empState = "none"; S.who = null; return Promise.resolve(); }
         return rpcPublic("app_driver_by_employee", { p_emp: emp }).then(function (r) {
             if (!r) { APP.empState = "unknown"; S.who = null; return; }
-            APP.empState = "ok"; S.who = { role: "driver", truck: r.truck == null ? "" : String(r.truck), name: r.name, emp: emp };
+            APP.empState = "ok"; S.who = { role: "driver", truck: r.truck == null ? "" : String(r.truck), name: r.name, emp: emp, all: !!r.all_tabs };
             S.tab = S.who.truck ? S.who.truck : "cw"; store("dept12DriverTab", S.tab);
         }, function (e) { if (e && e.needLogin) return; APP.empState = "error"; APP.err = e.message || String(e); S.who = null; });
     }
@@ -541,7 +541,7 @@
     function allowedTab(tab) {
         if (tab === "cw") return true;
         if (isBagPlant()) return false;
-        return !!driverByTruck(tab) && !!S.who && String(S.who.truck) === String(tab);
+        return !!driverByTruck(tab) && !!S.who && (!!S.who.all || String(S.who.truck) === String(tab));
     }
 
     /* ── Header + tabs ────────────────────────────────────────────────────── */

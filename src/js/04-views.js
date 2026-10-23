@@ -1399,7 +1399,7 @@ function vInternal() {
 
   var h = toolbarHtml("Bag Orders", {
     className: "orders-toolbar", context: yearPicker(),
-    secondary: ordersToolbarExtras() + trackerBulkButtonsHtml("int"),
+    secondary: ordersToolbarExtras() + '<button class="btn sm" id="int-add" title="Reserve the next order number in the selected month">Add One Order</button>' + trackerBulkButtonsHtml("int"),
     primary: '<button class="btn pri sm orders-primary-btn" id="int-bulk">Add Orders</button>'
   });
 
@@ -1422,7 +1422,6 @@ function vInternal() {
         function (o, i) { return bagOrderRowHtml(o, i, pm); }, INT_TRACKER_COLS);
   }
   h += "</tbody></table></div>";
-  h += '<button class="btn sm" id="int-add" style="margin-top:8px">+ Add one</button>';
   return h;
 }
 /* Internal Freight tracker (D127) — dept-to-dept mileage/$ transfers with no
