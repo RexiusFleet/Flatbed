@@ -5579,34 +5579,77 @@ function vReports() {
    (sometimes mid-week) all departments are transferred together. This tab lists what is due since the last transfer, by
    department and truck, up to a chosen delivery date; Mark Transfer Done saves it as one batch with your batch number, and
    those orders drop off the list for good. Undo removes a batch and its orders become due again. */
-var TRF = { loaded: false, loading: false, err: "", batches: [], done: {}, from: "", through: "", fold: {}, open: {}, lines: {} };
+var TRF = { loaded: false, loading: false, err: "", batches: [], done: {}, amt: {}, adj: {}, from: "", through: "", fold: {}, open: {}, lines: {} };
 function trfLoad() {
   if (TRF.loading) return; TRF.loading = true;
   api("transfer/list", {}).then(function (r) {
     TRF.batches = (r && r.batches) || []; TRF.done = {}; ((r && r.done) || []).forEach(function (id) { TRF.done[id] = 1; }); TRF.err = "";
+    // What each transferred order was sent for, and what has been adjusted since (so a later change to the cost can be seen).
+    TRF.amt = {}; ((r && r.amounts) || []).forEach(function (x) { TRF.amt[x.id] = { amount: Number(x.amount) || 0, batch_no: x.batch_no }; });
+    TRF.adj = {}; ((r && r.adjusted) || []).forEach(function (x) { TRF.adj[x.id] = Number(x.diff) || 0; });
   }, function (e) { TRF.err = /function|schema|relation|does not exist/i.test(e.message) ? "Transfers are not set up in the database yet. Run the transfers SQL first." : e.message; })
     .then(function () { TRF.loaded = true; TRF.loading = false; if (SEC === "reports" && REP.tab === "transfer") render(); });
 }
 function trfDay(ts) { return rptIso(new Date(ts)); }   // the local calendar day a timestamp falls on
 function trfDept(v) { v = String(v == null ? "" : v).trim(); return !v ? "(no department)" : /^\d+$/.test(v) ? "Dept " + v : v; }
 function trfMoney(n) { return "$" + (Math.round(n * 100) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-// What is due: delivered, not cancelled, bag or internal freight, not in a batch yet, delivered on or before the chosen day.
+/* What is due: delivered, not cancelled, bag or internal freight, not in a batch yet, delivered inside the From and Through dates (no From = everything not transferred yet).
+   Also, for orders ALREADY transferred: if the cost has changed since (or the order was cancelled), the difference is flagged, and it goes out as an adjustment (plus or
+   minus) in the next transfer when the order's delivery date is inside the same dates. "late" lists orders that were delivered on or before the last transfer's last day but
+   were not in it (no cost then): they are in the total, and flagged so it doesn't come as a surprise. */
 function trfDue() {
-  var thru = TRF.through || motYesterday(), out = { lines: [], missing: [], depts: {}, total: 0, miles: 0, from: "" };
+  var thru = TRF.through || motYesterday(), last = TRF.batches[0], lastThru = last ? String(last.through_date).slice(0, 10) : "";
+  var out = { lines: [], missing: [], late: [], changes: [], adjust: [], depts: {}, total: 0, miles: 0, from: "" };
+  var inRange = function (d) { return !!d && d <= thru && !(TRF.from && d < TRF.from); };
+  var bump = function (dep, trk, amt, mi, adj) {
+    var D = out.depts[dep] = out.depts[dep] || { orders: 0, adj: 0, miles: 0, amount: 0, trucks: {} };
+    D.miles += mi; D.amount += amt; if (adj) D.adj++; else D.orders++;
+    var T = D.trucks[trk] = D.trucks[trk] || { orders: 0, adj: 0, miles: 0, amount: 0 };
+    T.miles += mi; T.amount += amt; if (adj) T.adj++; else T.orders++;
+  };
   (REP.data || []).forEach(function (r) {
-    if (r.stage === "cancelled" || (r.order_type !== "Bag Order" && r.order_type !== "Internal Freight")) return;
-    var d = r.delivery_date ? String(r.delivery_date).slice(0, 10) : "";
-    if (!d || d > thru || (TRF.from && d < TRF.from) || (r.order_id && TRF.done[r.order_id])) return;
-    var amt = rptNum(r.internal_freight_amount), dep = trfDept(r.pivot_department), trk = r.truck_number || "(no truck)", mi = rptNum(r.miles) || 0;
-    if (!(amt > 0)) { out.missing.push({ truck: trk, no: r.rexius_order_no || r.broker_load_no || "" }); return; }
-    var L = { order_id: r.order_id, department: dep, truck_number: trk, delivery_date: d, miles: mi, amount: amt };
+    if (r.order_type !== "Bag Order" && r.order_type !== "Internal Freight") return;
+    var d = r.delivery_date ? String(r.delivery_date).slice(0, 10) : "", id = r.order_id, dep = trfDept(r.pivot_department), trk = r.truck_number || "(no truck)", mi = rptNum(r.miles) || 0;
+    var no = r.rexius_order_no || r.broker_load_no || "";
+    if (id && TRF.done[id]) {
+      var rec = TRF.amt[id]; if (!rec) return;
+      var was = rec.amount + (TRF.adj[id] || 0), cur = r.stage === "cancelled" ? 0 : (rptNum(r.internal_freight_amount) || 0);
+      if (Math.abs(cur - was) < 0.005) return;
+      var A = { order_id: id, no: no, department: dep, truck_number: trk, delivery_date: d, miles: mi, from_amount: was, to_amount: cur, diff: Math.round((cur - was) * 100) / 100, batch_no: rec.batch_no, inRange: inRange(d) };
+      out.changes.push(A);
+      if (A.inRange) { out.adjust.push(A); out.total += A.diff; if (!out.from || d < out.from) out.from = d; bump(dep, trk, A.diff, 0, true); }
+      return;
+    }
+    if (r.stage === "cancelled" || !inRange(d)) return;
+    var amt = rptNum(r.internal_freight_amount);
+    if (!(amt > 0)) { out.missing.push({ truck: trk, no: no }); return; }
+    var L = { order_id: id, no: no, department: dep, truck_number: trk, delivery_date: d, miles: mi, amount: amt };
     out.lines.push(L); out.total += amt; out.miles += mi; if (!out.from || d < out.from) out.from = d;
-    var D = out.depts[dep] = out.depts[dep] || { orders: 0, miles: 0, amount: 0, trucks: {} };
-    D.orders++; D.miles += mi; D.amount += amt;
-    var T = D.trucks[trk] = D.trucks[trk] || { orders: 0, miles: 0, amount: 0 };
-    T.orders++; T.miles += mi; T.amount += amt;
+    if (lastThru && d <= lastThru) out.late.push(L);
+    bump(dep, trk, amt, mi, false);
   });
   return out;
+}
+function trfSigned(n) { return (n < 0 ? "\u2212" : "+") + trfMoney(Math.abs(n)); }
+// The flags above the table: changes made after a transfer, and orders that were missed by the last one.
+function trfFlagsHtml(due) {
+  var h = "", thead = function (cols) { return "<thead><tr>" + cols.map(function (c, i) { return "<th>" + c + "</th>"; }).join("") + "</tr></thead>"; };
+  if (due.changes.length) {
+    var net = 0; due.changes.forEach(function (c) { net += c.diff; });
+    h += '<div class="trf-flag-h"><span class="lbl">Changed after it was transferred</span><span class="trf-flag-sub">' + due.changes.length + " order" + (due.changes.length === 1 ? "" : "s") + " · net " + trfSigned(net) +
+      (due.adjust.length < due.changes.length ? " · the greyed ones are outside the dates below" : "") + "</span></div>" +
+      '<div class="rpt-card trf-card trf-flags"><table class="trf-tbl">' + thead(["Order", "Department / truck", "Was", "Now", "Change"]) + "<tbody>" +
+      due.changes.map(function (c) {
+        return '<tr class="' + (c.inRange ? "" : "trf-out") + '"><td>' + esc(c.no || "—") + (c.batch_no ? ' <span class="trf-bn">batch ' + esc(c.batch_no) + "</span>" : "") + "</td><td>" + esc(c.department) + " · Truck " + esc(c.truck_number) + "</td><td>" + trfMoney(c.from_amount) + "</td><td>" + trfMoney(c.to_amount) + "</td><td><b>" + trfSigned(c.diff) + "</b></td></tr>";
+      }).join("") + "</tbody></table></div>";
+  }
+  if (due.late.length) {
+    var lt = 0; due.late.forEach(function (l) { lt += l.amount; });
+    h += '<div class="trf-flag-h"><span class="lbl">Added after the last transfer</span><span class="trf-flag-sub">' + due.late.length + " order" + (due.late.length === 1 ? "" : "s") + " · " + trfMoney(lt) + " · delivered before the last transfer ended but not in it; they are in the total below</span></div>" +
+      '<div class="rpt-card trf-card trf-flags"><table class="trf-tbl">' + thead(["Order", "Department / truck", "Delivered", "Amount"]) + "<tbody>" +
+      due.late.map(function (l) { return "<tr><td>" + esc(l.no || "—") + "</td><td>" + esc(l.department) + " · Truck " + esc(l.truck_number) + "</td><td>" + esc(isoToMdy(l.delivery_date)) + "</td><td>" + trfMoney(l.amount) + "</td></tr>"; }).join("") + "</tbody></table></div>";
+  }
+  return h;
 }
 function trfAgo(iso) {
   var n = Math.round((new Date(TODAY + "T12:00:00") - new Date(String(iso).slice(0, 10) + "T12:00:00")) / 864e5);
@@ -5618,24 +5661,26 @@ function vTransferTab() {
   if (TRF.err) return '<div class="note-bar">' + esc(TRF.err) + "</div>";
   if (!REP.data || !TRF.loaded) return '<div class="empty">Loading…</div>';
   var due = trfDue(), last = TRF.batches[0], days = last ? Math.round((new Date(TODAY + "T12:00:00") - new Date(trfDay(last.done_at) + "T12:00:00")) / 864e5) : null;
-  var late = days == null || days >= 7;
-  var h = '<div class="trf-status"><span class="trf-dot' + (due.lines.length && late ? " due" : due.lines.length ? " soon" : "") + '"></span><div>' +
+  var late = days == null || days >= 7, nOrd = due.lines.length, nAdj = due.adjust.length, any = nOrd || nAdj;
+  var h = '<div class="trf-status"><div class="trf-state"><span class="trf-dot' + (any && late ? " due" : any ? " soon" : "") + '"></span><div>' +
     '<div class="trf-big">' + (last ? "Last transfer " + esc(new Date(last.done_at).toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" })) + " · " + trfAgo(trfDay(last.done_at)) + (last.batch_no ? " · batch " + esc(last.batch_no) : "") : "No transfer done yet") + "</div>" +
-    '<div class="trf-sub">' + (due.lines.length ? trfMoney(due.total) + " across " + due.lines.length + " order" + (due.lines.length === 1 ? "" : "s") + " is due" + (late ? ". It has been a week or more." : ".") : "Nothing is due " + (TRF.from ? "from " + esc(isoToMdy(TRF.from)) + " " : "") + "through " + esc(isoToMdy(TRF.through)) + ".") + "</div></div>" +
-    '<span style="flex:1"></span><span class="lbl">From</span>' +
-    '<input type="text" inputmode="numeric" placeholder="Since last transfer" data-smartdate data-trffrom class="rpt-date" data-last-iso="' + TRF.from + '" value="' + esc(TRF.from ? isoToMdy(TRF.from) : "") + '" title="Leave empty to include everything not transferred yet">' +
+    '<div class="trf-sub">' + (any ? trfMoney(due.total) + " across " + nOrd + " order" + (nOrd === 1 ? "" : "s") + (nAdj ? " and " + nAdj + " adjustment" + (nAdj === 1 ? "" : "s") : "") + " is due" + (late ? ". It has been a week or more." : ".") : "Nothing is due " + (TRF.from ? "from " + esc(isoToMdy(TRF.from)) + " " : "") + "through " + esc(isoToMdy(TRF.through)) + ".") + "</div></div></div>" +
+    // The dates sit in their own fixed block, so they stay put whatever the text beside them says.
+    '<div class="trf-range"><span class="lbl">From</span>' +
+    '<input type="text" inputmode="numeric" placeholder="Earliest" data-smartdate data-trffrom class="rpt-date" data-last-iso="' + TRF.from + '" value="' + esc(TRF.from ? isoToMdy(TRF.from) : "") + '" title="Leave empty to include everything not transferred yet">' +
     '<span class="lbl">Through</span><span class="rpt-seg" role="group" aria-label="Through">' +
     [[motYesterday(), "Yesterday"], [TODAY, "Today"]].map(function (x) { return '<button class="' + (TRF.through === x[0] ? "on" : "") + '" data-trfthru="' + x[0] + '">' + x[1] + "</button>"; }).join("") + "</span>" +
-    '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-trfdate class="rpt-date" data-last-iso="' + TRF.through + '" value="' + esc(isoToMdy(TRF.through)) + '"></div>';
+    '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-trfdate class="rpt-date" data-last-iso="' + TRF.through + '" value="' + esc(isoToMdy(TRF.through)) + '"></div></div>';
+  h += trfFlagsHtml(due);
   h += '<div class="rpt-card trf-card"><table class="trf-tbl"><thead><tr><th>Department / truck</th><th>Orders</th><th>Miles</th><th>Amount</th></tr></thead><tbody>';
-  var deps = Object.keys(due.depts).sort();
+  var deps = Object.keys(due.depts).sort(), cnt = function (x) { return x.orders + (x.adj ? " + " + x.adj + " adj" : ""); };
   deps.forEach(function (d) {
     var D = due.depts[d], closed = !!TRF.fold[d];
-    h += '<tr class="trf-dep' + (closed ? "" : " open") + '" data-trffold="' + esc(d) + '"><td><i>&#9656;</i>' + esc(d) + "</td><td>" + D.orders + "</td><td>" + Math.round(D.miles).toLocaleString() + "</td><td>" + trfMoney(D.amount) + "</td></tr>";
+    h += '<tr class="trf-dep' + (closed ? "" : " open") + '" data-trffold="' + esc(d) + '"><td><i>&#9656;</i>' + esc(d) + "</td><td>" + cnt(D) + "</td><td>" + Math.round(D.miles).toLocaleString() + "</td><td>" + trfMoney(D.amount) + "</td></tr>";
     if (!closed) Object.keys(D.trucks).sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); }).forEach(function (t) {
-      var T = D.trucks[t]; h += '<tr class="trf-trk"><td>Truck ' + esc(t) + "</td><td>" + T.orders + "</td><td>" + Math.round(T.miles).toLocaleString() + "</td><td>" + trfMoney(T.amount) + "</td></tr>"; });
+      var T = D.trucks[t]; h += '<tr class="trf-trk"><td>Truck ' + esc(t) + "</td><td>" + cnt(T) + "</td><td>" + Math.round(T.miles).toLocaleString() + "</td><td>" + trfMoney(T.amount) + "</td></tr>"; });
   });
-  h += deps.length ? '<tr class="trf-tot"><td>Total to transfer</td><td>' + due.lines.length + "</td><td>" + Math.round(due.miles).toLocaleString() + "</td><td>" + trfMoney(due.total) + "</td></tr>" :
+  h += deps.length ? '<tr class="trf-tot"><td>Total to transfer</td><td>' + cnt({ orders: nOrd, adj: nAdj }) + "</td><td>" + Math.round(due.miles).toLocaleString() + "</td><td>" + trfMoney(due.total) + "</td></tr>" :
     '<tr><td colspan="4" class="trf-none">Nothing to transfer ' + (TRF.from ? "from " + esc(isoToMdy(TRF.from)) + " " : "") + "through " + esc(isoToMdy(TRF.through)) + ".</td></tr>";
   h += "</tbody></table></div>";
   h += '<div class="trf-h"><span class="lbl">Done</span></div><div class="rpt-card trf-card"><table class="trf-tbl trf-hist"><thead><tr><th>Done</th><th>Batch</th><th>Covers</th><th>Orders</th><th>Amount</th><th></th></tr></thead><tbody>';
@@ -5653,25 +5698,25 @@ function vTransferTab() {
   return h + "</tbody></table></div>";
 }
 function trfBatchDetail(ls) {
-  var D = {}; ls.forEach(function (l) { var d = D[l.department || "(no department)"] = D[l.department || "(no department)"] || {}, t = d[l.truck_number || "(no truck)"] = d[l.truck_number || "(no truck)"] || { n: 0, mi: 0, amt: 0 }; t.n++; t.mi += +l.miles || 0; t.amt += +l.amount || 0; });
+  var D = {}; ls.forEach(function (l) { var d = D[l.department || "(no department)"] = D[l.department || "(no department)"] || {}, t = d[l.truck_number || "(no truck)"] = d[l.truck_number || "(no truck)"] || { n: 0, mi: 0, amt: 0 }; if (!l.adjustment) { t.n++; t.mi += +l.miles || 0; } else t.adj = (t.adj || 0) + 1; t.amt += +l.amount || 0; });
   return '<table class="trf-mini"><tbody>' + Object.keys(D).sort().map(function (d) {
     var tot = 0; Object.keys(D[d]).forEach(function (t) { tot += D[d][t].amt; });
     return '<tr class="trf-md"><td>' + esc(d) + "</td><td></td><td></td><td>" + trfMoney(tot) + "</td></tr>" + Object.keys(D[d]).sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); }).map(function (t) {
-      var x = D[d][t]; return '<tr><td>Truck ' + esc(t) + "</td><td>" + x.n + "</td><td>" + Math.round(x.mi).toLocaleString() + "</td><td>" + trfMoney(x.amt) + "</td></tr>"; }).join(""); }).join("") + "</tbody></table>";
+      var x = D[d][t]; return '<tr><td>Truck ' + esc(t) + "</td><td>" + x.n + (x.adj ? " + " + x.adj + " adj" : "") + "</td><td>" + Math.round(x.mi).toLocaleString() + "</td><td>" + trfMoney(x.amt) + "</td></tr>"; }).join(""); }).join("") + "</tbody></table>";
 }
 function trfMarkModal() {
   var due = trfDue();
-  if (!due.lines.length) { toast("Nothing is due " + (TRF.from ? "from " + isoToMdy(TRF.from) + " " : "") + "through " + isoToMdy(TRF.through), true); return; }
+  if (!due.lines.length && !due.adjust.length) { toast("Nothing is due " + (TRF.from ? "from " + isoToMdy(TRF.from) + " " : "") + "through " + isoToMdy(TRF.through), true); return; }
   var deps = Object.keys(due.depts).sort();
   openModal('<div class="modal-hd"><h2>Mark transfer done</h2></div><div class="modal-body">' +
-    '<p class="trf-sum">' + trfMoney(due.total) + " across " + due.lines.length + " order" + (due.lines.length === 1 ? "" : "s") + ", delivered " + esc(isoToMdy(due.from)) + " through " + esc(isoToMdy(TRF.through)) + ".</p>" +
+    '<p class="trf-sum">' + trfMoney(due.total) + " across " + due.lines.length + " order" + (due.lines.length === 1 ? "" : "s") + (due.adjust.length ? " and " + due.adjust.length + " adjustment" + (due.adjust.length === 1 ? "" : "s") + " (cost changes made after an earlier transfer)" : "") + ", delivered " + esc(isoToMdy(due.from)) + " through " + esc(isoToMdy(TRF.through)) + ".</p>" +
     '<table class="trf-mini">' + deps.map(function (d) { return "<tr><td>" + esc(d) + "</td><td>" + Object.keys(due.depts[d].trucks).length + " truck" + (Object.keys(due.depts[d].trucks).length === 1 ? "" : "s") + "</td><td>" + trfMoney(due.depts[d].amount) + "</td></tr>"; }).join("") + "</table>" +
     '<label class="setting-field" style="margin-top:14px"><span>Batch number</span><input type="text" id="trf-batch" placeholder="e.g. the journal entry or batch number" autocomplete="off"></label></div>' +
     '<div class="modal-ft"><span style="flex:1"></span><button class="btn" id="modal-cancel">Cancel</button><button class="btn pri" id="trf-confirm">Mark Done</button></div>');
   var inp = $("#trf-batch"); if (inp) inp.focus();
   var go = function () {
     var btn = $("#trf-confirm"); if (btn.disabled) return; btn.disabled = true;
-    api("transfer/create", { batch_no: ($("#trf-batch").value || "").trim(), through_date: TRF.through, from_date: due.from, lines: due.lines })
+    api("transfer/create", { batch_no: ($("#trf-batch").value || "").trim(), through_date: TRF.through, from_date: due.from, lines: due.lines, adjustments: due.adjust })
       .then(function (b) { closeModal(); toast("Transfer marked done · " + trfMoney(b.total)); TRF.loaded = false; TRF.lines = {}; trfLoad(); })
       .catch(function (err) { btn.disabled = false; toast(err.message, true); });
   };
@@ -5680,8 +5725,10 @@ function trfMarkModal() {
 }
 function trfCsv() {
   var due = trfDue(), q = function (v) { v = String(v == null ? "" : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-  var lines = ["Department,Truck,Delivery date,Miles,Amount"].concat(due.lines.slice().sort(function (a, b) { return (a.department + a.truck_number + a.delivery_date).localeCompare(b.department + b.truck_number + b.delivery_date, undefined, { numeric: true }); })
-    .map(function (l) { return [l.department, l.truck_number, l.delivery_date, l.miles, l.amount.toFixed(2)].map(q).join(","); }));
+  var rows = due.lines.map(function (l) { return { department: l.department, truck: l.truck_number, date: l.delivery_date, miles: l.miles, amount: l.amount, kind: "Order" }; })
+    .concat(due.adjust.map(function (a) { return { department: a.department, truck: a.truck_number, date: a.delivery_date, miles: 0, amount: a.diff, kind: "Adjustment: order " + a.no + " was " + a.from_amount.toFixed(2) + ", now " + a.to_amount.toFixed(2) }; }));
+  var lines = ["Department,Truck,Delivery date,Miles,Amount,Kind"].concat(rows.sort(function (a, b) { return (a.department + a.truck + a.date).localeCompare(b.department + b.truck + b.date, undefined, { numeric: true }); })
+    .map(function (l) { return [l.department, l.truck, l.date, l.miles, l.amount.toFixed(2), l.kind].map(q).join(","); }));
   saveBlob("dept12_transfer_through_" + TRF.through + ".csv", new TextEncoder().encode(lines.join("\n") + "\n"), "text/csv"); toast("Exported the transfer");
 }
 document.addEventListener("click", function (e) {

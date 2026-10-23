@@ -1764,7 +1764,18 @@ details[open]::details-content{block-size:auto}
 .rpt-win .rpt-chips .rpt-fsel{flex:0 0 auto;max-width:170px}
 
 /* Reports → Transfer */
-.trf-status{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 14px;padding-bottom:12px;border-bottom:1px solid var(--rule)}
+.trf-status{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:16px;min-height:60px;margin:0 0 14px;padding-bottom:12px;border-bottom:1px solid var(--rule)}
+.trf-state{display:flex;align-items:center;gap:12px;min-width:0}
+.trf-range{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;white-space:nowrap}
+.trf-range .rpt-date{width:112px;flex:none}
+.trf-range .rpt-seg{display:inline-flex;width:156px;flex:none}
+.trf-range .rpt-seg button{flex:1;text-align:center;white-space:nowrap}
+@media (max-width:900px){.trf-status{grid-template-columns:1fr}.trf-range{flex-wrap:wrap;white-space:normal}}
+.trf-flag-h{display:flex;align-items:baseline;gap:10px;margin:0 0 6px}
+.trf-flag-sub{font-size:var(--fs-body-sm);color:var(--ink-2)}
+.trf-flags{border-left:3px solid var(--warn)}
+.trf-out td{color:var(--ink-3)}
+.trf-bn{font-size:var(--fs-caption);color:var(--ink-3)}
 .trf-status .lbl{font-family:var(--mono);font-size:var(--fs-caption);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
 .trf-dot{width:10px;height:10px;border-radius:50%;background:var(--good);flex:none}
 .trf-dot.soon{background:var(--warn)}
