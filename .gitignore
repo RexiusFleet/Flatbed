@@ -28,3 +28,7 @@ upload-manifest.txt
 # Local test harness scratch (dev/)
 dev/.storage/
 node_modules/
+/.vs
+/.gitignore
+/.gitignore
+/.gitignore
