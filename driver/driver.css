@@ -197,10 +197,9 @@ body.drv-signed-out .header-row{display:none}
 
 /* Scan POD / BOL sits on the load chip itself, under the load details. */
 .chip-scan{margin-top:1.5em;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
-.chip-scan .chip-scan .chip-scan .btn{background:var(--panel);color:var(--ink);border-color:var(--rule-2)}
+.chip-scan .btn{background:var(--panel);color:var(--ink);border-color:var(--rule-2)}
 
 .scan-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
-.scan-row 
 /* Appointment tag on a driver's tab: a square box with a black outline. */
 .appt{display:inline-block;font-family:var(--mono);font-size:var(--fs-label);font-weight:700;letter-spacing:.02em;white-space:nowrap;
   padding:0 6px;margin-left:4px;background:#fff;color:#111;border:1.5px solid #111;border-radius:0;vertical-align:baseline}
@@ -309,6 +308,7 @@ body.driver-app.drv-bagplant .chip.bp-bag{border:2px solid var(--ink)}
 .scan-row .chip-files{margin-top:0}
 
 /* Store Map (07 bag orders): the top right corner of the load chip, the text wraps around it */
-.load-txt .smap-btn{float:right;margin:0 0 4px 8px}
+.load-txt .smap-btn{float:right;margin:0 0 4px 8px;background:transparent;color:inherit;border-color:color-mix(in srgb,currentColor 65%,transparent)}
+.load-txt .smap-btn:hover{background:color-mix(in srgb,currentColor 14%,transparent);border-color:currentColor}
 .drv-card .scan-row{padding:2px 12px 12px}
 .paper-tools [hidden],.paper-tools .btn[hidden]{display:none}
