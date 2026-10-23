@@ -153,7 +153,7 @@ silently override each other (the later file wins): search before naming.
 
 | Search for | What it does |
 |---|---|
-| `renderLoginGate` / top-of-file comment | How sign-in works. A login must also be on the approved list in the database (`allowed_logins`) to do anything; accounts are managed in Supabase. |
+| `renderLoginGate` / top-of-file comment | How sign-in works. Any signed-in account has full access (the database check `dept12_is_admin()` is simply "signed in"); who can sign in is managed in Supabase, with public sign-ups turned off. |
 | `function sbFetch` | Every request to Supabase goes through here (adds the key + login token, refreshes the login when it expires). |
 | `function rpc` / `function rest` | Call a Database function / read or write a table directly. |
 | `loadBootstrap` | Dashboard data: first load, "only what changed" refreshes, packed-row unpacking, the older-history loader. Falls back to the old `api_bootstrap` if the new functions aren't in the database. |
@@ -172,9 +172,9 @@ silently override each other (the later file wins): search before naming.
 | **Database → Functions** | Every `api_…` function (the business rules), plus `dept12_…` helpers. Source copy: backup folder → `supabase/migrations/20260924000002_api_functions.sql`. |
 | **Edge Functions** | `motive-sync` (in use: mileage, truck-days, shop trips). `sheets-push` is unused and still deployed (to be deleted). The source is pasted into Supabase by hand (Edge Functions → motive-sync → Deploy); the owner's local copy is `supabase/functions/motive-sync/index.ts`, which is not in git. |
 | **Edge Functions → Secrets** | `MOTIVE_API_KEY` (needs an admin to add). |
-| **Authentication → Users** | The logins. Add people here (turn "Allow new users to sign up" OFF), then add their email to `dept12_private.allowed_logins` (dispatchers: full dashboard) or `dept12_private.app_logins` (the company app login: only the driver / bag plant functions). Before every request `dept12_check_request()` refuses a login that is on neither list. |
+| **Authentication → Users** | The logins. Add people here (turn "Allow new users to sign up" OFF: that is the whole gate). Every signed-in login is treated the same, including the company app's `flatbedauth@rexius.com`. The old `dept12_private.allowed_logins` / `app_logins` lists and `dept12_check_request()` exist but are not used. |
 | **Storage → documents** | Uploaded PDFs, in folders named by order ID. |
-| **SQL Editor** | Where we paste database changes. Files in `supabase/sql/` (local): `2026-10-19_01` employee numbers, `2026-10-21_01` driver phone, `_02` lock the public key out of everything but the open driver functions, `_03` app login (flatbedauth) + `app_*` functions, `_04` delete a driver, `_05` CUTOVER (closes the open driver functions; run only when the company app is live), `_06` rollback of the cutover, `_07` temporary dispatcher access for flatbedauth. `2026-10-23_02` lets the app login download documents marked Show To Driver (function `dept12_doc_driver_visible`, storage rule `documents_driver_read`). |
+| **SQL Editor** | Where we paste database changes. Files in `supabase/sql/` (local): `2026-10-19_01` employee numbers, `2026-10-21_01` driver phone, `_02` lock the public key out of everything but the open driver functions, `_03` app login (flatbedauth) + `app_*` functions, `_04` delete a driver, `_05` CUTOVER (closes the open driver functions; run only when the company app is live), `_06` rollback of the cutover, `_07` temporary dispatcher access for flatbedauth. `2026-10-23_02` lets a signed-in login download documents marked Show To Driver (function `dept12_doc_driver_visible`, storage rule `documents_driver_read`), `2026-10-23_04` makes every signed-in login work the same on the driver functions and driver scans (`dept12_app_caller()` = signed in). |
 
 ---
 
@@ -213,7 +213,7 @@ find it with `grep -n "function name" src/js/*.js`, edit it there, then run
 | Reports dashboard / pivot builder | `src/js/04-views.js` → `RPT_SYSTEM`, `rptRun` |
 | Delete rules for orders | `app.js` → `canDeleteOrder` (and the matching `api_order_delete` rules in Supabase) |
 | Report columns | Supabase → `api_report_rows` / `api_report`; headers in `supabase-api.js` → `REPORT_LABELS` |
-| Who can sign in | Supabase → Authentication → Users, plus `dept12_private.allowed_logins` (dispatchers) and `dept12_private.app_logins` (company app login) |
+| Who can sign in | Supabase → Authentication → Users (sign-ups off); every signed-in login has the same access |
 | Paperwork drivers can open: the **Show To Driver** switch on a document (flag in the document's `extracted_fields.driver_visible`), the list sent to drivers, the viewer and signing | `src/js/06-modals-grids.js` → `docRowHtml`, `docDriverOn`; `supabase-api.js` → route `document/driver-visible` and the `payload.docs` step in `sheets/push-driver-tabs` (sent with Publish Schedule); `driver/driver.js` → `paperDocs`, `paperChips`, `filesHtml`, `openPaper`; `driver/paperwork.js` (`Dept12Paper.open`, `toPdf` maps a drawn point onto a rotated / cropped PDF page); styles `.paper*`, `.chip-files` in `driver/driver.css`. Reading the file needs the storage rule `documents_driver_read` (local SQL file `2026-10-23_02_driver_paperwork.sql`) |
 | Driver page sign-in (login form, hand-off, token refresh, employee check) | `driver/driver.js` → `REQUIRE_APP_LOGIN`, `appReadLink`, `appToken`, `appStart`, `appResolve`, `vAppLogin` |
 | Fleet: add driver, add truck, put a driver on a truck, rename, Make Inactive / Reinstate, Former drivers | `app.js` → `addDriverModal`, `addTruckModal`, `spareDriversHtml`, `formerDriversHtml`; `supabase-api.js` → `driver/former` |

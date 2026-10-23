@@ -18,8 +18,9 @@
  *
  * Access: every signed-in account has full access — there are no in-app
  * roles or per-page permissions. Who can sign in is managed in Supabase:
- * create the account under Authentication → Users (with public sign-ups
- * turned off), and add its email to dept12_private.allowed_logins.
+ * create the account under Authentication → Users and keep public
+ * sign-ups turned off: that is the whole gate. Any signed-in account (a
+ * person, or the company app's login) works the same way everywhere.
  */
 (function () {
 "use strict";
