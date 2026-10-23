@@ -68,12 +68,16 @@ function open(opts) {
   var statusEl = $('[data-pp="status"]'), body = $('[data-pp="body"]');
   var bSign = $('[data-pp="sign"]'), bUndo = $('[data-pp="undo"]'), bClear = $('[data-pp="clear"]'), bSend = $('[data-pp="send"]');
   var pages = [], hist = [], bytes = null, busy = false, pen = false, dead = false;
+  if (opts.readOnly) {      // a scan: view only, no pen
+    ["sign", "undo", "clear", "send"].forEach(function (k) { $('[data-pp="' + k + '"]').hidden = true; });
+  }
 
   function say(t) { statusEl.textContent = t; }
   function strokeCount() { return hist.length; }
   function sync() {
     bUndo.disabled = bClear.disabled = bSend.disabled = busy || !strokeCount();
     bSign.disabled = busy || !pages.length;
+    if (opts.readOnly) { say(pages.length ? pages.length + " page" + (pages.length > 1 ? "s" : "") : ""); return; }
     bSign.classList.toggle("active", pen); bSign.setAttribute("aria-pressed", String(pen));
     body.classList.toggle("pen", pen);
     say(busy ? "Working…" : pen ? "Sign is on: draw with a finger or pencil. Turn Sign off to scroll." : strokeCount() ? "Signed. Send Signed Copy when you are done." : pages.length ? pages.length + " page" + (pages.length > 1 ? "s" : "") : "");

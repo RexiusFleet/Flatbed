@@ -389,7 +389,7 @@
         rpcPublicRead("public_driver_activity", { p_order_ids: ids }).then(function (a) {
             S.serverNotes = {}; S.serverScans = {};
             (a.notes || []).forEach(function (n) { (S.serverNotes[n.order_id] = S.serverNotes[n.order_id] || []).push({ id: n.id, truck: n.truck, driver: n.driver, text: n.body, at: n.created_at }); });
-            (a.scans || []).forEach(function (x) { if (!S.serverScans[x.order_id]) S.serverScans[x.order_id] = { pages: x.pages, at: x.created_at }; });
+            (a.scans || []).forEach(function (x) { if (!S.serverScans[x.order_id]) S.serverScans[x.order_id] = { pages: x.pages, at: x.created_at, bucket: x.bucket || "driver-scans", path: x.path || "" }; });
             if (S.who && S.payload && !S.noteKey) { S.keepScroll = true; render(); }
         }).catch(function () { /* the schedule still works without them */ });
     }
@@ -863,7 +863,7 @@
     function scanHtml(key) {
         var sc = scanInfo(key);
         if (!sc) return "";
-        return sc.url ? '<a class="pdfchip" href="' + esc(sc.url) + '" target="_blank" rel="noopener" title="Open the scan">' + PDF_ICON + '<span class="nm">POD-BOL Scan.pdf</span></a>'
+        return (sc.url || sc.path) ? '<button class="pdfchip" type="button" data-scanview="' + esc(key) + '" title="Open the scan">' + PDF_ICON + '<span class="nm">POD-BOL Scan.pdf</span></button>'
             : '<span class="pdfchip" title="Sent to the office">' + PDF_ICON + '<span class="nm">POD-BOL Scan.pdf</span></span>';
     }
     function noteBtn(key, big) {
@@ -914,25 +914,40 @@
         var h = scanHtml(key) + paperChips(key);
         return h ? '<span class="chip-files">' + h + "</span>" : "";
     }
+    // A file in private storage, fetched with the signed-in login: the bytes of a paperwork PDF or of a scan.
+    function storageBytes(bucket, path) {
+        return appToken().then(function (token) {
+            var h = { "apikey": SB_KEY };
+            if (token) h["Authorization"] = "Bearer " + token;
+            return fetch(SB_URL + "/storage/v1/object/authenticated/" + bucket + "/" + path.split("/").map(encodeURIComponent).join("/"), { headers: h });
+        }).then(function (r) {
+            if (!r.ok) throw new Error("the file could not be opened (" + r.status + ")");
+            return r.arrayBuffer();
+        });
+    }
     function openPaper(key, i) {
         var d = paperDocs(key)[i];
         if (!d || !window.Dept12Paper) return;
         window.Dept12Paper.open({
             title: S.chipTitle[key] || d.name,
-            getBytes: function () {
-                return appToken().then(function (token) {
-                    var h = { "apikey": SB_KEY };
-                    if (token) h["Authorization"] = "Bearer " + token;
-                    return fetch(SB_URL + "/storage/v1/object/authenticated/documents/" + d.path.split("/").map(encodeURIComponent).join("/"), { headers: h });
-                }).then(function (r) {
-                    if (!r.ok) throw new Error("the file could not be opened (" + r.status + ")");
-                    return r.arrayBuffer();
-                });
-            },
+            getBytes: function () { return storageBytes("documents", d.path); },
             onDone: function (blob, pages) {
                 return sendScan(key, blob, pages).then(function () {
                     loadScans(); loadActivity(); toast("Signed copy sent · " + pages + " page" + (pages > 1 ? "s" : ""));
                 });
+            }
+        });
+    }
+    // A scan opens in the same viewer (view only): this phone's own copy if it has one, otherwise the file on the server.
+    function openScan(key) {
+        var sc = scanInfo(key);
+        if (!sc || !window.Dept12Paper) return;
+        window.Dept12Paper.open({
+            title: S.chipTitle[key] || "POD-BOL Scan",
+            readOnly: true,
+            getBytes: function () {
+                if (sc.url) return fetch(sc.url).then(function (r) { return r.arrayBuffer(); });
+                return storageBytes(sc.bucket || "driver-scans", sc.path);
             }
         });
     }
@@ -1089,6 +1104,8 @@
         var smb = e.target.closest("[data-smap]");
         if (smb) { openStoreMap(smb.getAttribute("data-smap")); return; }
         if (e.target.closest("[data-smap-close]")) { closeStoreMap(); return; }
+        var vb = e.target.closest("[data-scanview]");
+        if (vb) { openScan(vb.getAttribute("data-scanview")); return; }
         var pb = e.target.closest("[data-paper]");
         if (pb) {
             var pp = pb.getAttribute("data-paper").split("|");

@@ -311,4 +311,4 @@ body.driver-app.drv-bagplant .chip.bp-bag{border:2px solid var(--ink)}
 /* Store Map (07 bag orders): the top right corner of the load chip, the text wraps around it */
 .load-txt .smap-btn{float:right;margin:0 0 4px 8px}
 .drv-card .scan-row{padding:2px 12px 12px}
-.paper-tools [hidden]{display:none}
+.paper-tools [hidden],.paper-tools .btn[hidden]{display:none}
