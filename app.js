@@ -1460,13 +1460,12 @@ function buildChip(o) {
   return { title: title, line: line, route: route, nums: nums, win: win, flags: flags, pnote: pnote,
            note: notes.join(" · "), needsNumber: !o.rexius_order_no && !o.is_transfer };
 }
-/* A small badge on a load chip when the order has paperwork switched on for the driver: plain once the driver can open it, amber "Not Published" until Publish Schedule sends it. */
+/* A small PDF badge on a load chip when the order has paperwork the driver can open. Nothing shows until it has been published. */
 function paperBadge(o) {
+  if (PUB.dirty[o.id] || !lastPushMs()) return "";
   var n = DB.documents.filter(function (d) { return d.order_id === o.id && !DRIVER_SCAN_IDS[d.id] && d.extracted_fields && d.extracted_fields.driver_visible === true; }).length;
   if (!n) return "";
-  var pend = !!PUB.dirty[o.id] || !lastPushMs();
-  return '<span class="paper-ind' + (pend ? " pend" : "") + '" title="' + (pend ? "Paperwork is switched on for the driver but not published yet. Publish Schedule sends it." : "The driver can open this paperwork from the load.") + '">' +
-    icon("pdf") + (n > 1 ? n : "") + (pend ? "Not Published" : "") + "</span>";
+  return '<span class="paper-ind" title="The driver can open this paperwork from the load.">' + icon("pdf") + (n > 1 ? n : "") + "</span>";
 }
 function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
   if (pushed && PUB.dirty[o.id]) pushed = false;   // changed since the last publish: back to the plain look until it is published again
@@ -3541,9 +3540,11 @@ function vCurrentWeek() {
     context: tickerBoxesHtml()
   });
   var dates = currentWeekDates();
+  // A truck with no driver assigned is not shown here (assign a driver to put it back).
+  var cwTrucks = DB.trucks.filter(function (t) { return t.driver_id; });
   h += '<div class="grid-wrap"><table class="grid" style="width:' +
-    (88 + DB.trucks.length * PREFS.colWidth) + 'px"><thead><tr><th class="corner"><span class="lbl">Date</span></th>';
-  DB.trucks.forEach(function (t) {
+    (88 + cwTrucks.length * PREFS.colWidth) + 'px"><thead><tr><th class="corner"><span class="lbl">Date</span></th>';
+  cwTrucks.forEach(function (t) {
     h += '<th class="' + dcClass(t).trim() + '" style="' + dcStyle(t) + 'width:var(--col-w,150px)">' + truckColHeader(t) + "</th>";
   });
   h += "</tr></thead><tbody>";
@@ -3554,7 +3555,7 @@ function vCurrentWeek() {
       h += '<tr class="' + (ds === TODAY ? "today " : "") + (isWeekend ? "weekend-active " : "") + 'slotrow">';
       if (s === 1) h += '<td class="rowhd" rowspan="' + slots + '"><span class="dwk">' + DOW[dow] +
         '</span><br><span class="dnum">' + ds.slice(8) + "</span></td>";
-      DB.trucks.forEach(function (t) {
+      cwTrucks.forEach(function (t) {
         var key = cellKey(t.id, ds, s);
         h += schedCellHtml(key, OFFDAYS[t.id + "|" + ds]);
       });

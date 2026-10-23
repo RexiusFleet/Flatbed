@@ -195,7 +195,8 @@ function buildPayload(dates, data) {
     truck_id: t.truck_id,
     rows: truckRows(t)
   }));
-  const currentWeek = data.trucks.map((t) => ({
+  // A truck with no driver assigned is not on Current Week (assign a driver to put it back). The drivers' own tabs are unchanged.
+  const currentWeek = data.trucks.filter((t) => t.driver_name).map((t) => ({
     header: [t.driver_name, t.number, t.eq].filter(Boolean).join(" "),
     driver: t.driver_name,
     truck: t.number,

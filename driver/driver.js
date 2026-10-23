@@ -317,7 +317,7 @@
         payload: null, loadKeys: {}, source: "", loadedAt: null, error: "", loading: false,
         scrollTo: null, keepScroll: false, loadOrder: {}, noteKey: null, scans: {}, chipTitle: {},
         serverNotes: {}, scanList: {}, viewSent: {}, refreshedAt: null,
-        ticker: store(BAG_PLANT ? "dept12-ticker-b" : "dept12-ticker-d") || "", zoom: Number(store("dept12-bp-zoom")) || 0.75
+        ticker: store(BAG_PLANT ? "dept12-ticker-b" : "dept12-ticker-d") || "", zoom: Number(store("dept12-bp-zoom2")) || 1
     };
 
     /* ── Sign-in (just remembers a name on this device) ───────────────────
@@ -641,7 +641,7 @@
             if (v !== (S.ticker || "")) { S.ticker = v; if (S.payload && !S.noteKey) { S.keepScroll = true; render(); } }
         }, function () { /* no signal or not set up yet: keep what is showing */ });
     }
-    // Bag plant TV: zoom out so the whole fleet and several days fit (75% to start; the buttons are remembered on that screen).
+    // Bag plant TV: the zoom buttons (100% to start; remembered on that screen).
     var ZOOMS = [0.5, 0.6, 0.75, 0.9, 1];
     function zoomHtml() {
         return BAG_PLANT ? '<span class="tv-zoom" aria-label="Zoom"><button class="btn sm" data-zoom="-1" title="Zoom out">&minus;</button><span class="lbl">' + Math.round(S.zoom * 100) + '%</span><button class="btn sm" data-zoom="1" title="Zoom in">+</button></span>' : "";
@@ -675,13 +675,13 @@
 
     /* ── Current Week ─────────────────────────────────────────────────────── */
     function vCurrentWeek() {
-        var p = S.payload, cw = p.current_week.slice(), today = todayIso(), mine = S.who && S.who.role === "driver" ? String(S.who.truck) : "";
+        var p = S.payload, cw = p.current_week.filter(function (t) { return t.driver; }), today = todayIso(), mine = S.who && S.who.role === "driver" ? String(S.who.truck) : "";
         // Bag plant only: loads given to an outside carrier get one extra column at the far right, with the carrier's name (the word "brokered" is not used).
         if (isBagPlant() && p.outside) cw.push({ outside: true, truck: "", truck_id: null, driver: "Outside Carrier", equipment_type: "", driver_color: null, rows: p.outside.rows });
         // Bag plant: the whole fleet fills the screen, columns as wide as they fit.
         // Bag plant: columns share the screen exactly (its date column is 96px).
         var dateW = 88;   // the bagger page uses exactly the drivers' sizes
-        var z = isBagPlant() ? (S.zoom || 0.75) : 1;
+        var z = isBagPlant() ? (S.zoom || 1) : 1;
         var big = isBagPlant() ? ' style="--col-w:' + Math.max(150, Math.min(330, Math.floor((window.innerWidth / z - dateW - 4) / Math.max(1, cw.length)))) + 'px"' : "";
         var h = '<div class="grid-wrap"' + big + '><table class="grid" style="' + (z !== 1 ? "zoom:" + z + ";" : "") + 'width:calc(' + dateW + 'px + ' + cw.length + ' * var(--col-w,150px))"><thead><tr>' +
             '<th class="corner"><span class="lbl">Date</span></th>';
@@ -1232,7 +1232,7 @@
         var zb = e.target.closest("[data-zoom]");
         if (zb) {
             var zi = Math.max(0, Math.min(ZOOMS.length - 1, ZOOMS.indexOf(S.zoom) + Number(zb.getAttribute("data-zoom"))));
-            S.zoom = ZOOMS[zi < 0 ? 2 : zi]; store("dept12-bp-zoom", String(S.zoom)); S.keepScroll = true; render();
+            S.zoom = ZOOMS[zi < 0 ? 2 : zi]; store("dept12-bp-zoom2", String(S.zoom)); S.keepScroll = true; render();
             return;
         }
         var vb = e.target.closest("[data-scanview]");

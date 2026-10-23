@@ -330,3 +330,5 @@ th.carriercol{background:var(--panel-2)}
 .driver-app .slotrow td>.cell.has-carrier{display:flex;flex-direction:column}
 .driver-app .slotrow .cell.has-carrier .chip{height:auto;max-height:none;flex:1 1 auto;min-height:0}
 .has-carrier .carrier-name{flex:none;margin-top:3px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Bag plant load chips: the pallet count and order number are regular weight, not bold */
+.drv-bagplant .chip.bp-bag .meta,.drv-bagplant .chip.bp-bag .meta *{font-weight:400}

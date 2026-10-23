@@ -727,9 +727,11 @@ function vCurrentWeek() {
     context: tickerBoxesHtml()
   });
   var dates = currentWeekDates();
+  // A truck with no driver assigned is not shown here (assign a driver to put it back).
+  var cwTrucks = DB.trucks.filter(function (t) { return t.driver_id; });
   h += '<div class="grid-wrap"><table class="grid" style="width:' +
-    (88 + DB.trucks.length * PREFS.colWidth) + 'px"><thead><tr><th class="corner"><span class="lbl">Date</span></th>';
-  DB.trucks.forEach(function (t) {
+    (88 + cwTrucks.length * PREFS.colWidth) + 'px"><thead><tr><th class="corner"><span class="lbl">Date</span></th>';
+  cwTrucks.forEach(function (t) {
     h += '<th class="' + dcClass(t).trim() + '" style="' + dcStyle(t) + 'width:var(--col-w,150px)">' + truckColHeader(t) + "</th>";
   });
   h += "</tr></thead><tbody>";
@@ -740,7 +742,7 @@ function vCurrentWeek() {
       h += '<tr class="' + (ds === TODAY ? "today " : "") + (isWeekend ? "weekend-active " : "") + 'slotrow">';
       if (s === 1) h += '<td class="rowhd" rowspan="' + slots + '"><span class="dwk">' + DOW[dow] +
         '</span><br><span class="dnum">' + ds.slice(8) + "</span></td>";
-      DB.trucks.forEach(function (t) {
+      cwTrucks.forEach(function (t) {
         var key = cellKey(t.id, ds, s);
         h += schedCellHtml(key, OFFDAYS[t.id + "|" + ds]);
       });
