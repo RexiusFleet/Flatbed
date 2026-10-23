@@ -312,8 +312,6 @@ body.driver-app.drv-bagplant .chip.bp-bag{border:2px solid var(--ink)}
 .load-txt .smap-btn:hover{background:color-mix(in srgb,currentColor 14%,transparent);border-color:currentColor}
 .drv-card .scan-row{padding:2px 12px 12px}
 .paper-tools [hidden],.paper-tools .btn[hidden]{display:none}
-.scan-name{width:100%;max-width:340px;box-sizing:border-box;margin-top:10px;background:var(--paper);color:var(--ink);border:1px solid var(--rule-2);border-radius:var(--r-sm);padding:10px 12px;font-size:16px}
-.scan-name:focus{outline:none;border-color:var(--focus);box-shadow:0 0 0 1px var(--focus-soft)}
 /* Waiting to send (no signal): the item is kept on the phone */
 .pdfchip.pending{border-style:dashed}
 .pdfchip .pend{margin-left:6px;font-size:var(--fs-caption);font-weight:700;color:var(--ink-2);white-space:nowrap}

@@ -652,14 +652,10 @@
             (S.source === "published" ? '<span class="lbl" style="color:var(--good)">Last updated ' + esc(dateTimeLabel(S.loadedAt)) + "</span>" +
                 '<span class="lbl">|</span><span class="lbl">Last refreshed ' + esc(timeLabel(S.refreshedAt)) + "</span>" :
                 S.source === "live" ? '<span class="lbl" style="color:var(--good)">Updated ' + esc(timeLabel(S.loadedAt)) + "</span>" :
-                S.source === "saved" ? '<span class="lbl" style="color:var(--warn)">Saved copy · last updated ' + esc(dateTimeLabel(S.loadedAt)) + "</span>" : "") +
+                S.source === "saved" ? '<span class="lbl" style="color:var(--good)">Last updated ' + esc(dateTimeLabel(S.loadedAt)) + "</span>" : "") +
             (BAG_PLANT ? "" : '<button class="btn pri" id="refresh"' + (S.loading ? " disabled" : "") + ">" + SYNC_ICON + (S.loading ? "Refreshing" : "Refresh") + "</button>") + "</div>";
     }
-    // What a driver should know about the connection: showing a saved copy, and anything waiting to send.
-    function offlineNotice() {
-        return (S.source === "saved" ? '<div class="drv-note"><b>No signal.</b> Showing the schedule saved ' + esc(timeLabel(new Date(S.savedAt))) + ". It updates by itself when you are back online.</div>" : "") + outboxNotice();
-    }
-    function noticeHtml() { return offlineNotice() + noticeCore(); }
+    function noticeHtml() { return noticeCore(); }
     function noticeCore() {
         if (APP_MODE && !BAG_PLANT && !S.who) {
             // No employee number, or one the database doesn't know: just Current Week, no personal tab and no banner. Only a real failure is said out loud.
@@ -936,11 +932,6 @@
             OUTBOX.had = waiting > 0 || OUTBOX.items.length > 0;
             if (S.who && S.payload && !S.noteKey) { S.keepScroll = true; render(); }
         }, function () { OUTBOX.busy = false; });
-    }
-    function outboxNotice() {
-        var wait = OUTBOX.items.filter(function (it) { return !it.failed; }).length, bad = OUTBOX.items.filter(function (it) { return it.failed; });
-        return (wait ? '<div class="drv-note"><b>' + wait + " waiting to send.</b> They go out by themselves when you have a signal. " + (OUTBOX.busy ? "Sending…" : '<button class="btn sm" id="outbox-now">Send Now</button>') + "</div>" : "") +
-            (bad.length ? '<div class="drv-note"><b>' + bad.length + " couldn't be sent.</b> " + esc(bad[0].error || "") + ' <button class="btn sm" id="outbox-retry">Try Again</button></div>' : "");
     }
     // A scan (or a signed copy) is saved on the phone first, then sent. With no signal it waits in the outbox and goes out by itself; the file is never lost.
     function sendScan(key, blob, pages, name) {
@@ -1250,8 +1241,8 @@
         if (sb) {
             var skey = sb.getAttribute("data-scan");
             window.Dept12Scanner.open({
-                title: S.chipTitle[skey] || "", onDone: function (blob, pages, scanName) {
-                    sendScan(skey, blob, pages, scanName).then(function (state) {
+                title: S.chipTitle[skey] || "", onDone: function (blob, pages) {
+                    sendScan(skey, blob, pages).then(function (state) {
                         loadScans(); loadActivity();
                         toast(state === "queued" ? "Saved on your phone. It sends when you have signal." : "POD / BOL sent · " + pages + " page" + (pages > 1 ? "s" : ""));
                     }, function (err) { toast("Couldn't send the scan: " + ((err && err.message) || "try again") + ".", true); });
@@ -1260,9 +1251,8 @@
             return;
         }
         var id = (e.target.closest("button") || {}).id;
-        if (id === "refresh") { S.keepScroll = true; load(); outboxFlush(); }
-        else if (id === "outbox-now") outboxFlush();
-        else if (id === "outbox-retry") {
+        if (id === "refresh") {
+            S.keepScroll = true; load();
             OUTBOX.items.forEach(function (it) { if (it.failed) { it.failed = false; it.tries = 0; Dept12Outbox.put(it); } });
             outboxFlush();
         }
