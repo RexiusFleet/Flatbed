@@ -1954,7 +1954,7 @@ body.bill-dragging{user-select:none;-webkit-user-select:none;cursor:ns-resize}
 .sgn-ft .row{display:flex;align-items:center;gap:8px}
 .sgn-ft .keep{display:flex;align-items:center;gap:6px;font-size:var(--fs-label);color:var(--ink-2)}
 .sgn-chip,.pdfchip{display:inline-flex;align-items:center;gap:7px;min-width:0;max-width:100%;box-sizing:border-box;padding:4px 10px 4px 8px;border:1px solid var(--rule-2);border-radius:var(--r-sm);background:var(--paper);color:var(--ink);font-size:var(--fs-body-sm)}
-.sgn-chip .ico,.pdfchip .ico{display:inline-flex;flex:none;color:var(--bad)}
+.sgn-chip .ico,.pdfchip .ico{display:inline-flex;flex:none;color:var(--ink)}
 .sgn-chip .nm,.pdfchip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .sgn-chip.ready,.pdfchip{cursor:grab;transition:border-color var(--motion-fast) var(--ease-ui),background-color var(--motion-fast) var(--ease-ui)}
 .sgn-chip.ready:hover,.pdfchip:hover{border-color:var(--focus);background:var(--focus-soft)}

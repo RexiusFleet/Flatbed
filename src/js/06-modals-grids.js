@@ -1531,7 +1531,7 @@ function sgnClick(e) {
   if (t.classList.contains("sgn-chip") && S.blobUrl) sgnSaveFile();
 }
 /* The signed copy as a file chip: drag it out to the desktop or an email (Chrome and Edge), or click it to save. */
-function sgnFileName() { return String(SGN.name || "document").replace(/\.pdf$/i, "").replace(/[\\/:*?"<>|]+/g, "-") + " signed.pdf"; }
+function sgnFileName() { return "Signed " + String(SGN.name || "document").replace(/\.pdf$/i, "").replace(/[\\/:*?"<>|]+/g, "-") + ".pdf"; }
 function sgnChip() {
   var S = SGN; if (!S) return; var box = sgnQ("#sgn-ft-chip"); if (!box) return;
   if (!S.stamps.length) { box.innerHTML = '<span class="sgn-chip off">' + icon("pdf") + '<span class="nm">Add initials or a date to make a signed copy</span></span>'; return; }

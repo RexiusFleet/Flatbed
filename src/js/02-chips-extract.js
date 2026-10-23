@@ -183,13 +183,18 @@ function loadDriverActivity() {
                storage_path: "driver-scan:" + x.storage_path,
                bill_order_id: x.bill_decided ? x.bill_order_id : undefined };
     });
+    // A scan the driver named keeps that name ("Signed BOL Walmart.pdf", carried in the stored file's name); the rest are "<order #> scan1", "scan2" ... in the order they came in.
+    var scanSeq = {};
+    PROTO_SCAN_RECS.slice().sort(function (a, b) { return a.at < b.at ? -1 : 1; }).forEach(function (r) {
+      var m = /\/\d+__([^/]+)\.pdf$/.exec(String(r.storage_path || ""));
+      if (m) { r.name = m[1].replace(/_/g, " ") + ".pdf"; return; }
+      var o = order(r.order_id), n = scanSeq[r.order_id] = (scanSeq[r.order_id] || 0) + 1;
+      r.name = ((o && (o.rexius_order_no || o.broker_load_no)) || "Scan") + " scan" + n + ".pdf";
+    });
     PROTO_SCANS = PROTO_SCAN_RECS.filter(function (r) { return scanBillOrder(r); }).map(function (r) {
-      var d = new Date(r.at);
       return { id: "scan-" + r.id, order_id: scanBillOrder(r), doc_type: "pod", created_at: r.at, proto: true,
         storage_path: r.storage_path, matched_by: "driver_scan",
-        // Named by when it was sent in: "POD scan 9-26-26 9.19 AM.pdf".
-        original_filename: "POD scan " + (d.getMonth() + 1) + "-" + d.getDate() + "-" + String(d.getFullYear()).slice(2) + " " +
-          d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).replace(":", ".") + ".pdf" };
+        original_filename: r.name };
     });
     try { repaintSeen(); } catch (e) { /* header not drawn yet */ }
     if (sig === DRIVER_SIG) return;

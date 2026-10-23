@@ -1,6 +1,6 @@
 /* Flatbed Schedule — POD / BOL scanner.
  *
- *   Dept12Scanner.open({ title, onDone(pdfBlob, pageCount) })
+ *   Dept12Scanner.open({ title, onDone(pdfBlob, pageCount, name) })   (name: what the driver typed, or "")
  *
  * Take a photo (or upload ones already taken) → the page is found, straightened
  * and cleaned into a black-and-white scan automatically → Done → one PDF,
@@ -415,6 +415,7 @@ function open(opts) {
   document.body.appendChild(el);
   el.addEventListener("click", onClick);
   el.addEventListener("change", onFile);
+  el.addEventListener("input", function (e) { if (ST && e.target && e.target.id === "scan-name") ST.name = e.target.value; });
   paint();
 }
 function close() { var el = $("#scan"); if (el) el.remove(); ST = null; }
@@ -425,7 +426,8 @@ function paint() {
     stage.innerHTML = '<div class="scan-capture"><div class="scan-hint"><b>' + (ST.pages.length ? "Page " + (ST.pages.length + 1) : "Scan the POD / BOL") + "</b>" +
       "Lay it flat and get the whole page in the picture.</div>" +
       '<button class="btn pri scan-big" data-sc="camera">Take Photo</button>' +
-      '<button class="btn scan-big" data-sc="library">Upload Photo</button></div>';
+      '<button class="btn scan-big" data-sc="library">Upload Photo</button>' +
+      '<input class="scan-name" id="scan-name" maxlength="60" autocomplete="off" placeholder="Name it (optional)" aria-label="Name for this scan" value="' + esc(ST.name || "") + '"></div>';
     bar.innerHTML = ST.pages.length ? '<span class="scan-tip">' + ST.pages.length + " page" + (ST.pages.length > 1 ? "s" : "") +
       " ready. Hit Done, or add another page.</span>" : "";
   } else if (ST.step === "busy") {
@@ -563,7 +565,7 @@ function onFile(e) {
   ST.queue = files; nextPhoto();
 }
 function finish() {
-  var pages = ST.pages.slice(), done = ST.onDone;
+  var pages = ST.pages.slice(), done = ST.onDone, scanName = String(ST.name || "").trim();
   ST.step = "busy"; ST.busyText = "Saving PDF…"; paint();
   loadPdfLib().then(function () { later(build); },
     function () { if (!ST) return; ST.step = "review"; paint(); alertIn("The PDF tool didn't load. Check the connection and try again."); });
@@ -583,7 +585,7 @@ function finish() {
       }, Promise.resolve()).then(function () { return doc.save(); });
     }).then(function (bytes) {
       close();
-      if (done) done(new Blob([bytes], { type: "application/pdf" }), pages.length);
+      if (done) done(new Blob([bytes], { type: "application/pdf" }), pages.length, scanName);
     }, function (err) { ST.step = "review"; paint(); alertIn("Couldn't make the PDF: " + (err && err.message || err)); });
   }
 }

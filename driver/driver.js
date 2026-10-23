@@ -301,7 +301,7 @@
             APP_MODE ? null : (function (w) { return w && w.role === "driver" ? w : null; })(storeJson("dept12DriverWho")), tab: BAG_PLANT ? "cw" : (store("dept12DriverTab") || "cw"),
         payload: null, loadKeys: {}, source: "", loadedAt: null, error: "", loading: false,
         scrollTo: null, keepScroll: false, loadOrder: {}, noteKey: null, scans: {}, chipTitle: {},
-        serverNotes: {}, serverScans: {}, viewSent: {}, refreshedAt: null
+        serverNotes: {}, scanList: {}, viewSent: {}, refreshedAt: null
     };
 
     /* ── Sign-in (just remembers a name on this device) ───────────────────
@@ -387,9 +387,11 @@
         var ids = Object.keys(S.orders);
         if (!ids.length) return;
         rpcPublicRead("public_driver_activity", { p_order_ids: ids }).then(function (a) {
-            S.serverNotes = {}; S.serverScans = {};
+            S.serverNotes = {}; S.scanList = {};
             (a.notes || []).forEach(function (n) { (S.serverNotes[n.order_id] = S.serverNotes[n.order_id] || []).push({ id: n.id, truck: n.truck, driver: n.driver, text: n.body, at: n.created_at }); });
-            (a.scans || []).forEach(function (x) { if (!S.serverScans[x.order_id]) S.serverScans[x.order_id] = { pages: x.pages, at: x.created_at, bucket: x.bucket || "driver-scans", path: x.path || "" }; });
+            (a.scans || []).slice().sort(function (x, y) { return x.created_at < y.created_at ? -1 : 1; }).forEach(function (x) {
+                (S.scanList[x.order_id] = S.scanList[x.order_id] || []).push({ pages: x.pages || 1, at: new Date(x.created_at), bucket: x.bucket || "driver-scans", path: x.path || "" });
+            });
             if (S.who && S.payload && !S.noteKey) { S.keepScroll = true; render(); }
         }).catch(function () { /* the schedule still works without them */ });
     }
@@ -821,10 +823,19 @@
             });
         });
     }
-    function sendScan(key, blob, pages) {
+    // A scan can carry a name ("Signed BOL Walmart.pdf"): it travels in the stored file's name, "<time>__Signed_BOL_Walmart.pdf", and is read back by scanNameOf().
+    function scanSafeName(name) {
+        var n = String(name || "").replace(/\.pdf$/i, "").replace(/[^A-Za-z0-9.-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80);
+        return n ? "__" + n : "";
+    }
+    function scanNameOf(path) {
+        var m = /\/\d+__([^/]+)\.pdf$/.exec(String(path || ""));
+        return m ? m[1].replace(/_/g, " ") + ".pdf" : "";
+    }
+    function sendScan(key, blob, pages, name) {
         var oid = S.loadOrder[key];
         if (DEMO || !oid) return saveScan(key, blob, pages);   // sample mode: this device only
-        var path = oid + "/" + Date.now() + ".pdf";
+        var path = oid + "/" + Date.now() + scanSafeName(name) + ".pdf";
         return (APP_MODE ? appToken() : Promise.resolve(null)).then(function (token) {
             var h = { "apikey": SB_KEY, "Content-Type": "application/pdf", "x-upsert": "false" };
             if (token) h["Authorization"] = "Bearer " + token;
@@ -851,20 +862,22 @@
             };
         }).catch(function () { /* no IndexedDB: scans still go to the dashboard */ });
     }
-    // What to show for a load's scan: this device's copy (with a View link), else what the server knows.
-    function scanInfo(key) {
-        var loc = S.scans[key];
-        if (loc) return loc;
-        var sv = S.serverScans[S.loadOrder[key]];
-        return sv ? { pages: sv.pages || 1, at: new Date(sv.at), url: "" } : null;
-    }
     // A scan and paperwork are listed the same way: a PDF file chip with its name. Nothing is shown when there are none.
     var PDF_ICON = '<span class="ico"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 2h6l3 3v9H4z"/><path d="M10 2v3h3M6 8h4M6 11h4"/></svg></span>';
+    // Every scan of the load's order, oldest first. A scan with no name is "<order> scan1", "<order> scan2" ... counted in that order.
+    function scanList(key) {
+        var oid = S.loadOrder[key], list = S.scanList && S.scanList[oid], o = orderForKey(key), label = (o && (o.rexius_order_no || o.broker_load_no)) || "Scan", n = 0;
+        if (!list || !list.length) {
+            var loc = S.scans[key];
+            return loc ? [{ pages: loc.pages, at: loc.at, url: loc.url, name: label + " scan1.pdf" }] : [];
+        }
+        return list.map(function (sc) { return Object.assign({}, sc, { name: scanNameOf(sc.path) || label + " scan" + (++n) + ".pdf" }); });
+    }
     function scanHtml(key) {
-        var sc = scanInfo(key);
-        if (!sc) return "";
-        return (sc.url || sc.path) ? '<button class="pdfchip" type="button" data-scanview="' + esc(key) + '" title="Open the scan">' + PDF_ICON + '<span class="nm">POD-BOL Scan.pdf</span></button>'
-            : '<span class="pdfchip" title="Sent to the office">' + PDF_ICON + '<span class="nm">POD-BOL Scan.pdf</span></span>';
+        return scanList(key).map(function (sc, i) {
+            return (sc.url || sc.path) ? '<button class="pdfchip" type="button" data-scanview="' + esc(key) + "|" + i + '" title="Open ' + esc(sc.name) + '">' + PDF_ICON + '<span class="nm">' + esc(sc.name) + "</span></button>"
+                : '<span class="pdfchip" title="Sent to the office">' + PDF_ICON + '<span class="nm">' + esc(sc.name) + "</span></span>";
+        }).join("");
     }
     function noteBtn(key, big) {
         return S.noteKey !== key ? '<button class="' + (big ? "btn" : "btn sm") + '" data-note="' + esc(key) + '">Add Note</button>' : "";
@@ -932,18 +945,18 @@
             title: S.chipTitle[key] || d.name,
             getBytes: function () { return storageBytes("documents", d.path); },
             onDone: function (blob, pages) {
-                return sendScan(key, blob, pages).then(function () {
+                return sendScan(key, blob, pages, "Signed " + d.name).then(function () {
                     loadScans(); loadActivity(); toast("Signed copy sent · " + pages + " page" + (pages > 1 ? "s" : ""));
                 });
             }
         });
     }
-    // A scan opens in the same viewer (view only): this phone's own copy if it has one, otherwise the file on the server.
-    function openScan(key) {
-        var sc = scanInfo(key);
+    // A scan opens in the same viewer (view only): this phone's own copy if that is all there is, otherwise the file on the server.
+    function openScan(key, i) {
+        var sc = scanList(key)[i];
         if (!sc || !window.Dept12Paper) return;
         window.Dept12Paper.open({
-            title: S.chipTitle[key] || "POD-BOL Scan",
+            title: sc.name,
             readOnly: true,
             getBytes: function () {
                 if (sc.url) return fetch(sc.url).then(function (r) { return r.arrayBuffer(); });
@@ -1105,7 +1118,11 @@
         if (smb) { openStoreMap(smb.getAttribute("data-smap")); return; }
         if (e.target.closest("[data-smap-close]")) { closeStoreMap(); return; }
         var vb = e.target.closest("[data-scanview]");
-        if (vb) { openScan(vb.getAttribute("data-scanview")); return; }
+        if (vb) {
+            var vp = vb.getAttribute("data-scanview").split("|");
+            openScan(vp.slice(0, -1).join("|"), Number(vp[vp.length - 1]));
+            return;
+        }
         var pb = e.target.closest("[data-paper]");
         if (pb) {
             var pp = pb.getAttribute("data-paper").split("|");
@@ -1116,8 +1133,8 @@
         if (sb) {
             var skey = sb.getAttribute("data-scan");
             window.Dept12Scanner.open({
-                title: S.chipTitle[skey] || "", onDone: function (blob, pages) {
-                    sendScan(skey, blob, pages).then(function () {
+                title: S.chipTitle[skey] || "", onDone: function (blob, pages, scanName) {
+                    sendScan(skey, blob, pages, scanName).then(function () {
                         loadScans(); loadActivity(); toast("POD / BOL sent · " + pages + " page" + (pages > 1 ? "s" : ""));
                     }, function (err) { toast("Couldn't send the scan: " + ((err && err.message) || "try again") + ".", true); });
                 }
