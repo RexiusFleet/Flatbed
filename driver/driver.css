@@ -12,8 +12,6 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .driver-app .header-row{height:auto;min-height:52px}
 .driver-app header{height:auto;min-height:52px;padding-top:6px;padding-bottom:6px}
 .drv-hdr .brand{white-space:normal;gap:10px}
-#hdr-zoom:empty{display:none}
-#hdr-zoom .tv-zoom{margin-right:0;flex:none}
 .drv-hdr .brand,.drv-title{min-width:0;overflow-wrap:anywhere}
 /* Current Week driver columns widen with the text size too (not on the bag plant TV, which sizes its own). */
 .driver-app:not(.drv-bagplant) table.grid th.trkcol{width:max(var(--col-w,150px),13.2rem)!important}
