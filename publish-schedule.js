@@ -163,8 +163,8 @@ function buildPayload(dates, data) {
               row.delivery_number = o.delivery_number || "";
               // Map links are not sent any more: drivers see the address as text.
             }
-            // Bag orders never carry the Bagger Customers notes to drivers; their own driver note still goes.
-            row.notes = [o.driver_note, o.kind === "internal" ? "" : o.customer_notes].filter(Boolean).join(" \xB7 ");
+            // The note section on a driver's load is the ORDER's own note to the driver (the Dispatch Note), nothing else: customer notes never go out.
+            row.notes = [o.driver_note].filter(Boolean).join(" \xB7 ");
           }
         } else if (!ld) {
           if (offByKey.has(`${t.truck_id}|${dt}`)) {

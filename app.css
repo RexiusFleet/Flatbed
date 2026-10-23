@@ -1893,16 +1893,6 @@ body.bill-dragging{user-select:none;-webkit-user-select:none;cursor:ns-resize}
 .rail-div .rail-arr{order:3;font-style:normal;font-size:var(--fs-body-sm);letter-spacing:0}
 .rail-div::after{order:2}
 
-/* Side window Actions bar: a darker band; click anywhere on its label row to fold it. The buttons live in the folding part. */
-.dw-actbar{margin:4px -14px -12px;background:var(--sunk);border-top:1px solid var(--rule-2);box-shadow:inset 0 3px 6px -3px rgba(0,0,0,.14)}
-.dw-acthead{position:relative;display:flex;align-items:center;justify-content:flex-start;width:100%;height:24px;padding:0 14px;border:0;background:none;color:var(--ink-2);cursor:pointer;
-  font:700 var(--fs-caption)/1 var(--mono);letter-spacing:.14em;text-transform:uppercase}
-.dw-acthead:hover{color:var(--ink)}
-.dw-acthead .arr{position:absolute;left:50%;top:50%;transform:translate(-50%,-52%);font-style:normal;font-size:var(--fs-body);line-height:1;letter-spacing:0;color:var(--ink)}
-.dw-actfold{display:grid;grid-template-rows:1fr;transition:grid-template-rows var(--motion-panel,.22s) var(--ease-ui,ease)}
-.dw-actbar.shut .dw-actfold{grid-template-rows:0fr}
-.dw-actfold>div{overflow:hidden;min-height:0}
-.dw-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 14px 10px}
 /* Delete: solid red with white text, the same in every theme. */
 .btn.del{background:#c42b2b;border-color:#c42b2b;color:#fff;box-shadow:0 1px 2px rgba(196,43,43,.35)}
 .btn.del:hover:not(:disabled){background:#d63636;border-color:#d63636;color:#fff;box-shadow:0 3px 9px rgba(196,43,43,.4)}
@@ -1933,7 +1923,8 @@ body.bill-dragging{user-select:none;-webkit-user-select:none;cursor:ns-resize}
 .fleet-spare .row.hdr{font-size:var(--fs-caption);text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
 
 /* ── Sign window (rate con review and signing) ── */
-.sgn{position:fixed;inset:0;z-index:330;background:var(--paper);display:flex;flex-direction:column;outline:none}
+.sgn{position:fixed;inset:0;z-index:330;background:rgba(0,0,0,.42);display:grid;place-items:center;padding:3vh 3vw;outline:none}
+.sgn-win{position:relative;width:min(1240px,100%);height:min(900px,100%);display:flex;flex-direction:column;background:var(--paper);border:1px solid var(--rule-2);border-radius:var(--r-lg);box-shadow:0 24px 70px rgba(0,0,0,.4);overflow:hidden}
 .sgn-hd{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--rule-2);background:var(--panel)}
 .sgn-hd h2{margin:0;font-size:var(--fs-body-lg);font-weight:760;letter-spacing:-.01em}
 .sgn-hd .sub{font-size:var(--fs-label);color:var(--ink-3)}
@@ -1980,8 +1971,19 @@ body.bill-dragging{user-select:none;-webkit-user-select:none;cursor:ns-resize}
 .sgn-pop .prev img{max-height:48px;max-width:90%}
 .sgn-pop input{width:100%;box-sizing:border-box;background:var(--paper);border:1px solid var(--rule-2);border-radius:var(--r-sm);padding:6px 8px;font-size:var(--fs-body)}
 .sgn-pop .acts{display:flex;gap:6px;justify-content:flex-end;margin-top:10px}
-@media (max-width:900px){.sgn-body{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr)}.sgn-view{border-right:0;border-bottom:1px solid var(--rule-2)}}
+@media (max-width:900px){.sgn{padding:0}.sgn-win{border-radius:0;border:0}.sgn-body{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr)}.sgn-view{border-right:0;border-bottom:1px solid var(--rule-2)}}
 
 .fleet-spare .row .btns{display:flex;gap:6px;justify-content:flex-end}
 .fleet-former .row{grid-template-columns:170px 150px 150px 170px auto;color:var(--ink-2)}
 .fleet-former .row b{color:var(--ink);font-weight:600}
+/* Sign window: a preview of what you are about to place, and a real text box */
+.sgn-ghost{position:absolute;pointer-events:none;opacity:.55;line-height:1;white-space:nowrap;color:#0b1d5c;font-family:Helvetica,Arial,sans-serif;outline:1.5px dashed var(--focus);outline-offset:3px;z-index:2}
+.sgn-ghost img{display:block}
+.sgn-ghost.box{min-width:80px;color:var(--ink-3)}
+.sgn-st .t{display:inline-block;white-space:pre;outline:none;min-width:2px}
+.sgn-st .t:empty::before{content:attr(data-ph);color:var(--ink-3);opacity:.7}
+.sgn-st.box{outline:1px dashed var(--ink-3);outline-offset:3px}
+.sgn-st.box.sel,.sgn-st.editing{outline:1.5px solid var(--focus);outline-offset:3px;background:rgba(255,255,255,.7)}
+.sgn-st.editing{cursor:text;user-select:text}
+.sgn-st.editing .t{min-width:80px}
+.sgn-st.editing .x{display:none}

@@ -1325,22 +1325,24 @@ function sgnOpen(opts) {
   return new Promise(function (resolve) {
     sgnClose(true);
     var el = document.createElement("div"); el.className = "sgn"; el.id = "sgn";
-    SGN = { el: el, kind: opts.kind, oid: opts.oid || null, doc: opts.doc || null, bytes: opts.bytes, name: opts.name, resolve: resolve, done: false, pdf: null, pages: [], scale: 1, fit: 1, tool: null,
+    SGN = { fontSize: 12, ghost: null, el: el, kind: opts.kind, oid: opts.oid || null, doc: opts.doc || null, bytes: opts.bytes, name: opts.name, resolve: resolve, done: false, pdf: null, pages: [], scale: 1, fit: 1, tool: null,
       stamps: [], sel: null, words: [], parsed: null, form: null, nextId: 1, blobUrl: "", signedBytes: null, scanned: false, readDone: false, keep: true, timer: null, discard: false, reading: false, failed: "" };
-    var intake = opts.kind === "intake", isRc = !!(opts.doc && opts.doc.doc_type === "rate_con");
-    el.innerHTML = '<div class="sgn-hd"><div><h2>' + (intake ? "Review Rate Con" : "Sign " + esc(({ rate_con: "Rate Con", pod: "POD / BOL", invoice: "Invoice", delivery_receipt: "Delivery Receipt" })[opts.doc.doc_type] || "Document")) + '</h2><div class="sub">' + esc(opts.name) + "</div></div>" +
+    var intake = opts.kind === "intake";
+    el.innerHTML = '<div class="sgn-win"><div class="sgn-hd"><div><h2>' + (intake ? "Review Rate Con" : "Sign " + esc(({ rate_con: "Rate Con", pod: "POD / BOL", invoice: "Invoice", delivery_receipt: "Delivery Receipt" })[opts.doc.doc_type] || "Document")) + '</h2><div class="sub">' + esc(opts.name) + "</div></div>" +
       '<span style="flex:1"></span><button class="btn" id="sgn-close" type="button">Close</button></div>' +
       '<div class="sgn-body"><div class="sgn-view"><div class="sgn-tools">' +
       '<button class="btn sm" data-sgntool="initials" type="button">Initials</button>' +
       '<button class="btn sm" id="sgn-setup" type="button" title="Type or draw your initials once; they are remembered on this computer">Set Up Initials</button><span class="sep"></span>' +
-      '<button class="btn sm" data-sgntool="date" type="button">Date</button><button class="btn sm" data-sgntool="text" type="button">Text</button><span class="sep"></span>' +
+      '<button class="btn sm" data-sgntool="date" type="button">Date</button><button class="btn sm" data-sgntool="text" type="button">Text Box</button>' +
+      '<button class="btn sm" id="sgn-fsm" type="button" title="Smaller text">A&minus;</button><button class="btn sm" id="sgn-fsp" type="button" title="Bigger text">A+</button><span class="sep"></span>' +
       '<button class="btn sm" id="sgn-zout" type="button" title="Zoom out">&minus;</button><span id="sgn-zl" class="zl">100%</span><button class="btn sm" id="sgn-zin" type="button" title="Zoom in">+</button>' +
       '<span class="hint" id="sgn-hint"></span></div><div class="sgn-scroll" id="sgn-scroll"></div></div>' +
-      '<div class="sgn-side"><div class="scroll" id="sgn-form"></div><div class="sgn-ft" id="sgn-ft-chip"></div><div class="sgn-ft" id="sgn-ft-btns"></div></div></div>';
+      '<div class="sgn-side"><div class="scroll" id="sgn-form"></div><div class="sgn-ft" id="sgn-ft-chip"></div><div class="sgn-ft" id="sgn-ft-btns"></div></div></div></div>';
     document.body.appendChild(el);
     sgnHint(); sgnFooter(); sgnChip();
     el.addEventListener("click", sgnClick); el.addEventListener("pointerdown", sgnPointer); el.addEventListener("dblclick", function (e) { var st = e.target.closest(".sgn-st"); if (st) sgnEditText(+st.dataset.id); });
     el.addEventListener("focusin", sgnFocus);
+    el.addEventListener("pointermove", sgnGhost); el.addEventListener("pointerleave", sgnGhostOff);
     // Keys are handled on the window itself and stop there, so the dashboard's own shortcuts behind it (Delete on a selected cell, Esc, typing into a cell) never see them.
     el.tabIndex = -1;
     el.addEventListener("keydown", function (e) {
@@ -1353,7 +1355,7 @@ function sgnOpen(opts) {
     ["keyup", "keypress"].forEach(function (t) { el.addEventListener(t, function (e) { e.stopPropagation(); }); });
     setTimeout(function () { if (SGN && SGN.el === el) el.focus(); }, 0);
     var side = sgnQ("#sgn-form");
-    side.innerHTML = isRc || intake ? '<p class="note"><span class="spin" style="display:inline-block;vertical-align:-2px;margin-right:6px"></span>Reading the rate con…</p>' :
+    side.innerHTML = intake ? '<p class="note"><span class="spin" style="display:inline-block;vertical-align:-2px;margin-right:6px"></span>Reading the rate con…</p>' :
       '<p class="note">Add your initials and date on the page, then save the signed copy on this order, or drag the file out. The original stays as it is.</p>' +
       '<p class="note" style="margin-top:12px">Is this a rate con you want read? <button class="btn sm" id="sgn-read" type="button">Read As Rate Con</button></p>';
     loadVendor("pdfjs").then(function () {
@@ -1365,7 +1367,7 @@ function sgnOpen(opts) {
       if (!SGN) return;
       SGN.pages = pgs.map(function (pg) { return { pg: pg, vp1: pg.getViewport({ scale: 1 }) }; });
       sgnFit(); sgnPages();
-      if (intake || isRc) sgnRead();
+      if (intake) sgnRead();   // a dragged-in rate con is read at once; a document opened to sign is read only if you press Read As Rate Con (reading a scan takes a while)
     }).catch(function (e) {
       if (!SGN) return; SGN.failed = e && e.message || "unreadable";
       sgnQ("#sgn-scroll").innerHTML = '<div class="empty" style="padding:30px;text-align:center;color:var(--ink-3)">This PDF could not be opened (' + esc(SGN.failed) + ").</div>";
@@ -1376,7 +1378,7 @@ function sgnOpen(opts) {
 function sgnClose(silent) {
   if (!SGN) return;
   var S = SGN; SGN = null;
-  clearTimeout(S.timer); clearTimeout(S.discardT);
+  clearTimeout(S.timer); clearTimeout(S.discardT); if (S.worker) { S.worker.terminate(); S.worker = null; }
   if (S.blobUrl) URL.revokeObjectURL(S.blobUrl);
   if (S.el.parentNode) S.el.remove();
   if (!S.done && S.resolve) { S.done = true; S.resolve(null); }
@@ -1402,14 +1404,18 @@ function sgnZoom(mul) {
   var S = SGN; S.scale = Math.max(S.fit * 0.5, Math.min(S.fit * 2.5, S.scale * mul)); sgnQ("#sgn-zl").textContent = Math.round(S.scale / S.fit * 100) + "%"; sgnPages();
 }
 function sgnPages() {
-  var S = SGN, sc = sgnQ("#sgn-scroll"); sc.innerHTML = "";
+  var S = SGN, sc = sgnQ("#sgn-scroll"); sc.innerHTML = ""; S.renderTok = (S.renderTok || 0) + 1; var tok = S.renderTok, r = Math.min(2, window.devicePixelRatio || 1), chain = Promise.resolve();
   S.pages.forEach(function (p, i) {
-    var vp = p.pg.getViewport({ scale: S.scale }), box = document.createElement("div"), r = window.devicePixelRatio || 1;
+    var vp = p.pg.getViewport({ scale: S.scale }), box = document.createElement("div");
     box.className = "sgn-page"; box.style.width = vp.width + "px"; box.style.height = vp.height + "px";
     var cv = document.createElement("canvas"); cv.width = Math.floor(vp.width * r); cv.height = Math.floor(vp.height * r); cv.style.width = vp.width + "px"; cv.style.height = vp.height + "px";
     var ov = document.createElement("div"); ov.className = "sgn-ov"; ov.dataset.page = i;
     box.appendChild(cv); box.appendChild(ov); sc.appendChild(box);
-    p.pg.render({ canvasContext: cv.getContext("2d"), viewport: p.pg.getViewport({ scale: S.scale * r }) });
+    // Page one paints first and the rest follow, so the window is usable at once.
+    chain = chain.then(function () {
+      if (!SGN || S.renderTok !== tok) return;
+      return p.pg.render({ canvasContext: cv.getContext("2d"), viewport: p.pg.getViewport({ scale: S.scale * r }) }).promise.catch(function () { /* a page that won't draw stays blank */ });
+    });
   });
   S.stamps.forEach(sgnDraw);
 }
@@ -1419,53 +1425,93 @@ function sgnDraw(st) {
   el = document.createElement("div"); el.className = "sgn-st" + (S.sel === st.id ? " sel" : ""); el.dataset.id = st.id;
   el.style.left = st.x * S.scale + "px"; el.style.top = st.y * S.scale + "px";
   if (st.type === "img") el.innerHTML = '<img alt="" src="' + st.dataUrl + '" style="width:' + st.w * S.scale + "px;height:" + st.h * S.scale + 'px">';
-  else { el.style.fontSize = st.size * S.scale + "px"; el.textContent = st.text; }
+  else { el.style.fontSize = st.size * S.scale + "px"; var tx = document.createElement("span"); tx.className = "t"; tx.dataset.ph = "Type here"; tx.textContent = st.text; el.appendChild(tx); if (st.box) el.classList.add("box"); }
   var x = document.createElement("span"); x.className = "x"; x.textContent = "×"; x.title = "Remove"; el.appendChild(x);
   ov.appendChild(el);
 }
 function sgnSelect(id) { SGN.sel = id; [].forEach.call(SGN.el.querySelectorAll(".sgn-st"), function (e) { e.classList.toggle("sel", +e.dataset.id === id); }); }
 function sgnArm(tool) {
-  var S = SGN; S.tool = S.tool === tool ? null : tool;
+  var S = SGN; S.tool = S.tool === tool ? null : tool; sgnGhostOff();
   [].forEach.call(S.el.querySelectorAll("[data-sgntool]"), function (b) { b.classList.toggle("active", b.dataset.sgntool === S.tool); });
   S.el.classList.toggle("arm", !!S.tool); sgnHint();
 }
-function sgnChanged() { SGN.discard = false; clearTimeout(SGN.timer); SGN.signedBytes = null; sgnChip(); SGN.timer = setTimeout(sgnRebuild, 300); }
+/* A faint preview of the initials / date / text box follows the pointer over the page, so you see where it will land before you click. */
+function sgnGhostOff() { var S = SGN; if (S && S.ghost) { S.ghost.remove(); S.ghost = null; } }
+function sgnGhost(e) {
+  var S = SGN; if (!S || !S.tool || e.buttons) return;
+  var ov = e.target.closest && e.target.closest(".sgn-ov");
+  if (!ov || e.target.closest(".sgn-st")) { sgnGhostOff(); return; }
+  var r = ov.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, g = S.ghost;
+  if (!g || g.parentNode !== ov || g.dataset.tool !== S.tool) {
+    sgnGhostOff(); g = document.createElement("div"); g.className = "sgn-ghost"; g.dataset.tool = S.tool; ov.appendChild(g); S.ghost = g;
+    if (S.tool === "initials") {
+      var ini = sgnInitials();
+      if (ini) { var w = 70, h = Math.round(70 * ini.h / ini.w); g.dataset.w = w; g.dataset.h = h; g.innerHTML = '<img alt="" src="' + ini.url + '" style="width:' + w * S.scale + "px;height:" + h * S.scale + 'px">'; }
+      else g.textContent = "Set up your initials first";
+    } else if (S.tool === "date") { g.style.fontSize = S.fontSize * S.scale + "px"; g.textContent = sgnToday(); }
+    else { g.classList.add("box"); g.style.fontSize = S.fontSize * S.scale + "px"; g.textContent = "Type here"; }
+  }
+  var gw = +g.dataset.w || 0, gh = +g.dataset.h || 0;
+  g.style.left = (gw ? x - gw * S.scale / 2 : x - 2 * S.scale) + "px"; g.style.top = (gh ? y - gh * S.scale / 2 : y - 7 * S.scale) + "px";
+}
+function sgnChanged() { SGN.discard = false; clearTimeout(SGN.timer); SGN.signedBytes = null; sgnChip(); SGN.timer = setTimeout(sgnRebuild, 900); }
 function sgnPlace(pageIdx, cssX, cssY, keep) {
   var S = SGN, id = S.nextId++, st;
   if (S.tool === "initials") {
     var ini = sgnInitials(); if (!ini) { sgnArm(null); sgnSetup(); return; }
     var w = 70, h = Math.round(70 * ini.h / ini.w);
     st = { id: id, page: pageIdx, type: "img", dataUrl: ini.url, w: w, h: h, x: cssX / S.scale - w / 2, y: cssY / S.scale - h / 2 };
-  } else st = { id: id, page: pageIdx, type: "text", text: S.tool === "date" ? sgnToday() : "Text", size: 12, x: cssX / S.scale - 2, y: cssY / S.scale - 7 };
+  } else st = { id: id, page: pageIdx, type: "text", text: S.tool === "date" ? sgnToday() : "", box: S.tool === "text", size: S.fontSize, x: cssX / S.scale - 2, y: cssY / S.scale - 7 };
   S.stamps.push(st); sgnDraw(st); sgnSelect(id);
   if (!keep) sgnArm(S.tool);
-  if (st.type === "text" && st.text === "Text") sgnEditText(id);
+  if (st.type === "text" && st.box) { setTimeout(function () { if (SGN === S) sgnEditText(id); }, 0); return; }   // a new text box waits for typing; the copy is rebuilt when it is filled in
   sgnChanged();
 }
 function sgnRemove(id) {
   var S = SGN; S.stamps = S.stamps.filter(function (s) { return s.id !== id; }); var el = S.el.querySelector('.sgn-st[data-id="' + id + '"]'); if (el) el.remove();
   if (S.sel === id) S.sel = null; sgnChanged();
 }
+// Type straight onto the page: a text box with a caret and a faint placeholder. Enter starts a new line in a text box (Esc, Ctrl+Enter or a click elsewhere finishes it);
+// a date finishes on Enter. An empty box is dropped.
 function sgnEditText(id) {
   var S = SGN, el = S.el.querySelector('.sgn-st[data-id="' + id + '"]'), st = S.stamps.filter(function (s) { return s.id === id; })[0]; if (!el || !st || st.type !== "text") return;
-  el.contentEditable = "true"; el.style.cursor = "text"; el.focus();
-  var r = document.createRange(); r.selectNodeContents(el); var sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
-  el.onblur = function () { el.contentEditable = "false"; el.style.cursor = ""; st.text = (el.firstChild && el.firstChild.nodeType === 3 ? el.firstChild.nodeValue : "").trim() || " "; if (SGN === S) { sgnDraw(st); sgnChanged(); } };
-  el.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); el.blur(); } e.stopPropagation(); };
+  var t = el.querySelector(".t"); if (!t) return;
+  t.contentEditable = "plaintext-only"; if (t.contentEditable !== "plaintext-only") t.contentEditable = "true";
+  el.classList.add("editing"); t.focus();
+  var r = document.createRange(); r.selectNodeContents(t); var sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  t.onblur = function () {
+    t.contentEditable = "false"; el.classList.remove("editing");
+    var v = String(t.innerText || "").replace(/\u00a0/g, " ").replace(/\s+$/, "");
+    if (SGN !== S) return;
+    if (!v.trim()) { sgnRemove(id); return; }
+    st.text = v; sgnDraw(st); sgnChanged();
+  };
+  t.onkeydown = function (e) {
+    if (e.key === "Escape" || (e.key === "Enter" && (!st.box || e.ctrlKey || e.metaKey))) { e.preventDefault(); t.blur(); }
+    e.stopPropagation();
+  };
 }
 function sgnPointer(e) {
   var S = SGN; if (!S) return;
   var st = e.target.closest(".sgn-st"), ov = e.target.closest(".sgn-ov");
   if (e.target.classList.contains("x")) { sgnRemove(+e.target.parentNode.dataset.id); return; }
-  if (st && st.contentEditable !== "true") {
+  var tEl = st && st.querySelector(".t");
+  if (st && !(tEl && tEl.isContentEditable)) {
     var id = +st.dataset.id, s = S.stamps.filter(function (x) { return x.id === id; })[0]; sgnSelect(id);
     var sx = e.clientX, sy = e.clientY, ox = s.x, oy = s.y, moved = false;
     var mv = function (ev) { moved = true; s.x = ox + (ev.clientX - sx) / S.scale; s.y = oy + (ev.clientY - sy) / S.scale; st.style.left = s.x * S.scale + "px"; st.style.top = s.y * S.scale + "px"; };
     var up = function () { document.removeEventListener("pointermove", mv); document.removeEventListener("pointerup", up); if (moved && SGN === S) sgnChanged(); };
     document.addEventListener("pointermove", mv); document.addEventListener("pointerup", up); e.preventDefault(); return;
   }
-  if (ov && S.tool) { var r = ov.getBoundingClientRect(); sgnPlace(+ov.dataset.page, e.clientX - r.left, e.clientY - r.top, e.shiftKey); return; }
+  if (ov && S.tool) { e.preventDefault(); var r = ov.getBoundingClientRect(); sgnPlace(+ov.dataset.page, e.clientX - r.left, e.clientY - r.top, e.shiftKey); return; }
   if (!st && ov) sgnSelect(null);
+}
+// A+ / A-: the selected text, and the size the next new text starts at.
+function sgnFontStep(d) {
+  var S = SGN; if (!S) return;
+  var st = S.stamps.filter(function (x) { return x.id === S.sel && x.type === "text"; })[0];
+  S.fontSize = Math.max(7, Math.min(48, (st ? st.size : S.fontSize) + d));
+  if (st) { st.size = S.fontSize; sgnDraw(st); sgnSelect(st.id); sgnChanged(); }
 }
 function sgnClick(e) {
   var S = SGN; if (!S) return;
@@ -1474,6 +1520,7 @@ function sgnClick(e) {
   switch (t.id) {
     case "sgn-close": case "sgn-cancel": sgnCancel(); break;
     case "sgn-setup": sgnSetup(); break;
+    case "sgn-fsm": case "sgn-fsp": sgnFontStep(t.id === "sgn-fsp" ? 1 : -1); break;
     case "sgn-zin": sgnZoom(1.2); break;
     case "sgn-zout": sgnZoom(1 / 1.2); break;
     case "sgn-read": sgnReadAsRateCon(); break;
@@ -1506,29 +1553,55 @@ function sgnRebuild() {
   sgnBuild().then(function (bytes) {
     if (SGN !== S) return; if (S.blobUrl) URL.revokeObjectURL(S.blobUrl);
     S.signedBytes = bytes; S.blobUrl = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })); sgnChip();
-  }, function (err) { if (SGN === S) { sgnQ("#sgn-ft-chip").innerHTML = '<span class="sgn-chip off">' + icon("pdf") + '<span class="nm">Couldn\'t write the PDF: ' + esc(err.message) + "</span></span>"; } });
+  }, function (err) { if (SGN === S && err.message !== "superseded") { sgnQ("#sgn-ft-chip").innerHTML = '<span class="sgn-chip off">' + icon("pdf") + '<span class="nm">Couldn\'t write the PDF: ' + esc(err.message) + "</span></span>"; } });
 }
-function sgnWinAnsi(t) { return String(t).replace(/[^\x20-\x7e\xa0-\xff]/g, "?"); }
-// Writes the stamps into a copy of the PDF. Positions go through the page's own transform, so a rotated scan still comes out upright and where it was placed.
-function sgnBuild() {
+function sgnWinAnsi(t) { return String(t).replace(/[^\x20-\x7e\xa0-\xff\n]/g, "?"); }
+/* Writing the signed copy is the slow part (the whole PDF is read and written again), so it runs in a background worker and the page never freezes while
+   you place or move initials. The positions go through the page's own transform first (on this side, where pdf.js knows the page), so a rotated scan
+   still comes out upright and where it was placed. If a worker can't start, the same job runs here. */
+var SGN_WRITER = "self.onmessage = async function (e) { var m = e.data; try { importScripts(m.lib); var doc = await PDFLib.PDFDocument.load(m.bytes);" +
+  " var font = await doc.embedFont(PDFLib.StandardFonts.Helvetica), ink = PDFLib.rgb(0.043, 0.114, 0.361);" +
+  " for (var i = 0; i < m.jobs.length; i++) { var j = m.jobs[i], page = doc.getPage(j.page);" +
+  " if (j.type === 'img') { var img = await doc.embedPng(j.dataUrl); page.drawImage(img, { x: j.x, y: j.y, width: j.w, height: j.h, rotate: PDFLib.degrees(j.theta) }); }" +
+  " else page.drawText(j.text, { x: j.x, y: j.y, size: j.size, font: font, color: ink, rotate: PDFLib.degrees(j.theta), lineHeight: j.size * 1.15 }); }" +
+  " var out = await doc.save(); self.postMessage({ ok: true, bytes: out }, [out.buffer]); } catch (err) { self.postMessage({ ok: false, error: String((err && err.message) || err) }); } };";
+function sgnJobs() {
   var S = SGN;
-  return loadVendor("pdflib").then(function () {
-    return PDFLib.PDFDocument.load(S.bytes);
-  }).then(function (doc) {
+  return S.stamps.map(function (st) {
+    var vp = S.pages[st.page].vp1, o = vp.convertToPdfPoint(st.x, st.y), rx = vp.convertToPdfPoint(st.x + 1, st.y), theta = Math.atan2(rx[1] - o[1], rx[0] - o[0]) * 180 / Math.PI;
+    if (st.type === "img") { var org = vp.convertToPdfPoint(st.x, st.y + st.h); return { page: st.page, type: "img", dataUrl: st.dataUrl, x: org[0], y: org[1], w: st.w, h: st.h, theta: theta }; }
+    var base = vp.convertToPdfPoint(st.x, st.y + st.size * 0.82);
+    return { page: st.page, type: "text", text: sgnWinAnsi(st.text), x: base[0], y: base[1], size: st.size, theta: theta };
+  });
+}
+function sgnBuild() {
+  var S = SGN, jobs = sgnJobs();
+  S.buildTok = (S.buildTok || 0) + 1; var tok = S.buildTok;
+  if (S.worker) { S.worker.terminate(); S.worker = null; }        // a newer change makes the older write pointless
+  var viaWorker = new Promise(function (ok, fail) {
+    if (!window.Worker) { fail(new Error("no worker")); return; }
+    var url = URL.createObjectURL(new Blob([SGN_WRITER], { type: "text/javascript" })), w;
+    try { w = new Worker(url); } catch (e) { URL.revokeObjectURL(url); fail(e); return; }
+    S.worker = w;
+    w.onmessage = function (ev) { URL.revokeObjectURL(url); w.terminate(); if (S.worker === w) S.worker = null; if (ev.data && ev.data.ok) ok(ev.data.bytes); else fail(new Error((ev.data && ev.data.error) || "write failed")); };
+    w.onerror = function (ev) { URL.revokeObjectURL(url); w.terminate(); if (S.worker === w) S.worker = null; fail(new Error((ev && ev.message) || "worker error")); };
+    w.postMessage({ lib: new URL("vendor/pdf-lib.min.js", location.href).href, bytes: S.bytes.slice(), jobs: jobs });
+  });
+  return viaWorker.then(function (bytes) { return bytes; }, function (err) {
+    if (SGN !== S || S.buildTok !== tok) return Promise.reject(new Error("superseded"));
+    return sgnBuildHere(jobs);
+  });
+}
+function sgnBuildHere(jobs) {
+  var S = SGN;
+  return loadVendor("pdflib").then(function () { return PDFLib.PDFDocument.load(S.bytes); }).then(function (doc) {
     return doc.embedFont(PDFLib.StandardFonts.Helvetica).then(function (font) {
       var ink = PDFLib.rgb(0.043, 0.114, 0.361);
-      return S.stamps.reduce(function (chain, st) {
+      return jobs.reduce(function (chain, j) {
         return chain.then(function () {
-          var page = doc.getPage(st.page), vp = S.pages[st.page].vp1;
-          var o = vp.convertToPdfPoint(st.x, st.y), rx = vp.convertToPdfPoint(st.x + 1, st.y), theta = Math.atan2(rx[1] - o[1], rx[0] - o[0]) * 180 / Math.PI;
-          if (st.type === "img") {
-            return doc.embedPng(st.dataUrl).then(function (img) {
-              var org = vp.convertToPdfPoint(st.x, st.y + st.h);
-              page.drawImage(img, { x: org[0], y: org[1], width: st.w, height: st.h, rotate: PDFLib.degrees(theta) });
-            });
-          }
-          var base = vp.convertToPdfPoint(st.x, st.y + st.size * 0.82);
-          page.drawText(sgnWinAnsi(st.text), { x: base[0], y: base[1], size: st.size, font: font, color: ink, rotate: PDFLib.degrees(theta) });
+          var page = doc.getPage(j.page);
+          if (j.type === "img") return doc.embedPng(j.dataUrl).then(function (img) { page.drawImage(img, { x: j.x, y: j.y, width: j.w, height: j.h, rotate: PDFLib.degrees(j.theta) }); });
+          page.drawText(j.text, { x: j.x, y: j.y, size: j.size, font: font, color: ink, rotate: PDFLib.degrees(j.theta), lineHeight: j.size * 1.15 });
         });
       }, Promise.resolve()).then(function () { return doc.save(); });
     });
@@ -1543,7 +1616,7 @@ function sgnSetup() {
     '<div id="sgn-pm-draw" hidden><canvas class="pad" id="sgn-pad" width="660" height="220"></canvas></div>' +
     '<div class="prev"><img id="sgn-ini-prev" alt="" ' + (cur ? 'src="' + cur.url + '"' : "hidden") + '></div>' +
     '<div class="acts"><button class="btn sm" id="sgn-ini-clear" type="button">Clear</button><button class="btn sm" id="sgn-ini-cancel" type="button">Cancel</button><button class="btn sm pri" id="sgn-ini-save" type="button">Save Initials</button></div>';
-  SGN.el.appendChild(pop);
+  (sgnQ(".sgn-win") || SGN.el).appendChild(pop);
   var pad = pop.querySelector("#sgn-pad"), pc = pad.getContext("2d"), made = null, drawn = false, down = false;
   pc.lineWidth = 5; pc.lineCap = "round"; pc.lineJoin = "round"; pc.strokeStyle = SGN_INK;
   function preview() {
@@ -1689,22 +1762,38 @@ function signDocument(docId) {
   var d = (DB.documents || []).filter(function (x) { return x.id === docId; })[0]; if (!d) return;
   if (!/\.pdf$/i.test(d.original_filename || "")) { toast("Only PDFs can be signed here.", true); return; }
   busyStart("Opening the document…");
-  fetchStoredFile(d.storage_path).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
+  var ready = DOCBLOB[d.storage_path];
+  (ready ? fetch(ready) : fetchStoredFile(d.storage_path)).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
     busyEnd(); return sgnOpen({ kind: "doc", bytes: new Uint8Array(buf), name: d.original_filename, oid: DRAWER_OID || d.order_id, doc: d });
   }).catch(function (e) { busyEnd(); toast("Couldn't open it: " + e.message, true); });
 }
 /* The file chip on each document: the PDF icon and its title. Drag it onto the desktop or into an email (Chrome and Edge), or click it to save. The
    file is fetched ahead of time (it has to be on hand the moment a drag starts). */
 var DOCBLOB = {};
-// One line in an order's Documents list: its type, the file chip (drag it out or click to save), View, and Sign for a PDF.
+// One line in an order's Documents list: the file chip (drag it out or click to save), then Sign (it is also the viewer; View only for a file that isn't a PDF),
+// Show To Driver, Download and Delete. No type label.
 function docRowHtml(d) {
-  var nm = d.original_filename || "";
-  return '<div class="docrow"><span class="pill">' + esc(String(d.doc_type || "other").replace("_", " ")) + "</span>" + docChipHtml(d) +
-    '<button class="btn sm" data-viewpath="' + esc(d.storage_path) + '" data-viewname="' + esc(nm) + '">View</button>' +
-    (/\.pdf$/i.test(nm) ? '<button class="btn sm" data-signdoc="' + esc(d.id) + '" type="button" title="Open it to add initials or a date, or to read it as a rate con">Sign</button>' : "") +
-    (d.order_id && !d.proto && /\.pdf$/i.test(nm) ? '<button class="btn sm' + (docDriverOn(d) ? " active" : "") + '" data-docdriver="' + esc(d.id) + '" type="button" aria-pressed="' + docDriverOn(d) +
-      '" title="' + (docDriverOn(d) ? "Drivers can open this from the load. Click to hide it." : "Let the driver open this from the load on their tab. Publish Schedule sends it.") + '">Show To Driver</button>' : "") + "</div>";
+  var nm = d.original_filename || "", pdf = /\.pdf$/i.test(nm), real = !!(d.order_id && !d.proto);
+  return '<div class="docrow">' + docChipHtml(d) +
+    (pdf ? '<button class="btn sm" data-signdoc="' + esc(d.id) + '" type="button" title="Open it in a window to read it, add initials, a date or text, or read it as a rate con">Sign</button>'
+      : '<button class="btn sm" data-viewpath="' + esc(d.storage_path) + '" data-viewname="' + esc(nm) + '">View</button>') +
+    (real && pdf ? '<button class="btn sm' + (docDriverOn(d) ? " active" : "") + '" data-docdriver="' + esc(d.id) + '" type="button" aria-pressed="' + docDriverOn(d) +
+      '" title="' + (docDriverOn(d) ? "Drivers can open this from the load. Click to hide it." : "Let the driver open this from the load on their tab. Publish Schedule sends it.") + '">Show To Driver</button>' : "") +
+    '<button class="btn sm" type="button" data-filepath="' + esc(d.storage_path) + '" data-filename="' + esc(nm) + '" data-filemode="download" title="Save a copy of the file">Download</button>' +
+    (real ? '<button class="btn del sm" type="button" data-docdel="' + esc(d.id) + '">Delete</button>' : "") + "</div>";
 }
+// Delete a document from the order: asks first; the file is removed too.
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("[data-docdel]"); if (!b) return;
+  var id = b.getAttribute("data-docdel"), d = (DB.documents || []).filter(function (x) { return x.id === id; })[0]; if (!d) return;
+  confirmModal('Delete "' + (d.original_filename || "this file") + '" from the order? The file is removed and this can\'t be undone.', function () {
+    var oid = DRAWER_OID;
+    api("document/delete", { id: id }).then(function () { return reload(); }).then(function () {
+      if (oid && DRAWER_OID === oid) openOrder(oid);
+      toast("Document deleted");
+    }).catch(function (err) { toast(err.message, true); });
+  }, "Delete Document");
+});
 document.addEventListener("click", function (e) { var b = e.target.closest && e.target.closest("[data-signdoc]"); if (b) signDocument(b.getAttribute("data-signdoc")); });
 function docDriverOn(d) { return !!(d && d.extracted_fields && d.extracted_fields.driver_visible === true); }
 /* "Show To Driver": the flag is kept in the document's own extracted_fields. Drivers see it after the next Publish Schedule. */
@@ -1738,7 +1827,16 @@ function docPrefetch(path) {
     return DOCBLOB[path];
   }, function () { delete DOCBLOB[path]; return null; });
 }
-function docPrefetchAll() { [].forEach.call(document.querySelectorAll("[data-docchip]"), function (c) { docPrefetch(c.getAttribute("data-docchip")); }); }
+// The PDF libraries are not part of the page load; they start loading in the background once an order with a PDF is open, so Sign opens at once.
+var SGN_WARM = false;
+function sgnWarm() {
+  if (SGN_WARM) return; SGN_WARM = true;
+  setTimeout(function () { loadVendor("pdfjs").then(function () { return loadVendor("pdflib"); }).catch(function () { SGN_WARM = false; }); }, 600);
+}
+function docPrefetchAll() {
+  [].forEach.call(document.querySelectorAll("[data-docchip]"), function (c) { docPrefetch(c.getAttribute("data-docchip")); });
+  if (document.querySelector("[data-signdoc]")) sgnWarm();
+}
 document.addEventListener("dragstart", function (e) {
   var c = e.target.closest && e.target.closest("[data-docchip]"); if (!c) return;
   var path = c.getAttribute("data-docchip"), url = DOCBLOB[path], name = (c.getAttribute("data-filename") || "document.pdf").replace(/:/g, "-");

@@ -123,34 +123,14 @@ function refreshOrderDrawerAfterSave(saveOid) {
    order trackers' numbered-gutter multi-select, which covers a single
    order the same way (select one row) plus real multi-select. */
 function orderPageBtn(oid) { return '<button class="btn sm" data-showorder="' + oid + '">Show On Order Page &rarr;</button>'; }
-// The Actions bar starts folded for every order you open, and stays however you left it while you work in that order.
-var DW_ACT_SHUT = true, DW_ACT_FOR = null;
-// Top of the side window: the order's status and date.
+// Top row of the side window: the order's status box, Show On Scheduler (when it is on a date), Show On Order Page, and Delete on the right. No other text.
 function schedBar(oid) {
   var o = order(oid); if (!o) return "";
-  var ds = schedDateForOrder(oid), controls = stageControls(o, !!ds, false);
+  var ds = schedDateForOrder(oid), controls = stageControls(o, !!ds, false), canDel = canDeleteOrder(o);
   return '<div class="dw-sched">' + controls +
-    (ds ? '<span style="font-size:var(--fs-label);color:var(--ink-3);margin-left:2px">' + esc(prettyDate(ds)) + "</span>"
-      : STAGED.indexOf(oid) >= 0 ? '<span style="font-size:var(--fs-label);color:var(--ink-3)">In the staging rail — not on the board yet.</span>' : "") + "</div>";
-}
-// Very bottom of the side window, under the documents and download buttons: the Actions bar (click anywhere on its label row to open it downward).
-function actionsBar(oid) {
-  var o = order(oid); if (!o) return "";
-  if (DW_ACT_FOR !== oid) { DW_ACT_FOR = oid; DW_ACT_SHUT = true; }
-  var ds = schedDateForOrder(oid), canDel = canDeleteOrder(o);
-  return '<div class="dw-actbar' + (DW_ACT_SHUT ? " shut" : "") + '" id="dw-actbar"><button type="button" class="dw-acthead" data-actbar="1" aria-expanded="' + !DW_ACT_SHUT + '">' +
-    '<span>Actions</span><i class="arr">' + (DW_ACT_SHUT ? "&darr;" : "&uarr;") + '</i></button>' +
-    '<div class="dw-actfold"><div><div class="dw-actions">' +
     (ds ? '<button class="btn sm" data-showsched="' + oid + '" data-schedds="' + ds + '">Show On Scheduler &rarr;</button>' : "") + orderPageBtn(oid) +
-    '<span style="flex:1"></span><button class="btn del sm" data-delorder="' + oid + '"' + (canDel ? "" : ' disabled title="Billed external orders and delivered bag orders with an order number stay on file"') + ">Delete</button></div></div></div></div>";
+    '<span style="flex:1"></span><button class="btn del sm" data-delorder="' + oid + '"' + (canDel ? "" : ' disabled title="Billed external orders and delivered bag orders with an order number stay on file"') + ">Delete</button></div>";
 }
-document.addEventListener("click", function (e) {
-  var h = e.target.closest("[data-actbar]"); if (!h) return;
-  DW_ACT_SHUT = !DW_ACT_SHUT;
-  var bar = h.closest(".dw-actbar"); bar.classList.toggle("shut", DW_ACT_SHUT);
-  h.setAttribute("aria-expanded", !DW_ACT_SHUT); h.querySelector(".arr").innerHTML = DW_ACT_SHUT ? "&darr;" : "&uarr;";
-  if (!DW_ACT_SHUT) setTimeout(function () { var body = bar.closest(".dw-body"); if (body) body.scrollTo({ top: body.scrollHeight, behavior: "smooth" }); }, 230);
-});
 /* Delete from the side window: asks first, and offers Cancel Order instead, which keeps the order on file (off the Scheduler, Staging
    and every report) so it can be restored later. */
 function delOrderModal(oid) {
@@ -250,7 +230,6 @@ function openInternalOrder(o) {
   h += '</div><div class="drop" id="dw-drop" style="margin-top:9px"><b>Drop documents here</b>' +
        "Delivery receipt, signed POD, invoice — stays linked to this order.</div></div>";
 
-  h += actionsBar(o.id);
   h += "</div>";
   setDrawerHtml(h);
   $("#drawer").classList.add("on"); $("#scrim").classList.add("on");
@@ -549,7 +528,6 @@ function openTransferOrder(o) {
 
   // No Documents section on transfers — driver notes/scans go last.
   h += driverNotesHtml(o.id) + driverScansHtml(o.id);
-  h += actionsBar(o.id);
   h += "</div>";
   setDrawerHtml(h);
   $("#drawer").classList.add("on"); $("#scrim").classList.add("on");
@@ -635,7 +613,6 @@ function openOrder(oid) {
     '<button class="btn pri" data-pkg="merged">Download Merged</button>' +
     '<button class="btn" data-pkg="individual">Download Individually</button></div></div>';
 
-  h += actionsBar(oid);
   h += "</div>";
   setDrawerHtml(h);
   $("#drawer").classList.add("on"); $("#scrim").classList.add("on");
@@ -818,7 +795,7 @@ function setDrawerHtml(h) {
 }
 function closeDrawer() {
   $("#drawer").classList.remove("on"); $("#scrim").classList.remove("on");
-  $("#drawer").setAttribute("aria-hidden", "true"); DRAWER_OID = null; DRAWER_SHOWN = null; ROUTE_SEL = null; DW_ACT_FOR = null;
+  $("#drawer").setAttribute("aria-hidden", "true"); DRAWER_OID = null; DRAWER_SHOWN = null; ROUTE_SEL = null;
 }
 function packageDocs(oid) {
   var o = order(oid), ds = docsFor(oid);
