@@ -870,7 +870,7 @@
         return S.noteKey !== key ? '<button class="' + (big ? "btn" : "btn sm") + '" data-note="' + esc(key) + '">Add Note</button>' : "";
     }
     function scanBtn(key, big) {
-        return '<button class="' + (big ? "btn" : "btn sm") + '" data-scan="' + esc(key) + '">Scan POD / BOL</button>';
+        return '<button class="' + (big ? "btn" : "btn sm") + '" data-scan="' + esc(key) + '" title="Scan the POD / BOL">Scan</button>';
     }
     // Store map: a picture of the store (PNG in the storeimages folder) for bag orders.
     function storeMapUrl(o) {
@@ -880,7 +880,7 @@
     function storeMapBtn(key, big) {
         var o = orderForKey(key);
         return o && o.kind === "internal" && !o.is_transfer && storeMapUrl(o)
-            ? '<button class="btn ' + (big ? "" : "sm") + '" data-smap="' + esc(key) + '">Store Map</button>' : "";
+            ? '<button class="btn sm smap-btn" data-smap="' + esc(key) + '">Store Map</button>' : "";
     }
     function openStoreMap(key) {
         var o = orderForKey(key), url = storeMapUrl(o);
@@ -936,7 +936,6 @@
             }
         });
     }
-    function noteButtons(key, big) { return storeMapBtn(key, big) + noteBtn(key, big) + scanBtn(key, big); }
     /* The driver's own tab: each day is a rounded box with a big date; the loads inside it are hard-edged boxes. A line divides one day from the next. */
     function dayHeadHtml(ds, today, cls, loadCount) {
         var dp = dParts(ds);
@@ -965,8 +964,8 @@
                 S.chipTitle[key] = String(r.chip || "").split("\n")[0];
                 if (!r.chip && !r.notes) return;
                 if (!isLoad) { h += '<div class="dvx-note-row">' + esc(r.chip) + "</div>"; return; }
-                h += '<div><div class="load-txt' + (r.color ? "" : " unfilled") + '" style="' + fillStyle(r.color) + '">' + tabChipHtml(key, r) +
-                    '<div class="chip-scan">' + storeMapBtn(key) + scanBtn(key) + filesHtml(key) + "</div></div></div>" +
+                h += '<div><div class="load-txt' + (r.color ? "" : " unfilled") + '" style="' + fillStyle(r.color) + '">' + storeMapBtn(key) + tabChipHtml(key, r) +
+                    '<div class="chip-scan">' + scanBtn(key) + filesHtml(key) + "</div></div></div>" +
                     '<div class="mono">' + esc(rexiusOrderNo(key)) + "</div>" +
                     '<div class="dvx-note">' + esc(r.notes || "") + "</div>" +
                     '<div class="mono">' + esc(r.po_number || "") + "</div>" +
@@ -993,10 +992,10 @@
                 if (!isLoad) { h += '<div class="drv-card dvx-note-card">' + esc(r.chip) + "</div>"; return; }
                 var fields = [["Rexius Order #", rexiusOrderNo(key)], ["PO / PU #", r.po_number],
                 ["Delivery #", r.delivery_number], ["Load #", loadNo(key)]].filter(function (f) { return f[1]; });
-                h += '<div class="drv-card"><div class="load-txt' + (r.color ? "" : " unfilled") + '" style="' + fillStyle(r.color) + '">' + tabChipHtml(key, r) + "</div>" +
+                h += '<div class="drv-card"><div class="load-txt' + (r.color ? "" : " unfilled") + '" style="' + fillStyle(r.color) + '">' + storeMapBtn(key) + tabChipHtml(key, r) + "</div>" +
                     (r.notes ? '<div class="dvx-note dvx-note-card-line"><span class="dvx-note-tag">Note</span>' + esc(r.notes) + "</div>" : "") +
                     (fields.length ? "<dl>" + fields.map(function (f) { return "<dt>" + f[0] + "</dt><dd>" + esc(f[1]) + "</dd>"; }).join("") + "</dl>" : "") +
-                    '<div class="links"><span class="sp"></span>' + noteButtons(key, true) + "</div>" +
+                    '<div class="links">' + scanBtn(key) + '<span class="sp"></span>' + noteBtn(key) + "</div>" +
                     '<div class="drv-card-notes">' + (filesHtml(key) ? '<div class="scan-row">' + filesHtml(key) + "</div>" : "") + notesHtml(key) + "</div></div>";
             });
             if (!any) h += '<div class="drv-empty">Nothing scheduled</div>';

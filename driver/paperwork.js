@@ -56,7 +56,7 @@ function open(opts) {
   el.innerHTML =
     '<div class="paper-top"><button class="btn" data-pp="close" type="button">Close</button>' +
     '<div class="paper-title"><b>' + esc(opts.title || "Paperwork") + '</b><span data-pp="status">Loading…</span></div>' +
-    '<div class="paper-tools"><button class="btn" data-pp="sign" type="button" aria-pressed="false" disabled>Sign</button>' +
+    '<div class="paper-tools"><a class="btn" data-pp="raw" target="_blank" rel="noopener" hidden>Open File</a><button class="btn" data-pp="sign" type="button" aria-pressed="false" disabled>Sign</button>' +
     '<button class="btn" data-pp="undo" type="button" disabled>Undo</button>' +
     '<button class="btn" data-pp="clear" type="button" disabled>Clear</button>' +
     '<button class="btn pri" data-pp="send" type="button" disabled>Send Signed Copy</button></div></div>' +
@@ -171,10 +171,17 @@ function open(opts) {
     }
   });
 
-  Promise.all([opts.getBytes(), loadPdfJs()]).then(function (r) {
-    bytes = r[0];
-    return window.pdfjsLib.getDocument({ data: new Uint8Array(bytes.slice(0)) }).promise;
+  // If the file downloaded but the drawing view can't start, the plain file still opens in the phone's own viewer.
+  function plain() {
+    if (!bytes || dead) return;
+    var raw = $('[data-pp="raw"]');
+    raw.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })); raw.hidden = false;
+  }
+  opts.getBytes().then(function (b) {
+    bytes = b;
+    return loadPdfJs().then(function () { return window.pdfjsLib.getDocument({ data: new Uint8Array(bytes.slice(0)) }).promise; });
   }).then(render).then(function () { if (!dead) sync(); }, function (err) {
+    plain();
     if (!dead) say("Couldn't open it: " + ((err && err.message) || "try again") + ".");
   });
 }

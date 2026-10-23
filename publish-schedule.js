@@ -163,7 +163,8 @@ function buildPayload(dates, data) {
               row.delivery_number = o.delivery_number || "";
               // Map links are not sent any more: drivers see the address as text.
             }
-            row.notes = [o.driver_note, o.customer_notes].filter(Boolean).join(" \xB7 ");
+            // Bag orders never carry the Bagger Customers notes to drivers; their own driver note still goes.
+            row.notes = [o.driver_note, o.kind === "internal" ? "" : o.customer_notes].filter(Boolean).join(" \xB7 ");
           }
         } else if (!ld) {
           if (offByKey.has(`${t.truck_id}|${dt}`)) {
