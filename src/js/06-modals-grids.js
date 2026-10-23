@@ -1329,10 +1329,10 @@ function sgnOpen(opts) {
       stamps: [], sel: null, words: [], parsed: null, form: null, nextId: 1, blobUrl: "", signedBytes: null, scanned: false, readDone: false, keep: true, timer: null, discard: false, reading: false, failed: "" };
     var intake = opts.kind === "intake";
     el.innerHTML = '<div class="sgn-win"><div class="sgn-hd"><div><h2>' + (intake ? "Review Rate Con" : "Sign " + esc(({ rate_con: "Rate Con", pod: "POD / BOL", invoice: "Invoice", delivery_receipt: "Delivery Receipt" })[opts.doc.doc_type] || "Document")) + '</h2><div class="sub">' + esc(opts.name) + "</div></div>" +
-      '<span style="flex:1"></span><button class="btn" id="sgn-close" type="button">Close</button></div>' +
+      '<span style="flex:1"></span><button class="btn" id="sgn-setup" type="button" title="Type or draw your initials once; they are remembered on this computer">Set Up Initials</button><button class="btn" id="sgn-close" type="button">Close</button></div>' +
       '<div class="sgn-body"><div class="sgn-view"><div class="sgn-tools">' +
       '<button class="btn sm" data-sgntool="initials" type="button">Initials</button>' +
-      '<button class="btn sm" id="sgn-setup" type="button" title="Type or draw your initials once; they are remembered on this computer">Set Up Initials</button><span class="sep"></span>' +
+      '<span class="sep"></span>' +
       '<button class="btn sm" data-sgntool="date" type="button">Date</button><button class="btn sm" data-sgntool="text" type="button">Text Box</button>' +
       '<button class="btn sm" id="sgn-fsm" type="button" title="Smaller text">A&minus;</button><button class="btn sm" id="sgn-fsp" type="button" title="Bigger text">A+</button><span class="sep"></span>' +
       '<button class="btn sm" id="sgn-zout" type="button" title="Zoom out">&minus;</button><span id="sgn-zl" class="zl">100%</span><button class="btn sm" id="sgn-zin" type="button" title="Zoom in">+</button>' +
@@ -1386,8 +1386,8 @@ function sgnClose(silent) {
 function sgnCancel() {
   var S = SGN; if (!S) return;
   if (S.stamps.length && !S.discard) {
-    S.discard = true; var b = sgnQ("#sgn-cancel"); if (b) b.textContent = "Discard Changes?";
-    clearTimeout(S.discardT); S.discardT = setTimeout(function () { if (SGN === S) { S.discard = false; var b2 = sgnQ("#sgn-cancel"); if (b2) b2.textContent = S.kind === "intake" ? "Cancel" : "Close"; } }, 3500);
+    S.discard = true; var b = sgnQ("#sgn-cancel") || sgnQ("#sgn-close"); if (b) b.textContent = "Discard Changes?";
+    clearTimeout(S.discardT); S.discardT = setTimeout(function () { if (SGN === S) { S.discard = false; var b2 = sgnQ("#sgn-cancel") || sgnQ("#sgn-close"); if (b2) b2.textContent = S.kind === "intake" && b2.id === "sgn-cancel" ? "Cancel" : "Close"; } }, 3500);
     return;
   }
   sgnClose();
@@ -1727,7 +1727,7 @@ function sgnFooter() {
     return;
   }
   var rc = !!S.parsed;
-  box.innerHTML = '<div class="row"><button class="btn" id="sgn-cancel" type="button">Close</button><span style="flex:1"></span>' +
+  box.innerHTML = '<div class="row"><span style="flex:1"></span>' +
     '<button class="btn' + (rc ? "" : " pri") + '" id="sgn-save" type="button" title="Adds the signed copy to this order\'s documents (the original stays)">Save Copy On Order</button>' +
     (rc ? '<button class="btn pri" id="sgn-fill" type="button">Fill In Blank Boxes</button>' : "") + "</div>";
 }
