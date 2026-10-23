@@ -324,11 +324,6 @@ body.driver-app.drv-bagplant .chip.bp-bag{border:2px solid var(--ink)}
 .drv-bagplant .drv-tick{margin-left:0;font-size:var(--fs-h2)}
 .tv-zoom{display:inline-flex;align-items:center;gap:6px;margin-right:10px}
 .tv-zoom .lbl{min-width:34px;text-align:center}
-.carrier-name{margin-top:4px;font-size:var(--fs-label);font-weight:760;color:var(--ink)}
 th.carriercol{background:var(--panel-2)}
-/* A load given to an outside carrier: the carrier's name takes the bottom line of the cell and the chip gives up that much height */
-.driver-app .slotrow td>.cell.has-carrier{display:flex;flex-direction:column}
-.driver-app .slotrow .cell.has-carrier .chip{height:auto;max-height:none;flex:1 1 auto;min-height:0}
-.has-carrier .carrier-name{flex:none;margin-top:3px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Bag plant load chips: the pallet count and order number are regular weight, not bold */
 .drv-bagplant .chip.bp-bag .meta,.drv-bagplant .chip.bp-bag .meta *{font-weight:400}

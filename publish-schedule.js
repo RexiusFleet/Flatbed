@@ -149,8 +149,7 @@ function buildPayload(dates, data) {
           store_map: "",
           color: null,
           po_number: "",
-          delivery_number: "",
-          carrier: ld && ld.carrier_name ? ld.carrier_name : ""
+          delivery_number: ""
         };
         const oid = ld && ld.order_ids && ld.order_ids.length ? ld.order_ids[0] : null;
         const o = oid ? orders.get(oid) : null;
