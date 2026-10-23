@@ -317,7 +317,7 @@
         payload: null, loadKeys: {}, source: "", loadedAt: null, error: "", loading: false,
         scrollTo: null, keepScroll: false, loadOrder: {}, noteKey: null, scans: {}, chipTitle: {},
         serverNotes: {}, scanList: {}, viewSent: {}, refreshedAt: null,
-        ticker: store(BAG_PLANT ? "dept12-ticker-b" : "dept12-ticker-d") || "", zoom: Number(store("dept12-bp-zoom2")) || 1
+        ticker: store(BAG_PLANT ? "dept12-ticker-b" : "dept12-ticker-d") || "", zoom: Number(store("dept12-bp-zoom2")) || 1, pz: [0.85, 1, 1.15, 1.3, 1.5, 1.75].indexOf(Number(store("dept12-drv-zoom"))) < 0 ? 1 : Number(store("dept12-drv-zoom"))
     };
 
     /* ── Sign-in (just remembers a name on this device) ───────────────────
@@ -575,9 +575,9 @@
         var whoEl = $("#hdr-who");   // the driver page has no name/truck in the header
         if (whoEl) whoEl.innerHTML = !S.who ? "" : isBagPlant() ? "<b>Current Week</b><span>Bag Orders · View Only</span>" :
             "<b>" + esc(dFirst(S.who.name)) + "</b><span>Truck " + esc(S.who.truck) + "</span>";
-        // The bag order color code sits in the header, just left of Log Out.
-        $("#hdr").innerHTML = S.who ? bagKeyHtml() +
-            (BAG_PLANT || !NAME_PICKER ? "" : '<button class="btn drv-hbtn" id="signout">Log Out</button>') : "";
+        // The bag order color code sits in the header; the page zoom is at the far left.
+        $("#hdr").innerHTML = S.who ? bagKeyHtml() : "";
+        var hz = $("#hdr-zoom"); if (hz) hz.innerHTML = S.who && !BAG_PLANT ? pageZoomHtml() : "";
     }
     function renderTabs() {
         var tabs = $("#tabs");
@@ -643,6 +643,10 @@
     }
     // Bag plant TV: the zoom buttons (100% to start; remembered on that screen).
     var ZOOMS = [0.5, 0.6, 0.75, 0.9, 1];
+    var PZOOMS = [0.85, 1, 1.15, 1.3, 1.5, 1.75];   // the driver page's own zoom (bigger only helps on a phone)
+    function pageZoomHtml() {
+        return '<span class="tv-zoom" aria-label="Zoom"><button class="btn sm" data-pzoom="-1" title="Zoom out" aria-label="Zoom out">&minus;</button><span class="lbl">' + Math.round(S.pz * 100) + '%</span><button class="btn sm" data-pzoom="1" title="Zoom in" aria-label="Zoom in">+</button></span>';
+    }
     function zoomHtml() {
         return BAG_PLANT ? '<span class="tv-zoom" aria-label="Zoom"><button class="btn sm" data-zoom="-1" title="Zoom out">&minus;</button><span class="lbl">' + Math.round(S.zoom * 100) + '%</span><button class="btn sm" data-zoom="1" title="Zoom in">+</button></span>' : "";
     }
@@ -677,7 +681,7 @@
         // Bag plant: the whole fleet fills the screen, columns as wide as they fit.
         // Bag plant: columns share the screen exactly (its date column is 96px).
         var dateW = 88;   // the bagger page uses exactly the drivers' sizes
-        var z = isBagPlant() ? (S.zoom || 1) : 1;
+        var z = isBagPlant() ? (S.zoom || 1) : (S.pz || 1);
         var big = isBagPlant() ? ' style="--col-w:' + Math.max(150, Math.min(330, Math.floor((window.innerWidth / z - dateW - 4) / Math.max(1, cw.length)))) + 'px"' : "";
         var h = '<div class="grid-wrap"' + big + '><table class="grid" style="' + (z !== 1 ? "zoom:" + z + ";" : "") + 'width:calc(' + dateW + 'px + ' + cw.length + ' * var(--col-w,150px))"><thead><tr>' +
             '<th class="corner"><span class="lbl">Date</span></th>';
@@ -1179,6 +1183,7 @@
         var title = d ? (dFirst(d.driver) || "Unassigned") + " · " + d.truck : "Current Week";
         $("#main").innerHTML = toolbarHtml(title) + noticeHtml() +
             (d ? (NARROW.matches ? vDriverCards(d) : vDriverGrid(d)) : vCurrentWeek());
+        var pdz = $("#main .drv-pad"); if (pdz && !isBagPlant() && S.pz !== 1) pdz.style.zoom = S.pz;
         logView(d ? "own" : "cw");
         var sc = $("#main .grid-wrap, #main .drv-scroll");
         if (S.scrollTo) {
@@ -1219,6 +1224,12 @@
         var smb = e.target.closest("[data-smap]");
         if (smb) { openStoreMap(smb.getAttribute("data-smap")); return; }
         if (e.target.closest("[data-smap-close]")) { closeStoreMap(); return; }
+        var pzb = e.target.closest("[data-pzoom]");
+        if (pzb) {
+            var pi = Math.max(0, Math.min(PZOOMS.length - 1, PZOOMS.indexOf(S.pz) + Number(pzb.getAttribute("data-pzoom"))));
+            S.pz = PZOOMS[pi]; store("dept12-drv-zoom", String(S.pz)); S.keepScroll = true; render();
+            return;
+        }
         var zb = e.target.closest("[data-zoom]");
         if (zb) {
             var zi = Math.max(0, Math.min(ZOOMS.length - 1, ZOOMS.indexOf(S.zoom) + Number(zb.getAttribute("data-zoom"))));

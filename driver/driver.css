@@ -11,7 +11,9 @@ body.drv-signed-out .header-row{display:none}
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .driver-app .header-row{height:auto;min-height:52px}
 .driver-app header{height:auto;min-height:52px;padding-top:6px;padding-bottom:6px}
-.drv-hdr .brand{white-space:normal}
+.drv-hdr .brand{white-space:normal;gap:10px}
+#hdr-zoom:empty{display:none}
+#hdr-zoom .tv-zoom{margin-right:0;flex:none}
 .drv-hdr .brand,.drv-title{min-width:0;overflow-wrap:anywhere}
 /* Current Week driver columns widen with the text size too (not on the bag plant TV, which sizes its own). */
 .driver-app:not(.drv-bagplant) table.grid th.trkcol{width:max(var(--col-w,150px),13.2rem)!important}
@@ -247,7 +249,6 @@ body.driver-app.drv-bagplant .chip.bp-bag{border:2px solid var(--ink)}
   .drv-hdr .bagkey{grid-column:1/-1;grid-row:2;justify-content:space-between;margin:0;gap:2px 8px;width:100%}
   .drv-hdr .bk{gap:4px;padding:1px 0;letter-spacing:.02em;flex:0 1 auto;min-width:0}
   .drv-hdr .bk i{width:12px;height:12px;flex:none}
-  .drv-hdr #signout{grid-column:2;grid-row:1;justify-self:end}
   .drv-hdr.drv-hdr-two .brand{grid-column:1;grid-row:1}
 }
 
@@ -348,3 +349,7 @@ body.driver-app.drv-bagplant .chip.bp-bag{border:2px solid var(--ink)}
 th.carriercol{background:var(--panel-2)}
 /* Bag plant load chips: the pallet count and order number are regular weight, not bold */
 .drv-bagplant .chip.bp-bag .meta,.drv-bagplant .chip.bp-bag .meta *{font-weight:400}
+
+/* Refresh stays on the right on a phone, even when the "Last updated" times wrap onto a second line. */
+.driver-app .toolbar{flex-wrap:wrap}
+.driver-app .toolbar #refresh{margin-left:auto}
