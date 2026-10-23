@@ -626,8 +626,9 @@ table.grid td.offday,.off-hatch{background:var(--off-stripes)}
      font:800 var(--fs-body-lg) var(--font);letter-spacing:.14em;color:var(--bad);pointer-events:none}
 /* Outside-carrier lane (D115) — pinned far right, deliberately reads as not a
    real truck: grayed header, no grab cursor, no drag affordance. */
-table.grid th.trkcol.carriercol{cursor:default;opacity:.6;background:var(--panel-2)}
-table.grid td.carriercell{background:color-mix(in srgb,var(--panel-2) 55%,transparent)}
+table.grid th.trkcol.carriercol{cursor:default;background:var(--panel-2)}
+table.grid th.trkcol.carriercol .drv,table.grid th.trkcol.carriercol .trk{opacity:.6}
+table.grid td.carriercell{background:color-mix(in srgb,var(--panel-2) 55%,var(--paper))}
 .drv{font-size:var(--fs-label);font-weight:700;display:block;position:relative;padding-left:8px}
 .drv::before{content:"";position:absolute;left:0;top:1px;bottom:1px;width:3px;border-radius:var(--r-sm);
      background:var(--dc,transparent)}
@@ -668,9 +669,11 @@ td.editing{z-index:9}
    content room (72 - 8px padding). Chip height stays row height minus that
    same 8px so the relationship holds at any size, not just the default. */
 .slotrow{height:var(--row-h,84px)}
-.slotrow td{height:var(--row-h,84px);max-height:var(--row-h,84px);overflow:hidden}
-.slotrow td>.cell{height:var(--row-h,84px);max-height:var(--row-h,84px);box-sizing:border-box;overflow:hidden}
-.slotrow .chip{height:calc(var(--row-h,84px) - 8px);max-height:calc(var(--row-h,84px) - 8px);min-width:0;box-sizing:border-box;overflow:hidden;
+/* The row height is a MINIMUM: a chip with a private note, a dispatch note and flags needs more than the default, and at some zoom levels it needs more still, so the
+   row grows to fit it (up to 40px more) instead of cutting its last lines off. */
+.slotrow td{height:var(--row-h,84px)}
+.slotrow td>.cell{min-height:var(--row-h,84px);max-height:calc(var(--row-h,84px) + 40px);box-sizing:border-box;overflow:hidden}
+.slotrow .chip{height:auto;min-height:calc(var(--row-h,84px) - 8px);max-height:calc(var(--row-h,84px) + 32px);min-width:0;box-sizing:border-box;overflow:hidden;
   display:flex;flex-direction:column;justify-content:flex-start}
 .slotrow .chip .who,.slotrow .chip .meta,.slotrow .chip .flags{flex:none}
 .slotrow .chip .flags{flex-wrap:nowrap;overflow:hidden}
