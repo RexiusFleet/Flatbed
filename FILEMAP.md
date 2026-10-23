@@ -45,8 +45,10 @@ Sheets or Google Maps code any more.
 **Publishing:** dispatch edits do NOT reach drivers or the bag plant until
 **Publish Schedule** is pressed (Scheduler, Current Week, Driver Tabs). That
 builds the week in the browser and saves it as the latest published copy;
-the driver pages refresh it on load, on return to the tab, every 45 minutes,
-and with their Refresh button.
+the driver and bag plant pages check for it on load, on return to the tab and
+every 2 minutes (a small "when was it last published" call; the full schedule
+is loaded only when that is newer), with a full reload every 90 minutes as a
+backup. There is no Refresh button.
 
 ### What calls what
 
@@ -218,7 +220,7 @@ find it with `grep -n "function name" src/js/*.js`, edit it there, then run
 | Reports → Transfer: the due list for the From / Through dates, the flags for changes made after a transfer and for orders the last transfer missed, adjustments in a batch | `src/js/04-views.js` → `trfDue`, `trfFlagsHtml`, `vTransferTab`, `trfMarkModal`, `trfCsv`; database `api_transfer_list / create / lines`, tables `transfer_batches`, `transfer_batch_orders`, `transfer_adjustments` |
 | Banner on the drivers' page / bag plant page (typed on the dashboard's Current Week bar, 40 characters each, empty = hidden) | `src/js/04-views.js` → `tickerBoxesHtml`, `tickerLoadBoxes`; `supabase-api.js` → routes `ticker`, `ticker/get`; `driver/driver.js` → `tickerHtml`, `tickerLoad`. Database: `dept12_private.ticker`, `api_ticker_get/set`, `app_ticker()` |
 | Bag plant TV: zoom (`ZOOMS`, `zoomHtml`) and the Outside Carrier column (`payload.outside` built in `publish-schedule.js`; `driver_week_data` now includes loads that have a carrier and no truck) | `driver/driver.js` → `vCurrentWeek`; `publish-schedule.js` → `outside` |
-| No signal, waiting to send, saved copy (no banners: a waiting note or scan is marked on the item itself; Refresh retries) | `driver/driver.js` → `OUTBOX`, `outboxFlush`, `cacheSave`; `driver/outbox.js` |
+| No signal, waiting to send, saved copy (no banners: a waiting note or scan is marked on the item itself; the 2-minute check retries) | `driver/driver.js` → `OUTBOX`, `outboxFlush`, `cacheSave`; `driver/outbox.js` |
 | Driver page sign-in (login form, hand-off, token refresh, employee check) | `driver/driver.js` → `REQUIRE_APP_LOGIN`, `appReadLink`, `appToken`, `appStart`, `appResolve`, `vAppLogin` |
 | Fleet: add driver, add truck, put a driver on a truck, rename, Make Inactive / Reinstate, Former drivers | `app.js` → `addDriverModal`, `addTruckModal`, `spareDriversHtml`, `formerDriversHtml`; `supabase-api.js` → `driver/former` |
 | Drivers shown by first name (Matt S. when two share one) | `app.js` and `driver/driver.js` → `dFirst` |

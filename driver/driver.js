@@ -81,7 +81,6 @@
     }
     function fillStyle(hex) { return hex ? "background:" + esc(hex) + ";color:" + textOn(hex) + ";" : ""; }
 
-    var SYNC_ICON = '<span class="ico" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 8a6 6 0 0 1 10.2-4.2M14 8a6 6 0 0 1-10.2 4.2M12 2v3h-3M4 14v-3h3"/></svg></span>';
 
     /* ── State ────────────────────────────────────────────────────────────── */
     // The bag plant has its own page (bagplant/index.html sets FLATBED_MODE):
@@ -648,11 +647,7 @@
     function toolbarHtml(title) {
         return '<div class="toolbar cw-toolbar">' + (BAG_PLANT ? "" : "<h2>" + esc(title) + "</h2>") + tickerHtml() +
             '<span style="flex:1"></span>' + zoomHtml() +
-            (S.source === "published" ? '<span class="lbl" style="color:var(--good)">Last updated ' + esc(dateTimeLabel(S.loadedAt)) + "</span>" +
-                '<span class="lbl">|</span><span class="lbl">Last refreshed ' + esc(timeLabel(S.refreshedAt)) + "</span>" :
-                S.source === "live" ? '<span class="lbl" style="color:var(--good)">Updated ' + esc(timeLabel(S.loadedAt)) + "</span>" :
-                S.source === "saved" ? '<span class="lbl" style="color:var(--good)">Last updated ' + esc(dateTimeLabel(S.loadedAt)) + "</span>" : "") +
-            (BAG_PLANT ? "" : '<button class="btn pri" id="refresh"' + (S.loading ? " disabled" : "") + ">" + SYNC_ICON + (S.loading ? "Refreshing" : "Refresh") + "</button>") + "</div>";
+            (S.source === "published" || S.source === "live" || S.source === "saved" ? '<span class="lbl" style="color:var(--good)">Dispatch updated ' + esc(dateTimeLabel(S.loadedAt)) + "</span>" : "") + "</div>";
     }
     function noticeHtml() { return noticeCore(); }
     function noticeCore() {
@@ -1154,8 +1149,8 @@
         if (!DEMO && !S.payload) {
             document.body.classList.remove("drv-signed-out");
             var msg = S.loading && !S.loadedAt ? "<b>Loading the schedule…</b>"
-                : S.error ? "<b>Couldn't load the schedule.</b> " + esc(S.error) + (BAG_PLANT ? " Trying again automatically." : ' <button class="btn pri" id="refresh">Refresh</button>')
-                    : '<b>Nothing has been published yet.</b> Check back once dispatch publishes the schedule.' + (BAG_PLANT ? "" : ' <button class="btn pri" id="refresh">Refresh</button>');
+                : S.error ? "<b>Couldn't load the schedule.</b> " + esc(S.error) + " Trying again automatically."
+                    : '<b>Nothing has been published yet.</b> Check back once dispatch publishes the schedule.';
             $("#main").innerHTML = '<div class="drv-note">' + msg + "</div>";
             return;
         }
@@ -1188,8 +1183,6 @@
         S.keepScroll = false;
     }
     function renderBusy() {
-        var b = $("#refresh");
-        if (b) { b.disabled = true; b.innerHTML = SYNC_ICON + "Refreshing"; }
     }
     function openTab(tab, date) {
         if (!allowedTab(tab)) return;
@@ -1250,12 +1243,7 @@
             return;
         }
         var id = (e.target.closest("button") || {}).id;
-        if (id === "refresh") {
-            S.keepScroll = true; load();
-            OUTBOX.items.forEach(function (it) { if (it.failed) { it.failed = false; it.tries = 0; Dept12Outbox.put(it); } });
-            outboxFlush();
-        }
-        else if (id === "signout") signOut();
+        if (id === "signout") signOut();
         else if (id === "login-go" && APP_MODE) appLogin();
         else if (id === "login-go") {
             var d = driverByName($("#login-driver").value);
@@ -1265,11 +1253,13 @@
     });
     // A tablet keeps a page alive for days. If it opened before anything was published (or hit an error),
     // look again when the page is brought back, but never replace a schedule that is already showing.
-    // It also refreshes itself every 45 minutes (skipped while a driver is typing a note).
-    var REFRESH_MS = 45 * 60 * 1000;
+    // It also checks for a new schedule when the page opens and every 90 minutes as a backup to the two-minute check below (skipped while a driver is typing a note).
+    var REFRESH_MS = 90 * 60 * 1000;
     function retryIfEmpty() {
         if (DEMO || S.loading || S.noteKey) return;
-        if (!S.payload || !S.refreshedAt || Date.now() - S.refreshedAt.getTime() >= REFRESH_MS) { S.keepScroll = true; load(); }
+        if (!S.payload || !S.refreshedAt || Date.now() - S.refreshedAt.getTime() >= REFRESH_MS) {
+            S.keepScroll = true; load();
+        }
     }
     document.addEventListener("visibilitychange", function () { if (!document.hidden) retryIfEmpty(); });
     window.addEventListener("pageshow", retryIfEmpty);
@@ -1277,22 +1267,22 @@
     document.addEventListener("visibilitychange", function () { if (!document.hidden) outboxFlush(); });
     outboxLoad().then(function () { if (S.who && S.payload && OUTBOX.items.length) { S.keepScroll = true; render(); } setTimeout(outboxFlush, 2500); });
     setInterval(retryIfEmpty, 60000);
-    // Bag plant screen: no Refresh button. Every 2 minutes (and when the screen wakes) it asks when the schedule was last published
-    // and loads it again only if that is newer than what is showing. The drivers' page does not do this: they press Refresh themselves.
-    var CHECK_MS = 2 * 60 * 1000;
+    // Both pages, no Refresh button: every 2 minutes (and when the screen wakes) the page asks when the schedule was last published
+    // and loads it again only if that is newer than what is showing. The same pass gives a note or scan that failed to send another try.
+    var CHECK_MS = 120 * 1000;
     function checkPublished() {
-        if (!BAG_PLANT || DEMO || S.loading || S.noteKey || (APP_MODE && !APP.session)) return;
+        if (DEMO || S.loading || S.noteKey || (APP_MODE && !APP.session)) return;
         tickerLoad();
+        OUTBOX.items.forEach(function (it) { if (it.failed) { it.failed = false; it.tries = 0; Dept12Outbox.put(it); } });
+        outboxFlush();
         rpcPublicRead("public_published_at", {}).then(function (ts) {
             var t = ts ? Date.parse(ts) : 0;
             if (t && (!S.loadedAt || t > S.loadedAt.getTime()) && !S.loading && !S.noteKey) { S.keepScroll = true; load(); }
-        }, function () { /* not set up yet, or offline: the 45-minute refresh still runs */ });
+        }, function () { /* not set up yet, or offline: the 90-minute refresh still runs */ });
     }
-    if (BAG_PLANT) {
-        setInterval(checkPublished, CHECK_MS);
-        document.addEventListener("visibilitychange", function () { if (!document.hidden) checkPublished(); });
-        window.addEventListener("pageshow", checkPublished);
-    }
+    setInterval(checkPublished, CHECK_MS);
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) checkPublished(); });
+    window.addEventListener("pageshow", checkPublished);
     document.addEventListener("input", function (e) {
         if (e.target.id === "login-driver") { $("#login-go").disabled = !e.target.value.trim(); $("#login-err").textContent = ""; }
     });
