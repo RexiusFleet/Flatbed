@@ -149,7 +149,8 @@ function buildPayload(dates, data) {
           store_map: "",
           color: null,
           po_number: "",
-          delivery_number: ""
+          delivery_number: "",
+          carrier: ld && ld.carrier_name ? ld.carrier_name : ""
         };
         const oid = ld && ld.order_ids && ld.order_ids.length ? ld.order_ids[0] : null;
         const o = oid ? orders.get(oid) : null;
@@ -203,6 +204,8 @@ function buildPayload(dates, data) {
     truck_id: t.truck_id,
     rows: truckRows(t, true)
   }));
+  // Loads given to an outside carrier have no truck: the bag plant page shows them as one extra column, with the carrier's name.
+  const outside = data.loads.some((l) => !l.truck_id) ? { header: "Outside Carrier", rows: truckRows({ truck_id: null, driver_color: null }, true) } : null;
   return {
     week_start: dates[0],
     week_end: dates[dates.length - 1],
@@ -210,7 +213,8 @@ function buildPayload(dates, data) {
     slots_per_day: 3,
     dates,
     drivers,
-    current_week: currentWeek
+    current_week: currentWeek,
+    outside
   };
 }
 async function push(d, rpc) {

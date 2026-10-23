@@ -696,10 +696,35 @@ function vScheduler() {
    through to the same data — edit here or on the Scheduler, both stay in sync.
    This is the slice that mirrors to the driver-facing sheet (legacy Code.js:774
    updateDriverTabs). */
+/* The banner on the drivers' page and on the bag plant page: two boxes on this bar, up to 40 characters each, empty = nothing shows. No Save button: leaving
+   a box (or Enter) sends it. The pages pick it up when they refresh (the bag plant checks every 2 minutes). */
+var TICKER = null;
+function tickerBoxesHtml() {
+  var t = TICKER || { drivers: "", bagger: "" };
+  return '<span class="cw-ticks"><input class="cw-tick" data-tick="drivers" maxlength="40" value="' + esc(t.drivers) + '" placeholder="Drivers page banner (40 max)" aria-label="Banner on the drivers\' page">' +
+    '<input class="cw-tick" data-tick="bagger" maxlength="40" value="' + esc(t.bagger) + '" placeholder="Bag plant banner (40 max)" aria-label="Banner on the bag plant page"></span>';
+}
+function tickerLoadBoxes() {
+  if (TICKER) return;
+  api("ticker/get", {}).then(function (t) {
+    TICKER = { drivers: (t && t.drivers) || "", bagger: (t && t.bagger) || "" };
+    [].forEach.call(document.querySelectorAll("[data-tick]"), function (i) { if (document.activeElement !== i) i.value = TICKER[i.dataset.tick] || ""; });
+  }, function () { /* the banner SQL has not been run yet: the boxes stay empty */ });
+}
+document.addEventListener("change", function (e) {
+  var i = e.target.closest && e.target.closest("[data-tick]"); if (!i) return;
+  var v = i.value.trim().slice(0, 40); i.value = v;
+  var body = {}; body[i.dataset.tick] = v;
+  api("ticker", body).then(function (t) {
+    TICKER = { drivers: (t && t.drivers) || "", bagger: (t && t.bagger) || "" };
+    toast(v ? "Banner set. The page shows it the next time it refreshes." : "Banner cleared.");
+  }).catch(function (err) { toast(err.message, true); });
+});
 function vCurrentWeek() {
+  setTimeout(tickerLoadBoxes, 0);
   var h = toolbarHtml("Current Week", {
     className: "cw-toolbar",
-    context: ""
+    context: tickerBoxesHtml()
   });
   var dates = currentWeekDates();
   h += '<div class="grid-wrap"><table class="grid" style="width:' +

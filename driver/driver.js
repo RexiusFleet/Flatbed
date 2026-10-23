@@ -233,8 +233,14 @@
         return rpcPublic("app_driver_by_employee", { p_emp: emp }).then(function (r) {
             if (!r) { APP.empState = "unknown"; S.who = null; return; }
             APP.empState = "ok"; S.who = { role: "driver", truck: r.truck == null ? "" : String(r.truck), name: r.name, emp: emp, all: !!r.all_tabs };
+            storeJson("dept12-who-cache", { emp: emp, who: S.who });
             S.tab = S.who.truck ? S.who.truck : "cw"; store("dept12DriverTab", S.tab);
-        }, function (e) { if (e && e.needLogin) return; APP.empState = "error"; APP.err = e.message || String(e); S.who = null; });
+        }, function (e) {
+            if (e && e.needLogin) return;
+            var c = storeJson("dept12-who-cache");
+            if (e && e.network && c && c.emp === emp && c.who) { S.who = c.who; APP.empState = "ok"; S.tab = S.who.truck ? S.who.truck : "cw"; return; }   // no signal: the last answer for this number
+            APP.empState = "error"; APP.err = e.message || String(e); S.who = null;
+        });
     }
     function appStart() {            // after a sign-in or a hand-off: work out who, then show the schedule
         return appResolve().then(function () { S.payload = null; S.source = ""; render(); load(); loadScans(); });
@@ -264,19 +270,28 @@
     };
 
     // Functions in Supabase. With the public key alone today; in app mode with the signed-in session (the page sends the session's token).
+    // Every request has a time limit: on a weak signal a request can hang for minutes, so it gives up (as a "no signal" failure) and the retry logic takes over.
+    function fetchTimeout(url, opts, ms) {
+        var ctl = window.AbortController ? new AbortController() : null, t = ctl ? setTimeout(function () { ctl.abort(); }, ms) : null;
+        if (ctl) opts = Object.assign({}, opts, { signal: ctl.signal });
+        return fetch(url, opts).then(function (r) { clearTimeout(t); return r; }, function (e) {
+            clearTimeout(t);
+            if (e && e.name === "AbortError") e = new Error("The connection timed out");
+            e.network = true; throw e;      // no answer at all (Safari says "Load failed")
+        });
+    }
     function rpcPublic(fn, args) {
         if (!SB_URL || !SB_KEY) return Promise.reject(new Error("The schedule isn't connected yet."));
         return (APP_MODE ? appToken() : Promise.resolve(null)).then(function (token) {
             var h = { "apikey": SB_KEY, "Content-Type": "application/json" };
             if (token) h["Authorization"] = "Bearer " + token;
-            return fetch(SB_URL + "/rest/v1/rpc/" + fn, { method: "POST", headers: h, body: JSON.stringify(args || {}) })
-                .catch(function (e) { e.network = true; throw e; });      // no answer at all (Safari says "Load failed")
+            return fetchTimeout(SB_URL + "/rest/v1/rpc/" + fn, { method: "POST", headers: h, body: JSON.stringify(args || {}) }, 20000);
         }).then(function (r) {
             return r.text().then(function (t) {
                 var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) { /* plain text */ }
                 if (!r.ok) {
-                    if (APP_MODE && r.status === 401) { appClearSession(); APP.err = "Your sign-in ended. Sign in again."; try { render(); } catch (x) { /* nothing to draw yet */ } throw appNeedLogin(); }
-                    throw new Error((j && j.message) || ("Request failed (" + r.status + ")"));
+                    if (APP_MODE && r.status === 401) { appClearSession(); APP.err = "Your sign-in ended. Sign in again."; try { render(); } catch (x) { /* nothing to draw yet */ } }
+                    var fail = new Error((j && j.message) || ("Request failed (" + r.status + ")")); fail.status = r.status; throw fail;
                 }
                 return j;
             });
@@ -301,7 +316,8 @@
             APP_MODE ? null : (function (w) { return w && w.role === "driver" ? w : null; })(storeJson("dept12DriverWho")), tab: BAG_PLANT ? "cw" : (store("dept12DriverTab") || "cw"),
         payload: null, loadKeys: {}, source: "", loadedAt: null, error: "", loading: false,
         scrollTo: null, keepScroll: false, loadOrder: {}, noteKey: null, scans: {}, chipTitle: {},
-        serverNotes: {}, scanList: {}, viewSent: {}, refreshedAt: null
+        serverNotes: {}, scanList: {}, viewSent: {}, refreshedAt: null,
+        ticker: store(BAG_PLANT ? "dept12-ticker-b" : "dept12-ticker-d") || "", zoom: Number(store("dept12-bp-zoom")) || 0.75
     };
 
     /* ── Sign-in (just remembers a name on this device) ───────────────────
@@ -335,6 +351,11 @@
     }
 
     /* ── Data ─────────────────────────────────────────────────────────────── */
+    // The last schedule that loaded is kept on the phone, so reopening the page with no signal still shows it (with a "No signal" note).
+    function cacheSave(pub) {
+        try { localStorage.setItem("dept12-sched-cache", JSON.stringify({ payload: pub.payload, raw: pub.raw, published_at: pub.published_at, saved_at: Date.now() })); } catch (e) { /* storage full: skip */ }
+    }
+    function cacheLoad() { try { return JSON.parse(localStorage.getItem("dept12-sched-cache") || "null"); } catch (e) { return null; } }
     function load() {
         if (S.loading || (APP_MODE && !APP.session)) return;      // nothing is asked of the database until someone is signed in
         S.loading = true; renderBusy();
@@ -349,8 +370,12 @@
                 if (!pub) { S.payload = null; S.source = ""; S.error = ""; return; }   // nothing published yet
                 S.payload = pub.payload; raw = pub.raw; S.source = "published";
                 S.loadedAt = new Date(pub.published_at); S.refreshedAt = new Date(); S.error = "";
+                cacheSave(pub);
             }, function (e) {
                 S.error = e.message || String(e);   // keep whatever was on screen
+                // No signal and nothing on screen yet (the page was just reopened): show the copy saved on this phone.
+                var c = e && e.network && !S.payload ? cacheLoad() : null;
+                if (c) { S.payload = c.payload; raw = c.raw; S.source = "saved"; S.savedAt = c.saved_at; S.loadedAt = new Date(c.published_at); S.refreshedAt = null; S.error = ""; }
             });
         }
         first.then(function () {
@@ -374,7 +399,7 @@
             S.loading = false;
             reconcileWho();
             if (S.noteKey) { renderHeader(); } else render();
-            loadActivity();
+            loadActivity(); tickerLoad();
         }).catch(function (e) {
             // Anything unexpected: say what it was on the page instead of sitting blank.
             S.loading = false; S.error = (e && e.message) || String(e);
@@ -606,15 +631,36 @@
         return '<span class="bagkey" aria-label="Bag order color code"><span class="bagkey-t">Bag order color code</span>' +
             items.map(function (x) { return '<span class="bk"><i style="background:' + x[1] + '"></i>' + x[0] + "</span>"; }).join("") + "</span>";
     }
+    // The banner the office types on the dashboard's Current Week bar (40 characters), one for this page. Nothing shows when it is empty.
+    function tickerHtml() { return S.ticker ? '<span class="drv-tick">' + esc(S.ticker) + "</span>" : ""; }
+    function tickerLoad() {
+        if (DEMO || (APP_MODE && !APP.session)) return;
+        rpcPublicRead("app_ticker", {}).then(function (t) {
+            var v = String((t && (BAG_PLANT ? t.bagger : t.drivers)) || "").slice(0, 40);
+            store(BAG_PLANT ? "dept12-ticker-b" : "dept12-ticker-d", v);
+            if (v !== (S.ticker || "")) { S.ticker = v; if (S.payload && !S.noteKey) { S.keepScroll = true; render(); } }
+        }, function () { /* no signal or not set up yet: keep what is showing */ });
+    }
+    // Bag plant TV: zoom out so the whole fleet and several days fit (75% to start; the buttons are remembered on that screen).
+    var ZOOMS = [0.5, 0.6, 0.75, 0.9, 1];
+    function zoomHtml() {
+        return BAG_PLANT ? '<span class="tv-zoom" aria-label="Zoom"><button class="btn sm" data-zoom="-1" title="Zoom out">&minus;</button><span class="lbl">' + Math.round(S.zoom * 100) + '%</span><button class="btn sm" data-zoom="1" title="Zoom in">+</button></span>' : "";
+    }
     function toolbarHtml(title) {
-        return '<div class="toolbar cw-toolbar"><h2>' + esc(title) + "</h2>" +
-            '<span style="flex:1"></span>' +
+        return '<div class="toolbar cw-toolbar">' + (BAG_PLANT ? "" : "<h2>" + esc(title) + "</h2>") + tickerHtml() +
+            '<span style="flex:1"></span>' + zoomHtml() +
             (S.source === "published" ? '<span class="lbl" style="color:var(--good)">Last updated ' + esc(dateTimeLabel(S.loadedAt)) + "</span>" +
                 '<span class="lbl">|</span><span class="lbl">Last refreshed ' + esc(timeLabel(S.refreshedAt)) + "</span>" :
-                S.source === "live" ? '<span class="lbl" style="color:var(--good)">Updated ' + esc(timeLabel(S.loadedAt)) + "</span>" : "") +
+                S.source === "live" ? '<span class="lbl" style="color:var(--good)">Updated ' + esc(timeLabel(S.loadedAt)) + "</span>" :
+                S.source === "saved" ? '<span class="lbl" style="color:var(--warn)">Saved copy · last updated ' + esc(dateTimeLabel(S.loadedAt)) + "</span>" : "") +
             (BAG_PLANT ? "" : '<button class="btn pri" id="refresh"' + (S.loading ? " disabled" : "") + ">" + SYNC_ICON + (S.loading ? "Refreshing" : "Refresh") + "</button>") + "</div>";
     }
-    function noticeHtml() {
+    // What a driver should know about the connection: showing a saved copy, and anything waiting to send.
+    function offlineNotice() {
+        return (S.source === "saved" ? '<div class="drv-note"><b>No signal.</b> Showing the schedule saved ' + esc(timeLabel(new Date(S.savedAt))) + ". It updates by itself when you are back online.</div>" : "") + outboxNotice();
+    }
+    function noticeHtml() { return offlineNotice() + noticeCore(); }
+    function noticeCore() {
         if (APP_MODE && !BAG_PLANT && !S.who) {
             // No employee number, or one the database doesn't know: just Current Week, no personal tab and no banner. Only a real failure is said out loud.
             return (APP.empState === "error" ? '<div class="drv-note"><b>Couldn\'t check who you are.</b> ' + esc(APP.err) + "</div>" : "") +
@@ -629,14 +675,18 @@
 
     /* ── Current Week ─────────────────────────────────────────────────────── */
     function vCurrentWeek() {
-        var p = S.payload, cw = p.current_week, today = todayIso(), mine = S.who && S.who.role === "driver" ? String(S.who.truck) : "";
+        var p = S.payload, cw = p.current_week.slice(), today = todayIso(), mine = S.who && S.who.role === "driver" ? String(S.who.truck) : "";
+        // Bag plant only: loads given to an outside carrier get one extra column at the far right, with the carrier's name (the word "brokered" is not used).
+        if (isBagPlant() && p.outside) cw.push({ outside: true, truck: "", truck_id: null, driver: "Outside Carrier", equipment_type: "", driver_color: null, rows: p.outside.rows });
         // Bag plant: the whole fleet fills the screen, columns as wide as they fit.
         // Bag plant: columns share the screen exactly (its date column is 96px).
         var dateW = 88;   // the bagger page uses exactly the drivers' sizes
-        var big = isBagPlant() ? ' style="--col-w:' + Math.max(210, Math.floor((window.innerWidth - dateW - 4) / Math.max(1, cw.length))) + 'px"' : "";
-        var h = '<div class="grid-wrap"' + big + '><table class="grid" style="width:calc(' + dateW + 'px + ' + cw.length + ' * var(--col-w,150px))"><thead><tr>' +
+        var z = isBagPlant() ? (S.zoom || 0.75) : 1;
+        var big = isBagPlant() ? ' style="--col-w:' + Math.max(150, Math.min(330, Math.floor((window.innerWidth / z - dateW - 4) / Math.max(1, cw.length)))) + 'px"' : "";
+        var h = '<div class="grid-wrap"' + big + '><table class="grid" style="' + (z !== 1 ? "zoom:" + z + ";" : "") + 'width:calc(' + dateW + 'px + ' + cw.length + ' * var(--col-w,150px))"><thead><tr>' +
             '<th class="corner"><span class="lbl">Date</span></th>';
         cw.forEach(function (t) {
+            if (t.outside) { h += '<th class="trkcol carriercol" style="width:var(--col-w,150px);cursor:default"><span class="drv">' + esc(t.driver) + "</span></th>"; return; }
             var open = allowedTab(String(t.truck));
             h += '<th class="trkcol' + (t.driver_color ? " has-dc" : "") + '" style="' + (t.driver_color ? "--dc:" + esc(/^#[0-9a-f]{8}$/i.test(t.driver_color) ? t.driver_color.slice(0, 7) : t.driver_color) + ";" : "") + 'width:var(--col-w,150px)' + (open ? "" : ";cursor:default") + '"' +
                 (open ? ' data-tab="' + esc(t.truck) + '" title="Open ' + esc(dFirst(t.driver) || t.truck) + '\'s tab"' : "") + ">" +
@@ -668,7 +718,8 @@
                     // flags), big for bag orders and quieter for everything else.
                     if (ord && (isBagPlant() || (ord.kind !== "internal" && !ord.is_transfer))) {
                         var kindCls = !isBagPlant() ? "" : S.loadKind[key] === "bag" ? "bp-bag" : ord.kind !== "internal" && !ord.is_transfer ? "bp-ext" : "bp-other";
-                        h += '<td><div class="cell">' + dashChipHtml(ord, r, go, kindCls, isBagPlant() ? "" : t.driver_color) + "</div></td>"; return;
+                        h += '<td><div class="cell' + (t.outside && r.carrier ? " has-carrier" : "") + '">' + dashChipHtml(ord, r, go, kindCls, isBagPlant() ? "" : t.driver_color) +
+                            (t.outside && r.carrier ? '<div class="carrier-name">' + esc(r.carrier) + "</div>" : "") + "</div></td>"; return;
                     }
                     if (isBagPlant()) { h += bagPlantCell(lines, r, S.loadKind[key]); return; }
                     h += '<td><div class="cell"><div class="chip' + (r.color ? " filled" : "") + '"' +
@@ -771,9 +822,12 @@
         var oid = noteId(key);
         if (!oid) return [];
         var list = DEMO ? ((storeJson("dept12DriverNotes") || {})[oid] || []) : (S.serverNotes[oid] || []);
+        list = list.concat(OUTBOX.items.filter(function (it) { return it.type === "note" && it.oid === oid; }).map(function (it) {
+            return { id: it.id, text: it.text, at: new Date(it.at).toISOString(), pending: true };
+        }));
         return list.slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; });
     }
-    // Resolves true when saved, false when there was nothing to save.
+    // Resolves true when kept (sent, or saved on the phone and waiting for signal), false when there was nothing to save.
     function saveNote(key, text) {
         var oid = noteId(key), t = String(text || "").trim();
         if (!oid || !t || !S.who) return Promise.resolve(false);
@@ -783,17 +837,13 @@
             storeJson("dept12DriverNotes", all);
             return Promise.resolve(true);
         }
-        return (APP_MODE ? rpcPublic("app_add_driver_note", { p_emp: S.who.emp, p_order_id: oid, p_body: t })
-            : rpcPublic("public_add_driver_note", { p_order_id: oid, p_driver: S.who.name, p_truck: String(S.who.truck), p_body: t }))
-            .then(function (r) {
-                (S.serverNotes[oid] = S.serverNotes[oid] || []).push({ id: r.id, truck: S.who.truck, driver: S.who.name, text: t, at: r.created_at });
-                return true;
-            });
+        return Dept12Outbox.add({ type: "note", key: key, oid: oid, emp: S.who.emp, driver: S.who.name, truck: String(S.who.truck), text: t, tries: 0 })
+            .then(function (id) { return outboxFlush().then(function () { return true; }); });
     }
     function notesHtml(key) {
         var list = notesFor(key), h = "";
         if (list.length) h += '<div class="drv-notes">' + list.map(function (n) {
-            return '<div class="drv-note-item"><span>' + esc(whenLabel(n.at)) + "</span>" + esc(n.text) + "</div>";
+            return '<div class="drv-note-item' + (n.pending ? " pending" : "") + '"><span>' + esc(n.pending ? "Waiting to send" : whenLabel(n.at)) + "</span>" + esc(n.text) + "</div>";
         }).join("") + "</div>";
         if (S.noteKey === key) h += '<div class="drv-note-edit"><textarea id="note-draft" rows="3" aria-label="Note for dispatch" ' +
             'placeholder="Waiting at the receiver, bad site, anything dispatch should know"></textarea>' +
@@ -832,19 +882,74 @@
         var m = /\/\d+__([^/]+)\.pdf$/.exec(String(path || ""));
         return m ? m[1].replace(/_/g, " ") + ".pdf" : "";
     }
+    /* ── Outbox: notes and scans that have not reached the office yet ───────────
+       They are kept on the phone (outbox.js) and sent one at a time. No signal, a timeout or a closed page just leaves them waiting: they go again after 15 s, 30 s, 1 min, then every 2 min,
+       when the phone comes back online, and when the screen wakes. Sending again is safe: a scan keeps the same file name on every try and the database recognises a repeat. */
+    var OUTBOX = { items: [], busy: false, timer: null, tries: 0, urls: {} };
+    function outboxUrl(it) { return OUTBOX.urls[it.id] || (OUTBOX.urls[it.id] = it.blob ? URL.createObjectURL(it.blob) : ""); }
+    function outboxLoad() {
+        if (!window.Dept12Outbox) return Promise.resolve();
+        return Dept12Outbox.all().then(function (l) { OUTBOX.items = l; }, function () { OUTBOX.items = []; });
+    }
+    function outboxSendOne(it) {
+        if (it.type === "note") {
+            return APP_MODE ? rpcPublic("app_add_driver_note", { p_emp: it.emp, p_order_id: it.oid, p_body: it.text })
+                : rpcPublic("public_add_driver_note", { p_order_id: it.oid, p_driver: it.driver, p_truck: it.truck, p_body: it.text });
+        }
+        return (APP_MODE ? appToken() : Promise.resolve(null)).then(function (token) {
+            var h = { "apikey": SB_KEY, "Content-Type": "application/pdf", "x-upsert": "false" };
+            if (token) h["Authorization"] = "Bearer " + token;
+            return fetchTimeout(SB_URL + "/storage/v1/object/driver-scans/" + it.path, { method: "POST", headers: h, body: it.blob }, 90000);
+        }).then(function (r) {
+            if (r.ok) return null;
+            return r.text().then(function (t) {
+                if (/"statusCode":"?409|Duplicate/i.test(t)) return null;      // this exact file is already there: an earlier try got through
+                var fail = new Error("the upload failed (" + r.status + ")"); fail.status = r.status; throw fail;
+            });
+        }).then(function () {
+            return APP_MODE ? rpcPublic("app_register_scan", { p_emp: it.emp, p_order_id: it.oid, p_path: it.path, p_pages: it.pages })
+                : rpcPublic("public_register_scan", { p_order_id: it.oid, p_path: it.path, p_pages: it.pages, p_driver: it.driver, p_truck: it.truck });
+        });
+    }
+    function outboxFlush() {
+        if (OUTBOX.busy || DEMO || !window.Dept12Outbox) return Promise.resolve();
+        OUTBOX.busy = true; clearTimeout(OUTBOX.timer);
+        var sent = 0, paused = false;
+        return outboxLoad().then(function () {
+            return OUTBOX.items.filter(function (it) { return !it.failed; }).reduce(function (chain, it) {
+                return chain.then(function () {
+                    if (paused) return;
+                    return outboxSendOne(it).then(function () { sent++; return Dept12Outbox.remove(it.id); }, function (err) {
+                        if (err && (err.network || err.needLogin || err.status === 401)) { paused = true; return; }   // no signal, or signed out: keep it and try later
+                        it.tries = (it.tries || 0) + 1; it.error = (err && err.message) || "Not sent";
+                        if (it.tries >= 3) it.failed = true;
+                        return Dept12Outbox.put(it);
+                    });
+                });
+            }, Promise.resolve());
+        }).then(outboxLoad).then(function () {
+            OUTBOX.busy = false;
+            Object.keys(OUTBOX.urls).forEach(function (id) { if (!OUTBOX.items.some(function (it) { return it.id === id; })) { URL.revokeObjectURL(OUTBOX.urls[id]); delete OUTBOX.urls[id]; } });
+            var waiting = OUTBOX.items.filter(function (it) { return !it.failed; }).length;
+            if (waiting) { OUTBOX.tries = paused ? OUTBOX.tries + 1 : 0; OUTBOX.timer = setTimeout(outboxFlush, Math.min(120000, 15000 * Math.pow(2, Math.min(OUTBOX.tries, 3)))); }
+            else OUTBOX.tries = 0;
+            if (sent) { loadScans(); loadActivity(); if (OUTBOX.had) toast(sent + " waiting " + (sent > 1 ? "items were" : "item was") + " sent"); }
+            OUTBOX.had = waiting > 0 || OUTBOX.items.length > 0;
+            if (S.who && S.payload && !S.noteKey) { S.keepScroll = true; render(); }
+        }, function () { OUTBOX.busy = false; });
+    }
+    function outboxNotice() {
+        var wait = OUTBOX.items.filter(function (it) { return !it.failed; }).length, bad = OUTBOX.items.filter(function (it) { return it.failed; });
+        return (wait ? '<div class="drv-note"><b>' + wait + " waiting to send.</b> They go out by themselves when you have a signal. " + (OUTBOX.busy ? "Sending…" : '<button class="btn sm" id="outbox-now">Send Now</button>') + "</div>" : "") +
+            (bad.length ? '<div class="drv-note"><b>' + bad.length + " couldn't be sent.</b> " + esc(bad[0].error || "") + ' <button class="btn sm" id="outbox-retry">Try Again</button></div>' : "");
+    }
+    // A scan (or a signed copy) is saved on the phone first, then sent. With no signal it waits in the outbox and goes out by itself; the file is never lost.
     function sendScan(key, blob, pages, name) {
         var oid = S.loadOrder[key];
         if (DEMO || !oid) return saveScan(key, blob, pages);   // sample mode: this device only
         var path = oid + "/" + Date.now() + scanSafeName(name) + ".pdf";
-        return (APP_MODE ? appToken() : Promise.resolve(null)).then(function (token) {
-            var h = { "apikey": SB_KEY, "Content-Type": "application/pdf", "x-upsert": "false" };
-            if (token) h["Authorization"] = "Bearer " + token;
-            return fetch(SB_URL + "/storage/v1/object/driver-scans/" + path, { method: "POST", headers: h, body: blob });
-        }).then(function (r) {
-            if (!r.ok) throw new Error("the upload failed (" + r.status + ")");
-            return APP_MODE ? rpcPublic("app_register_scan", { p_emp: S.who.emp, p_order_id: oid, p_path: path, p_pages: pages })
-                : rpcPublic("public_register_scan", { p_order_id: oid, p_path: path, p_pages: pages, p_driver: S.who.name, p_truck: String(S.who.truck) });
-        }).then(function () { return saveScan(key, blob, pages).catch(function () { /* the dashboard has it either way */ }); });
+        return Dept12Outbox.add({ type: "scan", key: key, oid: oid, emp: S.who.emp, driver: S.who.name, truck: String(S.who.truck), path: path, blob: blob, pages: pages, tries: 0 })
+            .then(function (id) { return outboxFlush().then(function () { return OUTBOX.items.some(function (it) { return it.id === id; }) ? "queued" : "sent"; }); });
     }
     // Latest scan per load made on this device, for the View PDF link.
     function loadScans() {
@@ -868,14 +973,19 @@
     function scanList(key) {
         var oid = S.loadOrder[key], list = S.scanList && S.scanList[oid], o = orderForKey(key), label = (o && (o.rexius_order_no || o.broker_load_no)) || "Scan", n = 0;
         if (!list || !list.length) {
-            var loc = S.scans[key];
-            return loc ? [{ pages: loc.pages, at: loc.at, url: loc.url, name: label + " scan1.pdf" }] : [];
+            var loc = S.scans[key], waiting = OUTBOX.items.some(function (it) { return it.type === "scan" && it.oid === oid; });
+            if (!waiting) return loc ? [{ pages: loc.pages, at: loc.at, url: loc.url, name: label + " scan1.pdf" }] : [];
+            list = [];
         }
-        return list.map(function (sc) { return Object.assign({}, sc, { name: scanNameOf(sc.path) || label + " scan" + (++n) + ".pdf" }); });
+        var out = (list || []).map(function (sc) { return Object.assign({}, sc, { name: scanNameOf(sc.path) || label + " scan" + (++n) + ".pdf" }); });
+        OUTBOX.items.filter(function (it) { return it.type === "scan" && it.oid === oid; }).forEach(function (it) {
+            out.push({ pages: it.pages, at: new Date(it.at), url: outboxUrl(it), name: scanNameOf(it.path) || label + " scan" + (++n) + ".pdf", pending: true, failed: !!it.failed });
+        });
+        return out;
     }
     function scanHtml(key) {
         return scanList(key).map(function (sc, i) {
-            return (sc.url || sc.path) ? '<button class="pdfchip" type="button" data-scanview="' + esc(key) + "|" + i + '" title="Open ' + esc(sc.name) + '">' + PDF_ICON + '<span class="nm">' + esc(sc.name) + "</span></button>"
+            return (sc.url || sc.path) ? '<button class="pdfchip' + (sc.pending ? " pending" : "") + '" type="button" data-scanview="' + esc(key) + "|" + i + '" title="' + (sc.pending ? (sc.failed ? "Couldn't be sent yet. " : "Waiting to send. ") : "") + "Open " + esc(sc.name) + '">' + PDF_ICON + '<span class="nm">' + esc(sc.name) + "</span>" + (sc.pending ? '<span class="pend">' + (sc.failed ? "Not sent" : "Waiting to send") + "</span>" : "") + "</button>"
                 : '<span class="pdfchip" title="Sent to the office">' + PDF_ICON + '<span class="nm">' + esc(sc.name) + "</span></span>";
         }).join("");
     }
@@ -932,7 +1042,7 @@
         return appToken().then(function (token) {
             var h = { "apikey": SB_KEY };
             if (token) h["Authorization"] = "Bearer " + token;
-            return fetch(SB_URL + "/storage/v1/object/authenticated/" + bucket + "/" + path.split("/").map(encodeURIComponent).join("/"), { headers: h });
+            return fetchTimeout(SB_URL + "/storage/v1/object/authenticated/" + bucket + "/" + path.split("/").map(encodeURIComponent).join("/"), { headers: h }, 60000);
         }).then(function (r) {
             if (!r.ok) throw new Error("the file could not be opened (" + r.status + ")");
             return r.arrayBuffer();
@@ -945,8 +1055,9 @@
             title: S.chipTitle[key] || d.name,
             getBytes: function () { return storageBytes("documents", d.path); },
             onDone: function (blob, pages) {
-                return sendScan(key, blob, pages, "Signed " + d.name).then(function () {
-                    loadScans(); loadActivity(); toast("Signed copy sent · " + pages + " page" + (pages > 1 ? "s" : ""));
+                return sendScan(key, blob, pages, "Signed " + d.name).then(function (state) {
+                    loadScans(); loadActivity();
+                    toast(state === "queued" ? "Saved on your phone. It sends when you have signal." : "Signed copy sent · " + pages + " page" + (pages > 1 ? "s" : ""));
                 });
             }
         });
@@ -1110,13 +1221,20 @@
             ns.disabled = true;
             saveNote(ns.getAttribute("data-note-save"), $("#note-draft").value).then(function (saved) {
                 if (!saved) { ns.disabled = false; var d = $("#note-draft"); if (d) d.focus(); return; }
-                S.noteKey = null; S.keepScroll = true; render(); toast("Note saved");
+                S.noteKey = null; S.keepScroll = true; render();
+                toast(OUTBOX.items.some(function (it) { return it.type === "note" && it.key === ns.getAttribute("data-note-save"); }) ? "Saved. It sends when you have signal." : "Note saved");
             }, function (err) { ns.disabled = false; toast("Couldn't save the note: " + err.message, true); });
             return;
         }
         var smb = e.target.closest("[data-smap]");
         if (smb) { openStoreMap(smb.getAttribute("data-smap")); return; }
         if (e.target.closest("[data-smap-close]")) { closeStoreMap(); return; }
+        var zb = e.target.closest("[data-zoom]");
+        if (zb) {
+            var zi = Math.max(0, Math.min(ZOOMS.length - 1, ZOOMS.indexOf(S.zoom) + Number(zb.getAttribute("data-zoom"))));
+            S.zoom = ZOOMS[zi < 0 ? 2 : zi]; store("dept12-bp-zoom", String(S.zoom)); S.keepScroll = true; render();
+            return;
+        }
         var vb = e.target.closest("[data-scanview]");
         if (vb) {
             var vp = vb.getAttribute("data-scanview").split("|");
@@ -1134,15 +1252,21 @@
             var skey = sb.getAttribute("data-scan");
             window.Dept12Scanner.open({
                 title: S.chipTitle[skey] || "", onDone: function (blob, pages, scanName) {
-                    sendScan(skey, blob, pages, scanName).then(function () {
-                        loadScans(); loadActivity(); toast("POD / BOL sent · " + pages + " page" + (pages > 1 ? "s" : ""));
+                    sendScan(skey, blob, pages, scanName).then(function (state) {
+                        loadScans(); loadActivity();
+                        toast(state === "queued" ? "Saved on your phone. It sends when you have signal." : "POD / BOL sent · " + pages + " page" + (pages > 1 ? "s" : ""));
                     }, function (err) { toast("Couldn't send the scan: " + ((err && err.message) || "try again") + ".", true); });
                 }
             });
             return;
         }
         var id = (e.target.closest("button") || {}).id;
-        if (id === "refresh") { S.keepScroll = true; load(); }
+        if (id === "refresh") { S.keepScroll = true; load(); outboxFlush(); }
+        else if (id === "outbox-now") outboxFlush();
+        else if (id === "outbox-retry") {
+            OUTBOX.items.forEach(function (it) { if (it.failed) { it.failed = false; it.tries = 0; Dept12Outbox.put(it); } });
+            outboxFlush();
+        }
         else if (id === "signout") signOut();
         else if (id === "login-go" && APP_MODE) appLogin();
         else if (id === "login-go") {
@@ -1161,12 +1285,16 @@
     }
     document.addEventListener("visibilitychange", function () { if (!document.hidden) retryIfEmpty(); });
     window.addEventListener("pageshow", retryIfEmpty);
+    window.addEventListener("online", function () { S.keepScroll = true; if (!DEMO && !S.loading && !S.noteKey) load(); outboxFlush(); });
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) outboxFlush(); });
+    outboxLoad().then(function () { if (S.who && S.payload && OUTBOX.items.length) { S.keepScroll = true; render(); } setTimeout(outboxFlush, 2500); });
     setInterval(retryIfEmpty, 60000);
     // Bag plant screen: no Refresh button. Every 2 minutes (and when the screen wakes) it asks when the schedule was last published
     // and loads it again only if that is newer than what is showing. The drivers' page does not do this: they press Refresh themselves.
     var CHECK_MS = 2 * 60 * 1000;
     function checkPublished() {
         if (!BAG_PLANT || DEMO || S.loading || S.noteKey || (APP_MODE && !APP.session)) return;
+        tickerLoad();
         rpcPublicRead("public_published_at", {}).then(function (ts) {
             var t = ts ? Date.parse(ts) : 0;
             if (t && (!S.loadedAt || t > S.loadedAt.getTime()) && !S.loading && !S.noteKey) { S.keepScroll = true; load(); }

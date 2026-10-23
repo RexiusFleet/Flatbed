@@ -237,7 +237,7 @@ var HISTORY_LABELS = {
   "order/update": "Edit order", "order/route": "Edit order route",
   "order/cancel": "Cancel order", "order/delete": "Delete order",
   "order/copy": "Copy order", "order/bill": "Change billing status",
-  "document": "Save document", "document/attach": "Attach document", "document/driver-visible": "Show document to driver",
+  "document": "Save document", "document/attach": "Attach document", "document/driver-visible": "Show document to driver", "ticker": "Change page banner",
   "document/delete": "Delete document", "document/unassign": "Unassign document", "schedule": "Edit schedule",
   "load/carrier": "Schedule outside carrier", "unschedule": "Unschedule load",
   "cell/color": "Color scheduler cell", "cell/format": "Format scheduler cell",
@@ -294,7 +294,7 @@ function scopeFor(route, d) {
     "internal-order": ["orders", "int"], "order/transfer": ["orders", "xfer"],
     "order/route": ["orders", "ext"],
     "order/bill": ["billing", "bill"], "document": ["billing", "bill"],
-    "document/attach": ["billing", "bill"], "document/delete": ["billing", "bill"], "document/unassign": ["billing", "bill"], "document/driver-visible": ["billing", "bill"],
+    "document/attach": ["billing", "bill"], "document/delete": ["billing", "bill"], "document/unassign": ["billing", "bill"], "document/driver-visible": ["billing", "bill"], "ticker": ["dispatch", "sched"],
     "schedule": ["dispatch", "sched"], "load/carrier": ["dispatch", "sched"],
     "cell/color": ["dispatch", "sched"], "cell/format": ["dispatch", "sched"],
     "truck/off": ["dispatch", "sched"], "unschedule": ["dispatch", "sched"],
@@ -768,6 +768,9 @@ var ROUTES = {
         });
     });
   },
+  // The banner typed on the Current Week bar (drivers' page and bag plant page).
+  "ticker": viaRpc("api_ticker_set"),
+  "ticker/get": function (d) { return rpc("api_ticker_get", { d: d || {} }); },
   "driver/employee-nos": function (d) { return rpc("api_driver_employee_nos", { d: d || {} }); },
   "driver/employee-no": viaRpc("api_driver_employee_no_set"),
   "driver/phone": viaRpc("api_driver_phone_set"),
@@ -838,14 +841,14 @@ function api(path, body) {
   var fn = ROUTES[route];
   if (!fn) return Promise.reject(new Error("no route /api/" + route));
   // Saves in flight / saves started: the live-update check waits for these so it never redraws around your own save.
-  var isRead = route === "bootstrap" || route === "bootstrap/poll" || route === "history" || route === "driver/employee-nos" || route === "driver/former" || route.indexOf("report") === 0;
+  var isRead = route === "bootstrap" || route === "bootstrap/poll" || route === "history" || route === "driver/employee-nos" || route === "driver/former" || route === "ticker/get" || route.indexOf("report") === 0;
   if (!isRead) { API_WRITES.seq++; API_WRITES.open++; }
   return Promise.resolve().then(function () { return fn(body || {}, route, q); })
     .finally(function () { if (!isRead) API_WRITES.open--; })
     .catch(function (err) {
       // A failed save may leave something on screen that didn't stick; make
       // the next load a complete one so the screen matches the database.
-      if (route !== "bootstrap" && route !== "bootstrap/poll" && route !== "driver/employee-nos" && route !== "driver/former") BOOT_DIRTY = true;
+      if (route !== "bootstrap" && route !== "bootstrap/poll" && route !== "driver/employee-nos" && route !== "driver/former" && route !== "ticker/get") BOOT_DIRTY = true;
       throw err;
     });
 }
