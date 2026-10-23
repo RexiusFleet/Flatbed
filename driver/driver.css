@@ -5,6 +5,19 @@
 .driver-app #main{flex:1;min-height:0;display:flex;flex-direction:column}
 body.drv-signed-out .header-row{display:none}
 
+/* Text sizes follow the phone's own text-size setting (rem; at the default size these are the same 10 to 23 px as before),
+   and the bars below grow with the text instead of clipping it. */
+:root{--fs-caption:.625rem;--fs-label:.6875rem;--fs-body-sm:.78125rem;--fs-body:.8125rem;--fs-body-lg:.9375rem;--fs-h3:1rem;--fs-h2:1.1875rem;--fs-h1:1.4375rem}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+.driver-app .header-row{height:auto;min-height:52px}
+.driver-app header{height:auto;min-height:52px;padding-top:6px;padding-bottom:6px}
+.drv-hdr .brand{white-space:normal}
+.drv-hdr .brand,.drv-title{min-width:0;overflow-wrap:anywhere}
+/* Current Week driver columns widen with the text size too (not on the bag plant TV, which sizes its own). */
+.driver-app:not(.drv-bagplant) table.grid th.trkcol{width:max(var(--col-w,150px),13.2rem)!important}
+.driver-app .slotrow td>.cell{max-height:calc(var(--row-h,84px) + 2.5rem)}
+.driver-app .slotrow .chip{max-height:calc(var(--row-h,84px) + 2rem)}
+
 /* Top bar: title left, who's signed in dead center, Light/Dark + Log Out right. */
 .drv-hdr{display:grid;grid-template-columns:1fr auto 1fr;gap:12px}
 .drv-hdr .brand{justify-self:start}
@@ -13,13 +26,13 @@ body.drv-signed-out .header-row{display:none}
 .drv-who{display:flex;flex-direction:column;align-items:center;text-align:center;line-height:1.2;min-width:0}
 .drv-who b{font-size:var(--fs-body-lg);font-weight:700;white-space:nowrap}
 .drv-who span{font-family:var(--mono);font-size:var(--fs-caption);color:var(--ink-3);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
-.drv-hbtn{min-width:92px;height:34px;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.drv-hbtn{min-width:92px;min-height:34px;display:inline-flex;align-items:center;justify-content:center;gap:6px}
 .drv-hbtn svg{display:block}
 
 /* Tabs: big, divided targets so a driver can find themselves at a glance. */
-.driver-app .db-tabs{height:56px;padding:0;background:var(--panel)}
+.driver-app .db-tabs{height:auto;min-height:56px;padding:0;background:var(--panel)}
 .driver-app .db-tabs[hidden]{display:none}
-.driver-app .db-tabs .sub-tab{padding:0 22px;font-size:var(--fs-body-lg);font-weight:700;color:var(--ink-2);
+.driver-app .db-tabs .sub-tab{padding:6px 22px;min-height:56px;font-size:var(--fs-body-lg);font-weight:700;color:var(--ink-2);
   border-right:1px solid var(--rule-2);border-bottom-width:3px;gap:8px}
 .driver-app .db-tabs .sub-tab:hover{background:var(--panel-2)}
 .driver-app .db-tabs .sub-tab[aria-selected="true"]{color:var(--brand);background:var(--brand-soft)}
@@ -174,7 +187,8 @@ body.drv-signed-out .header-row{display:none}
 .drv-bagplant .chip.bp-bag .flag{font-size:clamp(9px,calc(var(--col-w,150px) / 19),11px)}
 .drv-bagplant .chip.bp-bag .dnote{font-size:var(--fs-label);font-weight:700}
 
-/* Current Week date column: the day of the week and one big M/DD date. */
+/* Current Week date column: the day of the week and one big M/DD date. It widens with the text size so the date never runs into the loads. */
+.driver-app table.grid td.rowhd,.driver-app table.grid th.corner{width:5.5rem;min-width:5.5rem}
 .driver-app td.rowhd .dnum{font-size:var(--fs-h1);font-weight:750}
 
 /* A thick line between the date column and the schedule. Uses the text color,
@@ -227,6 +241,15 @@ body.driver-app.drv-bagplant .chip.bp-bag{border:2px solid var(--ink)}
 .bk i{width:14px;height:14px;display:inline-block;border:1px solid rgba(0,0,0,.4)}
 .hdr-right{display:flex;align-items:center;justify-content:flex-end}
 @media (max-width:1100px){.drv-hdr .bagkey-t{display:none}}
+/* Phone: title and Log Out on the first line, the color code gets its own full-width line under them and wraps (two by two when the text is big). */
+@media (max-width:760px){
+  .drv-hdr .hdr-right{display:contents}
+  .drv-hdr .bagkey{grid-column:1/-1;grid-row:2;justify-content:space-between;margin:0;gap:2px 8px;width:100%}
+  .drv-hdr .bk{gap:4px;padding:1px 0;letter-spacing:.02em;flex:0 1 auto;min-width:0}
+  .drv-hdr .bk i{width:12px;height:12px;flex:none}
+  .drv-hdr #signout{grid-column:2;grid-row:1;justify-self:end}
+  .drv-hdr.drv-hdr-two .brand{grid-column:1;grid-row:1}
+}
 
 /* Store map viewer: a full-screen picture with a big Close button. */
 .smap{position:fixed;inset:0;z-index:600;background:var(--paper);display:flex;flex-direction:column}
