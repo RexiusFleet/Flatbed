@@ -1455,6 +1455,14 @@ function buildChip(o) {
   return { title: title, line: line, route: route, nums: nums, win: win, flags: flags, pnote: pnote,
            note: notes.join(" · "), needsNumber: !o.rexius_order_no && !o.is_transfer };
 }
+/* A small badge on a load chip when the order has paperwork switched on for the driver: plain once the driver can open it, amber "Not Published" until Publish Schedule sends it. */
+function paperBadge(o) {
+  var n = DB.documents.filter(function (d) { return d.order_id === o.id && !DRIVER_SCAN_IDS[d.id] && d.extracted_fields && d.extracted_fields.driver_visible === true; }).length;
+  if (!n) return "";
+  var pend = !!PUB.dirty[o.id] || !lastPushMs();
+  return '<span class="paper-ind' + (pend ? " pend" : "") + '" title="' + (pend ? "Paperwork is switched on for the driver but not published yet. Publish Schedule sends it." : "The driver can open this paperwork from the load.") + '">' +
+    icon("pdf") + (n > 1 ? n : "") + (pend ? "Not Published" : "") + "</span>";
+}
 function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
   if (pushed && PUB.dirty[o.id]) pushed = false;   // changed since the last publish: back to the plain look until it is published again
   var ch = buildChip(o), w = WIN[ch.win] || WIN.anytime;
@@ -1532,7 +1540,7 @@ function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
   var hasAppt = plainExt && apptHas(o.id);
   return '<div class="chip' + (filled ? " filled" : "") + (plainExt ? " xchip" : "") + (o.is_transfer ? " xfer" : "") + (tinted ? " tinted" : "") + (hasAppt ? " has-appt" : "") + '" style="--edge:' + edge + bg + '" draggable="' + (drag ? "true" : "false") +
     '" data-oid="' + o.id + '" title="' + esc(chipTitle) + '" ' + (extra || "") + ">" +
-    (hasAppt ? '<span class="appt-ind" title="This load has an appointment">APPT</span>' : "") +
+    (hasAppt ? '<span class="appt-ind" title="This load has an appointment">APPT</span>' : "") + paperBadge(o) +
     '<div class="who"' + (ws ? ' style="' + ws + '"' : "") + ">" + esc(ch.title) + "</div>" +
     metaHtml +
     (f ? '<div class="flags">' + f + "</div>" : "") +
@@ -3271,6 +3279,15 @@ function pubOrderEdit(c) {
   if (f.indexOf("notes") >= 0) { var o = order((c.primary_key || {}).id); return !!(o && o.is_transfer); }
   return false;
 }
+// Paperwork switched on / off for the driver (Show To Driver): the order id when this change flips the switch on a document.
+function pubDocFlip(c) {
+  var b = c.before_data || {}, a = c.after_data || {};
+  var on = function (r) { return !!(r && r.extracted_fields && r.extracted_fields.driver_visible === true); };
+  if (on(a) === on(b)) return null;
+  // The log keeps only the changed columns, so the order comes from the document itself.
+  var id = (c.primary_key || {}).id, doc = id ? (DB.documents || []).filter(function (x) { return x.id === id; })[0] : null;
+  return a.order_id || b.order_id || (doc && doc.order_id) || null;
+}
 function pubCounts(ev, since) {
   if (!ev || new Date(ev.occurred_at).getTime() <= since + 8000) return false;
   return (ev.changes || []).some(function (c) {
@@ -3279,6 +3296,7 @@ function pubCounts(ev, since) {
     if (t === "load_orders" || t === "load_stops" || t === "schedule_notes" || t === "truck_off_days") return true;
     if (t === "trucks") return f.indexOf("driver_id") >= 0;
     if (t === "orders") return pubOrderEdit(c);
+    if (t === "documents") return !!pubDocFlip(c);
     return false;
   });
 }
@@ -3293,6 +3311,8 @@ function pubOrderIds(ev, since) {
     else if (t === "loads") {
       if (!f.some(function (x) { return x !== "pushed_at" && x !== "updated_at"; })) return;
       (DB.loads || []).filter(function (l) { return l.id === pk.id; }).forEach(function (l) { (l.order_ids || []).forEach(function (id) { ids.push(id); }); });
+    } else if (t === "documents") {
+      var did = pubDocFlip(c); if (did) ids.push(did);
     } else if (t === "load_stops" || t === "order_stops") {
       var d = c.after_data || c.before_data || {}; if (d.order_id) ids.push(d.order_id);
     }
@@ -8494,8 +8514,8 @@ function docRowHtml(d) {
   return '<div class="docrow">' + docChipHtml(d) +
     (pdf ? '<button class="btn sm" data-signdoc="' + esc(d.id) + '" type="button" title="Open it in a window to read it, add initials, a date or text, or read it as a rate con">Sign</button>'
       : '<button class="btn sm" data-viewpath="' + esc(d.storage_path) + '" data-viewname="' + esc(nm) + '">View</button>') +
-    (real && pdf ? '<button class="btn sm' + (docDriverOn(d) ? " active" : "") + '" data-docdriver="' + esc(d.id) + '" type="button" aria-pressed="' + docDriverOn(d) +
-      '" title="' + (docDriverOn(d) ? "Drivers can open this from the load. Click to hide it." : "Let the driver open this from the load on their tab. Publish Schedule sends it.") + '">Show To Driver</button>' : "") +
+    (real && pdf ? '<label class="tgl" title="' + (docDriverOn(d) ? "Drivers can open this from the load once the schedule is published." : "Let the driver open this from the load on their tab. Publish Schedule sends it.") + '">' +
+      '<input type="checkbox" data-docdriver="' + esc(d.id) + '"' + (docDriverOn(d) ? " checked" : "") + '><span class="tgl-ui"></span><span class="tgl-t">Show To Driver</span></label>' : "") +
     '<button class="btn sm" type="button" data-filepath="' + esc(d.storage_path) + '" data-filename="' + esc(nm) + '" data-filemode="download" title="Save a copy of the file">Download</button>' +
     (real ? '<button class="btn del sm" type="button" data-docdel="' + esc(d.id) + '">Delete</button>' : "") + "</div>";
 }
@@ -8513,20 +8533,23 @@ document.addEventListener("click", function (e) {
 });
 document.addEventListener("click", function (e) { var b = e.target.closest && e.target.closest("[data-signdoc]"); if (b) signDocument(b.getAttribute("data-signdoc")); });
 function docDriverOn(d) { return !!(d && d.extracted_fields && d.extracted_fields.driver_visible === true); }
-/* "Show To Driver": the flag is kept in the document's own extracted_fields. Drivers see it after the next Publish Schedule. */
+/* "Show To Driver" is a switch. The flag is kept in the document's own extracted_fields. The order's load chip gets a "Not Published" badge until Publish Schedule
+   sends it (the publish counter and the chip repaint at once, without waiting for the next history check). */
+function docPaperDirty(oid) { if (!oid) return; PUB.dirty[oid] = true; pubRefresh(true); pubRepaintChips([oid]); }
 document.addEventListener("click", function (e) {
   var b = e.target.closest && e.target.closest("[data-docdriver]"); if (!b) return;
   var id = b.getAttribute("data-docdriver"), d = (DB.documents || []).filter(function (x) { return x.id === id; })[0];
-  if (!d || b.disabled) return;
-  var ef = Object.assign({}, d.extracted_fields || {}), on = !docDriverOn(d);
+  if (!d || b.disabled) { if (b) e.preventDefault(); return; }
+  var ef = Object.assign({}, d.extracted_fields || {}), on = !!b.checked;
   if (on) ef.driver_visible = true; else delete ef.driver_visible;
   b.disabled = true;
   api("document/driver-visible", { id: id, extracted_fields: ef }).then(function () { return reload(); }).then(function () {
-    toast(on ? "Drivers will see it after you Publish Schedule" : "Hidden from drivers after you Publish Schedule");
+    docPaperDirty(d.order_id);
+    toast(on ? "Paperwork is on for the driver. Publish Schedule to send it." : "Paperwork is off for the driver. Publish Schedule to update them.");
     histPush(on ? "show document to driver" : "hide document from driver",
-      function () { return api("document/driver-visible", { id: id, extracted_fields: d.extracted_fields || {} }).then(reload); },
-      function () { return api("document/driver-visible", { id: id, extracted_fields: ef }).then(reload); });
-  }).catch(function (err) { b.disabled = false; toast(err.message, true); });
+      function () { return api("document/driver-visible", { id: id, extracted_fields: d.extracted_fields || {} }).then(reload).then(function () { docPaperDirty(d.order_id); }); },
+      function () { return api("document/driver-visible", { id: id, extracted_fields: ef }).then(reload).then(function () { docPaperDirty(d.order_id); }); });
+  }).catch(function (err) { b.checked = !on; b.disabled = false; toast(err.message, true); });
 });
 function docChipHtml(d) {
   var path = d.storage_path, ready = !!DOCBLOB[path], nm = d.original_filename || "(file)";

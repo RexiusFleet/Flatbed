@@ -482,6 +482,14 @@ function buildChip(o) {
   return { title: title, line: line, route: route, nums: nums, win: win, flags: flags, pnote: pnote,
            note: notes.join(" · "), needsNumber: !o.rexius_order_no && !o.is_transfer };
 }
+/* A small badge on a load chip when the order has paperwork switched on for the driver: plain once the driver can open it, amber "Not Published" until Publish Schedule sends it. */
+function paperBadge(o) {
+  var n = DB.documents.filter(function (d) { return d.order_id === o.id && !DRIVER_SCAN_IDS[d.id] && d.extracted_fields && d.extracted_fields.driver_visible === true; }).length;
+  if (!n) return "";
+  var pend = !!PUB.dirty[o.id] || !lastPushMs();
+  return '<span class="paper-ind' + (pend ? " pend" : "") + '" title="' + (pend ? "Paperwork is switched on for the driver but not published yet. Publish Schedule sends it." : "The driver can open this paperwork from the load.") + '">' +
+    icon("pdf") + (n > 1 ? n : "") + (pend ? "Not Published" : "") + "</span>";
+}
 function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
   if (pushed && PUB.dirty[o.id]) pushed = false;   // changed since the last publish: back to the plain look until it is published again
   var ch = buildChip(o), w = WIN[ch.win] || WIN.anytime;
@@ -559,7 +567,7 @@ function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
   var hasAppt = plainExt && apptHas(o.id);
   return '<div class="chip' + (filled ? " filled" : "") + (plainExt ? " xchip" : "") + (o.is_transfer ? " xfer" : "") + (tinted ? " tinted" : "") + (hasAppt ? " has-appt" : "") + '" style="--edge:' + edge + bg + '" draggable="' + (drag ? "true" : "false") +
     '" data-oid="' + o.id + '" title="' + esc(chipTitle) + '" ' + (extra || "") + ">" +
-    (hasAppt ? '<span class="appt-ind" title="This load has an appointment">APPT</span>' : "") +
+    (hasAppt ? '<span class="appt-ind" title="This load has an appointment">APPT</span>' : "") + paperBadge(o) +
     '<div class="who"' + (ws ? ' style="' + ws + '"' : "") + ">" + esc(ch.title) + "</div>" +
     metaHtml +
     (f ? '<div class="flags">' + f + "</div>" : "") +

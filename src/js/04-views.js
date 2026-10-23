@@ -470,6 +470,15 @@ function pubOrderEdit(c) {
   if (f.indexOf("notes") >= 0) { var o = order((c.primary_key || {}).id); return !!(o && o.is_transfer); }
   return false;
 }
+// Paperwork switched on / off for the driver (Show To Driver): the order id when this change flips the switch on a document.
+function pubDocFlip(c) {
+  var b = c.before_data || {}, a = c.after_data || {};
+  var on = function (r) { return !!(r && r.extracted_fields && r.extracted_fields.driver_visible === true); };
+  if (on(a) === on(b)) return null;
+  // The log keeps only the changed columns, so the order comes from the document itself.
+  var id = (c.primary_key || {}).id, doc = id ? (DB.documents || []).filter(function (x) { return x.id === id; })[0] : null;
+  return a.order_id || b.order_id || (doc && doc.order_id) || null;
+}
 function pubCounts(ev, since) {
   if (!ev || new Date(ev.occurred_at).getTime() <= since + 8000) return false;
   return (ev.changes || []).some(function (c) {
@@ -478,6 +487,7 @@ function pubCounts(ev, since) {
     if (t === "load_orders" || t === "load_stops" || t === "schedule_notes" || t === "truck_off_days") return true;
     if (t === "trucks") return f.indexOf("driver_id") >= 0;
     if (t === "orders") return pubOrderEdit(c);
+    if (t === "documents") return !!pubDocFlip(c);
     return false;
   });
 }
@@ -492,6 +502,8 @@ function pubOrderIds(ev, since) {
     else if (t === "loads") {
       if (!f.some(function (x) { return x !== "pushed_at" && x !== "updated_at"; })) return;
       (DB.loads || []).filter(function (l) { return l.id === pk.id; }).forEach(function (l) { (l.order_ids || []).forEach(function (id) { ids.push(id); }); });
+    } else if (t === "documents") {
+      var did = pubDocFlip(c); if (did) ids.push(did);
     } else if (t === "load_stops" || t === "order_stops") {
       var d = c.after_data || c.before_data || {}; if (d.order_id) ids.push(d.order_id);
     }
