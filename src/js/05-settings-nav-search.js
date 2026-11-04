@@ -179,7 +179,8 @@ function settingsHelp() {
       "The header <b>+</b> adds a field, and Manage Columns controls field order and visibility. Archived directory records remain on historical orders."],
     ["Mileage, delivery dates, and rates",
       "<b>Sync Delivery Dates</b> copies completed schedule dates back to orders, saves Motive's miles for those days, and opens a window listing the delivered " +
-      "orders that still need mileage. Type the miles (and change the cost if you need to), Save, and the order leaves the list. The Motive tab under Reports shows each truck's day."],
+      "orders that still need mileage. Type the miles (and change the cost if you need to), Save, and the order leaves the list. <b>Motive</b> (below Database) shows every truck's miles and hours for any dates, and one day in detail. " +
+      "<b>Billing → Internal Transfers</b> adds up those costs by department and marks each transfer done."],
     ["Settings and shortcuts",
       "General contains theme, accent, font, order numbering, and Scheduler sizing. Shortcuts can be " +
       "re-recorded, and <b>Add shortcut</b> gives an action an additional key combination."],
@@ -187,7 +188,7 @@ function settingsHelp() {
       "Undo and Redo cover changes made in the current session. Open History for the shared audit trail and " +
       "review a reversible change before restoring it. External actions such as sending data to another service remain recorded but are not reversed remotely."],
     ["Reports",
-      "Choose a date range in Reports, then export the order report for analysis in Excel. Internal Freight has its own transfer report. " +
+      "The Reports dashboard holds the cards you build; Export Everything downloads every order for Excel. " +
       "Exports use stored order fields and department codes; they do not depend on the visible order-number pattern."]
   ];
   return faqs.map(function (f) {
@@ -202,10 +203,12 @@ var NAV = [
       { k: "driver", t: "Driver Tabs" }] },
   { k: "orders", t: "Orders", subs: [{ k: "int", t: "Bag Orders" }, { k: "xfer", t: "Internal Freight" },
       { k: "ext", t: "External Orders" }] },
-  { k: "billing", t: "Billing", subs: [{ k: "bill", t: "Invoices & Packages" }] },
-  { k: "reports", t: "Reports", subs: [{ k: "rep", t: "Export & Reports" }] },
+  { k: "billing", t: "Billing", subs: [{ k: "bill", t: "Invoices & Packages" }, { k: "transfers", t: "Internal Transfers" }] },
+  { k: "reports", t: "Reports", subs: [{ k: "rep", t: "Dashboard" }] },
   { k: "database", t: "Database", subs: [{ k: "bagger", t: "Bagger Customers" }, { k: "brokers", t: "External Customers" },
-      { k: "pickdrop", t: "Pick/Drop List" }, { k: "fleet", t: "Fleet" }] }
+      { k: "pickdrop", t: "Pick/Drop List" }, { k: "fleet", t: "Fleet" }] },
+  // One entry under Database, drawn the same way (navMenuHtml): Motive's truck-days, miles and hours.
+  { k: "motive", t: "Motive", subs: [{ k: "motive", t: "Motive" }] }
 ];
 /* Settings (D54) is reached from the header gear, not the main nav, so it lives
    outside NAV — subsOf resolves its tabs specially. */
@@ -362,7 +365,8 @@ function ordersToolbarExtras() {
    One pull saves each truck-day to Supabase (motive_daily) and records the day as pulled, so a day is asked
    from Motive once. Today is never pulled (it is not finished). Sync Delivery Dates syncs the dates, makes sure
    Motive's days are saved, then opens the review window for delivered orders whose mileage is not confirmed. */
-var MOT = { rows: {}, pulled: {}, from: "", to: "", loading: false, err: "", view: "day", day: "", pick: null, week: "" };
+var MOT = { rows: {}, pulled: {}, from: "", to: "", loading: false, err: "", view: "range", per: "lastwk", open: {}, day: "", pick: null, week: "" };
+try { var _mp = localStorage.getItem("dept12MotPer"); if (/^(yday|thiswk|lastwk|month|lastmonth)$/.test(_mp || "")) MOT.per = _mp; } catch (e) { /* not saved on this device */ }
 function motAddDays(iso, n) { var d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n); return rptIso(d); }
 function motYesterday() { return motAddDays(TODAY, -1); }
 function motMonday(iso) { var d = new Date(iso + "T12:00:00"), k = (d.getDay() + 6) % 7; d.setDate(d.getDate() - k); return rptIso(d); }
@@ -629,7 +633,7 @@ function runSyncAll(btn) {
     .catch(function (err) { btn.disabled = false; busyEnd(); toast(err.message, true); });
 }
 function syncOrderLabel(o) {
-  if (o.is_transfer) return [o.notes || "Internal freight", o.transfer_department_name || ""];
+  if (o.is_transfer) return [o.transfer_no || o.notes || "Internal freight", (o.transfer_no && o.notes ? o.notes + (o.transfer_department_name ? " · " : "") : "") + (o.transfer_department_name || "")];
   if (o.kind === "internal") return [o.rexius_order_no || "Bag order", o.customer_name || (o.customer_party_id && party(o.customer_party_id) ? party(o.customer_party_id).name : "")];
   var who = o.broker_name || o.customer_name || "";
   return [o.rexius_order_no || o.broker_load_no || "External order", who];
@@ -695,7 +699,7 @@ function render() {
       requestAnimationFrame(function () { schedNode.scrollTop = schedScrollTop; });
     }
   } else if (SUB === "cw" || SUB === "driver" || SUB === "int" || SUB === "xfer" || SUB === "ext" ||
-             SUB === "bill" || SUB === "rep" || SEC === "database") {
+             SUB === "bill" || SUB === "transfers" || SUB === "rep" || SUB === "motive" || SEC === "database") {
     // Inserted straight into #main, not wrapped in a .pad (D137/D140,
     // extended to the three Orders trackers D237, and to Billing/Database
     // D256) — identical to how vScheduler()'s own toolbar+grid-wrap pair
@@ -714,7 +718,7 @@ function render() {
     // `main`/`.grid-wrap` already provide generically, just with padding.
     main.insertAdjacentHTML("beforeend", SUB === "cw" ? vCurrentWeek() : SUB === "driver" ? vDriverView() :
       SUB === "int" ? vInternal() : SUB === "xfer" ? vInternalFreight() : SUB === "ext" ? vOrders("external") :
-      SUB === "bill" ? vBilling() : SUB === "rep" ? vReports() : vDatabase(SUB));
+      SUB === "bill" ? vBilling() : SUB === "transfers" ? vTransfers() : SUB === "rep" ? vReports() : SUB === "motive" ? vMotive() : vDatabase(SUB));
   } else {
     var html = SUB === "rep" ? vReports() : vSettings(SUB);
     var pad = document.createElement("div");
@@ -838,10 +842,10 @@ function searchResults(qraw) {
     var v = arguments[i]; if (v != null && String(v).toLowerCase().indexOf(q) >= 0) return true; } return false; }
   DB.orders.forEach(function (o) {
     var cust = o.customer_party_id && party(o.customer_party_id), brok = o.broker_party_id && party(o.broker_party_id);
-    if (has(o.rexius_order_no, o.broker_load_no, o.po_number, o.delivery_number, o.notes,
+    if (has(o.rexius_order_no, o.broker_load_no, o.transfer_no, o.po_number, o.delivery_number, o.notes,
             cust && cust.name, brok && brok.name)) {
-      out.push({ type: o.kind === "internal" ? "Internal" : "Order",
-        label: (o.rexius_order_no || o.broker_load_no || "no #") + " · " + buildChip(o).title,
+      out.push({ type: o.is_transfer ? "Internal Freight" : o.kind === "internal" ? "Internal" : "Order",
+        label: (o.rexius_order_no || o.broker_load_no || o.transfer_no || "no #") + " · " + buildChip(o).title,
         sub: [o.po_number && "PO " + o.po_number, o.broker_load_no && "load " + o.broker_load_no,
               o.delivery_number && "del " + o.delivery_number].filter(Boolean).join(" · "),
         run: function () { openOrder(o.id); } });

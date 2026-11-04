@@ -227,7 +227,7 @@ document.addEventListener("click", function (e) {
     paintRowSel(g, table); return;
   }
   var t = e.target.closest("[data-sec],[data-sub],[data-stage],[data-report],[data-open],[data-pkgrow],[data-route-edit]," +
-    "[data-pkg],[data-nodelivery],[data-restore-order],[data-tracker-collapse],[data-tracker-collapse-more],[data-tsort],[data-rpttab],[data-rpttile],[data-rptsort],[data-rptcell],[data-rptdo],[data-rptptab],[data-rptrefresh],[data-rptopen],#rpt-new,#rpt-csv,#rpt-save,#rpt-saveas,#rpt-del," +
+    "[data-pkg],[data-nodelivery],[data-restore-order],[data-tracker-collapse],[data-tracker-collapse-more],[data-tsort],[data-rpttile],[data-rptsort],[data-rptcell],[data-rptrefresh],[data-rptopen],#rpt-new,#rpt-csv,#rpt-save,#rpt-saveas,#rpt-del," +
     "[data-copy-order],[data-addcust],[data-addcol]," +
     "[data-addrow],[data-delrows],[data-archiverows],[data-delarchived],[data-archiveview],[data-orderdelrows],[data-ordercancelrows],[data-delete-doc],[data-frreset],[data-catadd],[data-catdel],[data-sortsave],[data-sortclear]," +
     "[data-addsheet],[data-sheet-addrow],[data-sheet-addcol],[data-sheet-rename]," +
@@ -797,21 +797,9 @@ document.addEventListener("click", function (e) {
     toast("Shortcuts reset to defaults"); return;
   }
   if (t.id === "sync-all") { runSyncAll(t); return; }
-  if (t.dataset.rpttab) { REP.tab = t.dataset.rpttab; render(); return; }
   if (t.dataset.rptrefresh) { rptDataLoad(); render(); return; }
   if (t.dataset.rpttile) { rptWinOpen(rptTiles()[+t.dataset.rpttile]); return; }
-  if (t.id === "rpt-new") { REP.tab = "dash"; rptWinOpen(null); return; }
-  if (t.dataset.rptdo && REP.win) { var rc = REP.win.cfg, ri2 = +t.dataset.i, act = t.dataset.rptdo;
-    if (act === "addattr") { if (rc.rows.indexOf(t.dataset.f) < 0) rc.rows.push(t.dataset.f); }
-    else if (act === "addmeas") { var sm = RPT_MEAS_SUGGEST[+t.dataset.m]; rc.vals.push(sm[1] === "count" ? { agg: "count", f: "" } : sm[1] === "ratio" ? { agg: "ratio", f: sm[2], f2: sm[3] } : { agg: sm[1], f: sm[2] }); }
-    else if (act === "rowdel") rc.rows.splice(ri2, 1);
-    else if (act === "coldel") rc.cols = "";
-    else if (act === "valadd") rc.vals.push({ agg: "sum", f: "" });
-    else if (act === "valdel") rc.vals.splice(ri2, 1);
-    else if (act === "fadd") { rc.filters = rc.filters || []; rc.filters.push({ f: "", op: "eq", v: "" }); }
-    else if (act === "fdel") rc.filters.splice(ri2, 1);
-    REP.win.drill = null; rptWinControls(); rptWinUpdate(); return; }
-  if (t.dataset.rptptab && REP.win) { REP.win.tab = t.dataset.rptptab; rptWinControls(); return; }
+  if (t.id === "rpt-new") { rptWinOpen(null); return; }
   if (t.dataset.rptsort && REP.win) { var rw = REP.win, rs = +t.dataset.rptsort;
     if (rw.sortCol === rs) rw.dir = -rw.dir; else { rw.sortCol = rs; rw.dir = rs === -1 ? 1 : -1; } rw.drill = null; rptWinUpdate(); return; }
   if (t.dataset.rptcell && REP.win) { var pc = t.dataset.rptcell.split("|"), dd = REP.win.drill;
@@ -822,10 +810,10 @@ document.addEventListener("click", function (e) {
   if (t.id === "rpt-saveas" && REP.win) { rptWinSave(true); return; }
   if (t.id === "rpt-del" && REP.win && REP.win.id) {
     var delId = REP.win.id;
-    confirmModal("Delete this report? It comes off the Dashboard and the Scheduler bar. The orders it reads are not touched.", function () {
-      api("saved-report/delete", { id: delId }).then(function () { REP.saved = null; REP.win = null; toast("Report deleted"); render(); })
+    confirmModal("Delete this card? It comes off the Dashboard and the Scheduler bar. The orders it reads are not touched.", function () {
+      api("saved-report/delete", { id: delId }).then(function () { REP.saved = null; REP.win = null; toast("Card deleted"); render(); })
         .catch(function (err) { toast(err.message, true); });
-    }, "Delete Report");
+    }, "Delete Card");
     return;
   }
   if (t.dataset.rptper) {
@@ -1546,6 +1534,15 @@ document.addEventListener("input", function (e) {
   var pinp = e.target.closest && e.target.closest("[data-partycombo]");
   if (pinp) { pinp.removeAttribute("data-partyid"); renderPartySuggest(pinp); }
 }, true);
+/* Emptying an order's Pickup or Drop box and leaving it clears that location (it is optional). */
+document.addEventListener("change", function (e) {
+  var inp = e.target.closest && e.target.closest("[data-loccombo]");
+  if (!inp || inp.value.trim() || /^stop:/.test(inp.dataset.loccombo)) return;
+  var oid = inp.dataset.oid, field = inp.dataset.loccombo, o = order(oid);
+  if (!o || !o[field]) return;
+  var body = { id: oid }; body[field] = null;
+  api("order/update", body).then(function (row) { patchOrderLocal(oid, row); }).then(reload).catch(function (err) { toast(err.message, true); });
+});
 document.addEventListener("focus", function (e) {
   var inp = e.target.closest && e.target.closest("[data-loccombo]");
   if (inp && inp.value.trim()) renderLocSuggest(inp, true);

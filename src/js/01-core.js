@@ -438,6 +438,7 @@ var NAV_SEC_ICONS = {
   billing: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.5" width="10" height="13" rx="1"/><path d="M5.5 5h5M5.5 8h5M5.5 11h3"/></svg>',
   database: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2" width="13" height="12" rx="1"/><path d="M1.5 6h13M1.5 10h13M6 2v12M10.5 2v12"/></svg>',
   reports: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 14V9M6 14V5M10 14V7M14 14V2"/></svg>',
+  motive: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5l2.6-3.4"/><circle cx="8" cy="11.5" r=".8"/></svg>',
   settings: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.74v.5a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>'
 };
 function navSecIcon(k) { return '<span class="ico" aria-hidden="true">' + (NAV_SEC_ICONS[k] || "") + "</span>"; }
@@ -536,6 +537,10 @@ function navMenuHtml() {
         navSecIcon("database") + '<span>Database</span></button>';
       return;
     }
+    if (s.k === "motive") {
+      html += '<button class="nm-dbentry' + (SEC === "motive" ? " on" : "") + '" data-navto="motive|motive">' + navSecIcon("motive") + "<span>Motive</span></button>";
+      return;
+    }
     var body = navSectionSubsHtml(s.k, false);
     if (!body) return;
     html += '<div class="nm-sec">' + navSecIcon(s.k) + esc(s.t) + "</div>" + body;
@@ -554,6 +559,10 @@ function navMenuCollapsedHtml() {
       html += '<div class="nm-section-div"></div><button class="nm-cicon nm-dbentry' +
         (SEC === "database" ? " on" : "") + '" data-navto="database|' + dbLanding +
         '" title="Database">' + navSecIcon("database") + "</button>";
+      return;
+    }
+    if (s.k === "motive") {
+      html += '<button class="nm-cicon nm-dbentry' + (SEC === "motive" ? " on" : "") + '" data-navto="motive|motive" title="Motive">' + navSecIcon("motive") + "</button>";
       return;
     }
     var orderCounts = s.k === "orders" ? navUnplacedCounts() : null;
@@ -723,10 +732,6 @@ document.addEventListener("keydown", function (e) {
     e.preventDefault();
     cycleNavSectionWithSettings(e.key === "ArrowUp" ? -1 : 1);
     return;
-  }
-  // Reports has three in-page tabs (Dashboard, Motive, Transfer) that behave like Database's: plain Left/Right switches between them
-  if (horiz && SEC === "reports" && !MOT.calOpen && navArrowShortcutAvailable(e, "section")) {
-    e.preventDefault(); var rt = ["dash", "motive", "transfer"], ri = rt.indexOf(REP.tab); REP.tab = rt[(ri + (e.key === "ArrowLeft" ? 2 : 1)) % 3]; motCalClose(); render(); return;
   }
   if (!navArrowShortcutAvailable(e, horiz ? "sub" : "section")) return;
   e.preventDefault();

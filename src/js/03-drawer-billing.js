@@ -199,7 +199,7 @@ function openInternalOrder(o) {
      truck in v_freight_transfer_weekly once the order is on a load. */
   h += '<div><div class="sec-h">Mileage / transfer cost</div><div class="fields">' +
     frFld("miles", "Miles", o.miles, "") +
-    frFld("freight_amount", "Transfer $", o.internal_freight_amount, "") +
+    frFld("freight_amount", "Transfer $", o.internal_freight_amount, "") + trfStatusHtml(o.id) +
     "</div></div>";
 
   /* Customer reference is collapsed by default (Nate's ask) — it's lookup
@@ -488,7 +488,7 @@ function handlePartyPick(opt) {
 function openTransferOrder(o) {
   var ch = buildChip(o);
   var h = '<div class="dw-hd"><div style="flex:1"><h2 id="dw-title">' + esc(ch.title) + "</h2>" +
-    '<div class="sub">Internal Freight</div></div>' +
+    '<div class="sub">' + (o.transfer_no ? '<b class="if-no">' + esc(o.transfer_no) + "</b> · " : "") + "Internal Freight</div></div>" +
     '<button class="btn" id="dw-close">Close</button></div><div class="dw-body">';
   h += schedBar(o.id);
   h += drawerChipPreview(o);
@@ -514,6 +514,14 @@ function openTransferOrder(o) {
     fld("delivery_date", "Delivered", o.delivery_date && String(o.delivery_date).slice(0, 10), "", "date") +
     "</div></div>";
 
+  // Pickup and Drop from the Pick/Drop List (optional); a location's Map picture shows as a button here and on the driver's chip.
+  var maps = dvStoreMapBtn(o);
+  h += '<div><div class="sec-h">Pickup / Drop</div><div class="fields xfer-pd">' +
+    "<label>Pickup</label>" + locCombo(o.id, "pickup_location_id", o.pickup_location_id, null) +
+    "<label>Drop</label>" + locCombo(o.id, "delivery_location_id", o.delivery_location_id, null) +
+    (maps ? '<label>Maps</label><div class="xfer-maps">' + maps + "</div>" : "") +
+    "</div></div>";
+
   /* Load info stays dispatcher-facing only (drives the chip title, never
      pushed). driver_note is the separate field that actually reaches the
      driver's Sheets tab — D130. */
@@ -523,7 +531,7 @@ function openTransferOrder(o) {
 
   h += '<div><div class="sec-h">Mileage / transfer cost</div><div class="fields">' +
     frFld("miles", "Miles", o.miles, "") +
-    frFld("freight_amount", "Transfer $", o.internal_freight_amount, "") +
+    frFld("freight_amount", "Transfer $", o.internal_freight_amount, "") + trfStatusHtml(o.id) +
     "</div></div>";
 
   // No Documents section on transfers — driver notes/scans go last.

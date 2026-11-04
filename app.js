@@ -444,6 +444,7 @@ var NAV_SEC_ICONS = {
   billing: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.5" width="10" height="13" rx="1"/><path d="M5.5 5h5M5.5 8h5M5.5 11h3"/></svg>',
   database: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2" width="13" height="12" rx="1"/><path d="M1.5 6h13M1.5 10h13M6 2v12M10.5 2v12"/></svg>',
   reports: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 14V9M6 14V5M10 14V7M14 14V2"/></svg>',
+  motive: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5l2.6-3.4"/><circle cx="8" cy="11.5" r=".8"/></svg>',
   settings: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.74v.5a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>'
 };
 function navSecIcon(k) { return '<span class="ico" aria-hidden="true">' + (NAV_SEC_ICONS[k] || "") + "</span>"; }
@@ -542,6 +543,10 @@ function navMenuHtml() {
         navSecIcon("database") + '<span>Database</span></button>';
       return;
     }
+    if (s.k === "motive") {
+      html += '<button class="nm-dbentry' + (SEC === "motive" ? " on" : "") + '" data-navto="motive|motive">' + navSecIcon("motive") + "<span>Motive</span></button>";
+      return;
+    }
     var body = navSectionSubsHtml(s.k, false);
     if (!body) return;
     html += '<div class="nm-sec">' + navSecIcon(s.k) + esc(s.t) + "</div>" + body;
@@ -560,6 +565,10 @@ function navMenuCollapsedHtml() {
       html += '<div class="nm-section-div"></div><button class="nm-cicon nm-dbentry' +
         (SEC === "database" ? " on" : "") + '" data-navto="database|' + dbLanding +
         '" title="Database">' + navSecIcon("database") + "</button>";
+      return;
+    }
+    if (s.k === "motive") {
+      html += '<button class="nm-cicon nm-dbentry' + (SEC === "motive" ? " on" : "") + '" data-navto="motive|motive" title="Motive">' + navSecIcon("motive") + "</button>";
       return;
     }
     var orderCounts = s.k === "orders" ? navUnplacedCounts() : null;
@@ -729,10 +738,6 @@ document.addEventListener("keydown", function (e) {
     e.preventDefault();
     cycleNavSectionWithSettings(e.key === "ArrowUp" ? -1 : 1);
     return;
-  }
-  // Reports has three in-page tabs (Dashboard, Motive, Transfer) that behave like Database's: plain Left/Right switches between them
-  if (horiz && SEC === "reports" && !MOT.calOpen && navArrowShortcutAvailable(e, "section")) {
-    e.preventDefault(); var rt = ["dash", "motive", "transfer"], ri = rt.indexOf(REP.tab); REP.tab = rt[(ri + (e.key === "ArrowLeft" ? 2 : 1)) % 3]; motCalClose(); render(); return;
   }
   if (!navArrowShortcutAvailable(e, horiz ? "sub" : "section")) return;
   e.preventDefault();
@@ -2091,7 +2096,7 @@ function openInternalOrder(o) {
      truck in v_freight_transfer_weekly once the order is on a load. */
   h += '<div><div class="sec-h">Mileage / transfer cost</div><div class="fields">' +
     frFld("miles", "Miles", o.miles, "") +
-    frFld("freight_amount", "Transfer $", o.internal_freight_amount, "") +
+    frFld("freight_amount", "Transfer $", o.internal_freight_amount, "") + trfStatusHtml(o.id) +
     "</div></div>";
 
   /* Customer reference is collapsed by default (Nate's ask) — it's lookup
@@ -2380,7 +2385,7 @@ function handlePartyPick(opt) {
 function openTransferOrder(o) {
   var ch = buildChip(o);
   var h = '<div class="dw-hd"><div style="flex:1"><h2 id="dw-title">' + esc(ch.title) + "</h2>" +
-    '<div class="sub">Internal Freight</div></div>' +
+    '<div class="sub">' + (o.transfer_no ? '<b class="if-no">' + esc(o.transfer_no) + "</b> · " : "") + "Internal Freight</div></div>" +
     '<button class="btn" id="dw-close">Close</button></div><div class="dw-body">';
   h += schedBar(o.id);
   h += drawerChipPreview(o);
@@ -2406,6 +2411,14 @@ function openTransferOrder(o) {
     fld("delivery_date", "Delivered", o.delivery_date && String(o.delivery_date).slice(0, 10), "", "date") +
     "</div></div>";
 
+  // Pickup and Drop from the Pick/Drop List (optional); a location's Map picture shows as a button here and on the driver's chip.
+  var maps = dvStoreMapBtn(o);
+  h += '<div><div class="sec-h">Pickup / Drop</div><div class="fields xfer-pd">' +
+    "<label>Pickup</label>" + locCombo(o.id, "pickup_location_id", o.pickup_location_id, null) +
+    "<label>Drop</label>" + locCombo(o.id, "delivery_location_id", o.delivery_location_id, null) +
+    (maps ? '<label>Maps</label><div class="xfer-maps">' + maps + "</div>" : "") +
+    "</div></div>";
+
   /* Load info stays dispatcher-facing only (drives the chip title, never
      pushed). driver_note is the separate field that actually reaches the
      driver's Sheets tab — D130. */
@@ -2415,7 +2428,7 @@ function openTransferOrder(o) {
 
   h += '<div><div class="sec-h">Mileage / transfer cost</div><div class="fields">' +
     frFld("miles", "Miles", o.miles, "") +
-    frFld("freight_amount", "Transfer $", o.internal_freight_amount, "") +
+    frFld("freight_amount", "Transfer $", o.internal_freight_amount, "") + trfStatusHtml(o.id) +
     "</div></div>";
 
   // No Documents section on transfers — driver notes/scans go last.
@@ -3586,7 +3599,9 @@ function dvChip(o, v, truck, day) {
   if (!o) return { html: v && v.text ? esc(v.text) : "", color: v && v.fmt && v.fmt.fill || (v && v.cat) || null };
   if (o.is_transfer) {
     var dept = departmentById(o.transfer_department_id);
-    return { html: esc([o.notes, o.driver_note].filter(Boolean).join("\n") || "(no load info)"),
+    // the Pickup and Drop (when either is set) print the same way as on an external load
+    var pd = o.pickup_location_id || o.delivery_location_id ? "\n\n<b>PICK:</b> " + esc(dvPlace(locById(o.pickup_location_id))) + "\n\n<b>DROP:</b> " + esc(dvPlace(locById(o.delivery_location_id))) : "";
+    return { html: esc([o.notes, o.driver_note].filter(Boolean).join("\n") || "(no load info)") + pd,
              color: dept && dept.color && dept.color.charAt(0) === "#" ? dept.color : null };
   }
   if (isExt(o)) {
@@ -3634,15 +3649,20 @@ function dvScanStatusHtml(oid) {
     esc(d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) + '</span></span>' +
     '<button class="btn sm" data-viewpath="' + esc(rec.storage_path) + '" data-viewname="POD scan">View PDF</button>';
 }
-/* Store map (bag orders): the picture saved on the customer's location. Same
-   button and full-screen viewer a driver gets. Picture links only. */
-function dvStoreMapUrl(o) {
-  var loc = o && !isExt(o) && o.customer_party_id ? locFor(o.customer_party_id) : null;
-  var u = loc && loc.map_url || "";
-  return /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(u) ? u : "";
+/* Maps: the picture saved on a location (Map / Store Map in the Database). A bag order shows its store's;
+   internal freight shows its Pickup's and Drop's. Same buttons and full-screen viewer a driver gets.
+   Picture links only; a button shows only when its location has one. */
+function dvMapImg(u) { return /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(u || "") ? u : ""; }
+function dvMaps(o) {
+  if (!o) return [];
+  if (o.is_transfer) return [["pick", "Pickup Map", o.pickup_location_id], ["drop", "Drop Map", o.delivery_location_id]].map(function (m) {
+    var l = m[2] ? locById(m[2]) : null; return { k: m[0], label: m[1], url: dvMapImg(l && l.map_url), name: l ? l.name : "" }; })
+    .filter(function (m) { return m.url; });
+  var loc = !isExt(o) && o.customer_party_id ? locFor(o.customer_party_id) : null, u = dvMapImg(loc && loc.map_url);
+  return u ? [{ k: "store", label: "Store Map", url: u, name: o.customer_name || "Store" }] : [];
 }
 function dvStoreMapBtn(o) {
-  return !o.is_transfer && dvStoreMapUrl(o) ? '<button class="btn sm" data-smap-dv="' + o.id + '">Store Map</button>' : "";
+  return dvMaps(o).map(function (m) { return '<button class="btn sm" data-smap-dv="' + o.id + '" data-smap-k="' + m.k + '">' + m.label + "</button>"; }).join("");
 }
 function closeDvStoreMap() {
   var el = document.querySelector(".smap");
@@ -3652,14 +3672,15 @@ document.addEventListener("click", function (e) {
   var b = e.target.closest && e.target.closest("[data-smap-dv]");
   if (b) {
     e.stopPropagation();
-    var o = order(b.getAttribute("data-smap-dv")), url = o && dvStoreMapUrl(o);
-    if (!url || document.querySelector(".smap")) return;
+    var o = order(b.getAttribute("data-smap-dv")), k = b.getAttribute("data-smap-k") || "store";
+    var m = dvMaps(o).filter(function (x) { return x.k === k; })[0];
+    if (!m || document.querySelector(".smap")) return;
     var el = document.createElement("div");
-    el.className = "smap"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Store map");
+    el.className = "smap"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", m.label);
     el.innerHTML = '<div class="smap-top"><button class="btn" data-smap-close>Close</button>' +
-      '<div class="smap-title"><b>' + esc(o.customer_name || "Store") + "</b><span>Store map</span></div>" +
-      '<a class="btn" href="' + esc(url) + '" target="_blank" rel="noopener">Open Full Size</a></div>' +
-      '<div class="smap-body"><img src="' + esc(url) + '" alt="Store map for ' + esc(o.customer_name || "this store") + '"></div>';
+      '<div class="smap-title"><b>' + esc(m.name) + "</b><span>" + esc(m.label) + "</span></div>" +
+      '<a class="btn" href="' + esc(m.url) + '" target="_blank" rel="noopener">Open Full Size</a></div>' +
+      '<div class="smap-body"><img src="' + esc(m.url) + '" alt="' + esc(m.label + " for " + m.name) + '"></div>';
     document.body.appendChild(el);
     document.body.style.overflow = "hidden";
     return;
@@ -3675,6 +3696,7 @@ function dvSlotCellsHtml(key) {
   var ch = dvChip(o, v, truck, key.split("|")[1]);
   var chipBody = ch.html ? '<div class="load-txt' + (ch.color ? "" : " unfilled") + '"' +
     (ch.color ? ' style="background:' + esc(ch.color) + ";color:" + textOn(ch.color) + '"' : "") + ">" + ch.html +
+    (o && o.is_transfer && dvMaps(o).length ? '<div class="chip-scan">' + dvStoreMapBtn(o) + "</div>" : "") +
     (o && !o.is_transfer ? '<div class="chip-scan">' + dvStoreMapBtn(o) + '<button class="btn sm dv-dead" tabindex="-1" title="Drivers use this on their own page">Scan POD / BOL</button>' +
       dvScanStatusHtml(o.id) + "</div>" : "") + "</div>" : "";
   if (!o) {
@@ -3913,6 +3935,7 @@ function tsortValue(o, key) {
     case "miles": return o.miles == null ? null : +o.miles;
     case "freight": return o.internal_freight_amount == null ? null : +o.internal_freight_amount;
     case "dept": return o.transfer_department_name || "";
+    case "ifno": var im = /^IF-(\d+)-(\d+)$/.exec(o.transfer_no || ""); return im ? +im[1] * 10000 + +im[2] : null;
   }
   return "";
 }
@@ -4105,9 +4128,17 @@ function milesCell(o) {
     "</div></td>";
 }
 function freightCell(o) {
+  if (!TRF.loaded && !TRF.loading) trfLoad();
+  var tb = TRF.amt[o.id];
   return '<td data-frcell="1"><div class="cell freight-cell"><input class="cell-i n" data-frorder="' + o.id +
     '" data-frfield="freight_amount" value="' + (o.internal_freight_amount == null ? "" : o.internal_freight_amount) +
-    '"></div></td>';
+    '">' + (tb ? '<span class="pill on trf-pill" title="Transferred ' + esc(trfMoney(tb.amount)) + (tb.batch_no ? " in batch " + esc(tb.batch_no) : "") + '">' + (tb.batch_no ? "#" + esc(tb.batch_no) : "Sent") + "</span>" : "") + "</div></td>";
+}
+// The drawer's line under Miles / Transfer $: which transfer this order went out in.
+function trfStatusHtml(oid) {
+  if (!TRF.loaded && !TRF.loading) trfLoad();
+  var tb = TRF.amt[oid]; if (!tb) return "";
+  return '<label>Transferred</label><span class="trf-stamp">' + (tb.batch_no ? "Batch " + esc(tb.batch_no) + " · " : "") + trfMoney(tb.amount) + (TRF.adj[oid] ? " (" + trfSigned(TRF.adj[oid]) + " since)" : "") + "</span>";
 }
 /* Swaps just one Miles/Transfer-$ <td> in place after a save (D186) — a
    full reload() there used to scroll the whole tracker back to the top
@@ -4246,8 +4277,9 @@ function vInternal() {
 /* Internal Freight tracker (D127) — dept-to-dept mileage/$ transfers with no
    customer at all (e.g. "Bag Plant to Umatilla Yard"). Stays kind='external'
    under the hood (is_transfer=true) so scheduling/chip placement need no
-   changes, but is its own tracker: no broker/PO/pickup-drop/documents
-   fields, just a department, a route note, and the same actual-miles + $
+   changes, but is its own tracker: no broker/PO/documents fields, just a
+   department, a route note, an optional Pickup and Drop from the Pick/Drop
+   List (their maps show on the driver's chip), and the same actual-miles + $
    transfer figure Bag Orders already have (milesCell/freightCell, D103).
    Flat and date-sorted like External Orders — no month-block reservation,
    since transfers are never Solomon-numbered (never invoiced). */
@@ -4259,6 +4291,7 @@ function xferOrderRowHtml(o, i) {
     trackerSelTd("xfer", o.id, i + 1) +
     trackerOpenTd(o) +
     '<td class="order-actions-col"><div class="cell">' + stageControls(o, on, true) + "</div></td>" +
+    '<td><div class="cell n if-no" title="Set automatically, can\'t be changed">' + esc(o.transfer_no || "") + "</div></td>" +
     '<td><div class="cell"><input class="cell-i" data-oedit="' + o.id + '" data-field="notes" value="' +
       esc(o.notes || "") + '"></div></td>' +
     '<td><div class="cell"><select class="cell-i" data-oedit="' + o.id + '" data-field="transfer_department_id">' +
@@ -4267,11 +4300,13 @@ function xferOrderRowHtml(o, i) {
         return '<option value="' + dpt.id + '"' + (dpt.id === o.transfer_department_id ? " selected" : "") + ">" +
           esc(dpt.name) + "</option>";
       }).join("") + "</select></div></td>" +
+    '<td><div class="cell">' + locCombo(o.id, "pickup_location_id", o.pickup_location_id, null) + "</div></td>" +
+    '<td><div class="cell">' + locCombo(o.id, "delivery_location_id", o.delivery_location_id, null) + "</div></td>" +
     dateOeditCell(o.id, "order_date", o.order_date && String(o.order_date).slice(0, 10)) +
     dateOeditCell(o.id, "delivery_date", o.delivery_date && String(o.delivery_date).slice(0, 10)) +
     truckCell(o) + milesCell(o) + freightCell(o) + "</tr>";
 }
-var XFER_TRACKER_COLS = 10;  // keep in sync with vInternalFreight's <thead> — colspan for the Delivered toggle row
+var XFER_TRACKER_COLS = 13;  // keep in sync with vInternalFreight's <thead> — colspan for the Delivered toggle row
 function vInternalFreight() {
   /* Transfers are never treated as "2025 historical" (D221 continued,
      2026-09-12) — that read-only-history concept is for the old bag/external
@@ -4293,11 +4328,12 @@ function vInternalFreight() {
     secondary: ordersToolbarExtras() + trackerBulkButtonsHtml("xfer"),
     primary: '<button class="btn pri sm orders-primary-btn" id="xfer-bulk">Add Orders</button>'
   });
-  h += '<div class="grid-wrap tracker-scroll"><table class="data order-tracker" style="width:1460px"><thead><tr>' +
+  h += '<div class="grid-wrap tracker-scroll"><table class="data order-tracker" style="width:1916px"><thead><tr>' +
     trackerSelTh("xfer") +
     trackerOpenTh() +
     '<th class="order-actions-col" style="width:220px">Status / Stage</th>' +
-    tsortTh("xfer", "notes", "Load Info", 300) + tsortTh("xfer", "dept", "Department", 200) +
+    tsortTh("xfer", "ifno", "IF #", 96) + tsortTh("xfer", "notes", "Load Info", 300) + tsortTh("xfer", "dept", "Department", 200) +
+    tsortTh("xfer", "pickup", "Pickup", 180) + tsortTh("xfer", "drop", "Drop", 180) +
     tsortTh("xfer", "ordered", "Ordered", 112) + tsortTh("xfer", "delivered", "Delivered", 112) +
     tsortTh("xfer", "truck", "Truck", 80) + tsortTh("xfer", "miles", "Miles", 150) +
     tsortTh("xfer", "freight", "Transfer $", 100) + '</tr></thead><tbody>';
@@ -5082,7 +5118,7 @@ function vSheet(id) {
    and again whenever the app reloads its own data (reload() calls rptOnReload), so the tiles are live.
    Revenue: bag orders and internal freight use internal_freight_amount; external uses the invoice
    amount on its load (external_revenue_share). The backhaul tile waits for the backhaul checkbox. */
-var REP = { tab: "dash", per: "3m", from: "", to: "", saved: null, noSql: false, win: null, data: null, numeric: {}, dataAt: null, loading: false, stale: false, err: "" };
+var REP = { per: "3m", from: "", to: "", saved: null, noSql: false, win: null, data: null, numeric: {}, dataAt: null, loading: false, stale: false, err: "" };
 try { var _rp = localStorage.getItem("dept12RepPer"); if (_rp === "month" || _rp === "3m" || _rp === "ytd") REP.per = _rp; } catch (e) {}
 var RPT_AGG = { count: "Count", countd: "Count distinct", sum: "Sum", avg: "Average", min: "Min", max: "Max", ratio: "Ratio" };
 var RPT_OPS = { eq: "is", ne: "is not", contains: "contains", gt: ">", gte: ">=", lt: "<", lte: "<=", blank: "is blank", notblank: "is not blank" };
@@ -5141,9 +5177,9 @@ function rptDataLoad() {
     REP.fields = REP.data.length ? Object.keys(REP.data[0]).sort() : Object.keys(RPT_DERIVED);
   }, function (err) { REP.err = err.message || String(err); })
     .then(function () { REP.loading = false; if (REP.again) { REP.again = false; rptDataLoad(); return; }
-      if (SEC === "reports") { if (REP.win) rptWinUpdate(); render(); } else if (SUB === "sched") schedStatsPaint(); });
+      if (SEC === "reports" || SUB === "transfers") { if (REP.win) rptWinUpdate(); render(); } else if (SUB === "sched") schedStatsPaint(); });
 }
-function rptOnReload() { if (SEC === "reports" && (REP.data || REP.loading)) rptDataLoad(); else REP.stale = true; }
+function rptOnReload() { if ((SEC === "reports" || SUB === "transfers") && (REP.data || REP.loading)) rptDataLoad(); else REP.stale = true; }
 function rptSavedLoad() {
   if (REP.saved !== null || REP.savedLoading) return;
   REP.savedLoading = true;
@@ -5177,13 +5213,22 @@ function rptPass(r, flt) {
   if (num && rptNum(q) != null) { a = rptNum(v); b = Number(q); if (a === null) return false; } else { a = String(v); b = q; if (a === "") return false; }
   return flt.op === "gt" ? a > b : flt.op === "gte" ? a >= b : flt.op === "lt" ? a < b : a <= b;
 }
-function rptFiltered(cfg) {
-  var per = cfg.per || "all"; if (per === "dash") per = REP.per;
-  var range = per === "custom" && cfg.per !== "dash" ? { from: cfg.from, to: cfg.to } : rptRange(per, REP.from, REP.to);
-  if (cfg.per === "dash") range = rptDashRange();
-  var df = cfg.dateF || "delivery_date", flts = (cfg.filters || []).filter(function (f) { return f.f && RPT_OPS[f.op]; });
+// The dates a card covers (null = all time). "dash" follows the period strip above the cards.
+function rptCfgRange(cfg) {
+  var per = cfg.per || "all";
+  if (per === "all") return null;
+  return per === "dash" ? rptDashRange() : rptRange(per, cfg.from, cfg.to);
+}
+// The same number of days just before a range: what a Number card compares with.
+function rptPrevRange(r) {
+  var a = new Date(r.from + "T12:00:00"), b = new Date(r.to + "T12:00:00"), days = Math.round((b - a) / 86400000) + 1;
+  var pt = new Date(a), pf = new Date(a); pt.setDate(pt.getDate() - 1); pf.setDate(pf.getDate() - days);
+  return { from: rptIso(pf), to: rptIso(pt), days: days };
+}
+function rptFiltered(cfg, over) {
+  var range = over || rptCfgRange(cfg), df = cfg.dateF || "delivery_date", flts = (cfg.filters || []).filter(function (f) { return f.f && RPT_OPS[f.op]; });
   return (REP.data || []).filter(function (r) {
-    if (cfg.per !== "all") { var d = r[df] ? String(r[df]).slice(0, 10) : ""; if (!d || d < range.from || d > range.to) return false; }
+    if (range) { var d = r[df] ? String(r[df]).slice(0, 10) : ""; if (!d || d < range.from || d > range.to) return false; }
     for (var i = 0; i < flts.length; i++) if (!rptPass(r, flts[i])) return false;
     return true;
   });
@@ -5202,8 +5247,10 @@ function rptAggVal(list, v) {
   return vals.reduce(function (a, b) { return v.agg === "min" ? (b < a ? b : a) : (b > a ? b : a); });
 }
 function rptValLabel(v) {
-  if (v.agg === "count") return "Count";
-  return RPT_AGG[v.agg] + " " + (v.agg === "ratio" ? v.f + " / " + v.f2 : v.f);
+  var n = rptNice(v.f).toLowerCase();
+  if (v.agg === "count") return "Number of orders";
+  if (v.agg === "ratio") return v.f === "revenue" && v.f2 === "internal_miles" ? "Revenue per mile" : rptNice(v.f) + " per " + rptNice(v.f2).toLowerCase();
+  return { sum: "Total ", avg: "Average ", min: "Lowest ", max: "Highest ", countd: "Different " }[v.agg] + n;
 }
 function rptValFmt(v, x) {
   if (x === null || x === undefined) return "—";
@@ -5253,39 +5300,271 @@ function rptPeriodStrip() {
     '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-rptdto class="rpt-date" data-last-iso="' + r.to + '" value="' + esc(isoToMdy(r.to)) + '">' +
     '<span class="rpt-live">' + esc(rptUpdatedText()) + "</span></div>";
 }
-function rptTiles() { return ((REP.saved || []).filter(function (r) { return String(r.name).indexOf("__") !== 0; }).map(function (r) { var c = rptUpgrade(r.config || {});
-  return { id: r.id, name: r.name, cfg: c, tag: (c.rows && c.rows.length ? "grouped by " + c.rows.join(", ") : "totals") }; })); }
+/* ── Dashboard cards ───────────────────────────────────────────────────────
+   Every card is a saved report; its config also says how it is drawn: viz number | trend | bars (a ranking) | table,
+   size s | m | l (a quarter, half or the full width), and that kind's options (cmp, spark, time, top).
+   Older reports have no viz: rptViz picks one from their shape. The card order is saved in a row named "__dashboard",
+   the same way the Scheduler bar pins are. */
+var RPT_VIZ = [["number", "Number", "One total, up or down"], ["trend", "Trend", "Week by week"], ["bars", "Ranking", "Top customers, trucks…"], ["table", "Table", "Rows and columns"]];
+var RPT_SIZE = [["s", "Small"], ["m", "Half"], ["l", "Full"]];
+var RPT_STARTER = [
+  ["Orders delivered", { viz: "number", vals: [{ agg: "count", f: "" }] }],
+  ["Revenue", { viz: "number", vals: [{ agg: "sum", f: "revenue" }] }],
+  ["Miles driven", { viz: "number", vals: [{ agg: "sum", f: "internal_miles" }] }],
+  ["Revenue per mile", { viz: "number", vals: [{ agg: "ratio", f: "revenue", f2: "internal_miles" }] }],
+  ["Orders over time", { viz: "trend", vals: [{ agg: "count", f: "" }] }],
+  ["Revenue over time", { viz: "trend", vals: [{ agg: "sum", f: "revenue" }] }],
+  ["Top customers by orders", { viz: "bars", rows: ["party"], vals: [{ agg: "count", f: "" }], top: 10 }],
+  ["Loads by truck", { viz: "bars", rows: ["truck_number"], vals: [{ agg: "count", f: "" }], top: 10 }],
+  ["Orders by department and type", { viz: "table", rows: ["pivot_department"], cols: "order_type", vals: [{ agg: "count", f: "" }] }]
+];
+function rptNewCfg(o) {
+  return Object.assign({ v: 2, rows: [], cols: "", vals: [{ agg: "count", f: "" }], filters: [Object.assign({}, RPT_NOT_CANCELLED)], per: "dash", dateF: "delivery_date" }, rptCfgCopy(o || {}));
+}
+function rptViz(c) {
+  if (c.viz) return c.viz;
+  var rows = c.rows || [];
+  return !rows.length && !c.cols ? "number" : rows.length === 1 && !c.cols && (c.vals || []).length === 1 ? "bars" : "table";
+}
+function rptSize(c) { return c.size || { number: "s", trend: "m", bars: "m", table: "l" }[rptViz(c)]; }
+function rptLayoutRow() { return (REP.saved || []).filter(function (r) { return r.name === "__dashboard"; })[0] || null; }
+function rptTiles() {
+  var lay = rptLayoutRow(), order = lay && lay.config && Array.isArray(lay.config.order) ? lay.config.order : [];
+  var list = (REP.saved || []).filter(function (r) { return String(r.name).indexOf("__") !== 0; }).map(function (r, i) { return { id: r.id, name: r.name, cfg: rptUpgrade(r.config || {}), i: i }; });
+  var pos = function (t) { var p = order.indexOf(t.id); return p < 0 ? 1e6 + t.i : p; };
+  return list.sort(function (a, b) { return pos(a) - pos(b); });
+}
+var RPT_LAY_SAVE = Promise.resolve();
+function rptLayoutSave(order) {
+  var row = rptLayoutRow();
+  if (row) row.config = { order: order }; else REP.saved = (REP.saved || []).concat([{ id: null, name: "__dashboard", config: { order: order } }]);
+  RPT_LAY_SAVE = RPT_LAY_SAVE.then(function () {
+    var r = rptLayoutRow(), body = { name: "__dashboard", config: { order: r ? r.config.order : order } };
+    if (r && r.id) body.id = r.id;
+    return api("saved-report", body).then(function (res) { var rr = rptLayoutRow(); if (rr && res && res.id) rr.id = res.id; });
+  }).catch(function (err) { toast("The card order didn't save: " + err.message, true); });
+}
+// Save one card's config straight from the dashboard (its width).
+function rptCardSave(t) {
+  var row = (REP.saved || []).filter(function (r) { return r.id === t.id; })[0];
+  if (row) row.config = t.cfg;
+  api("saved-report", { id: t.id, name: t.name, config: t.cfg }).catch(function (err) { toast(err.message, true); });
+}
 function rptUpdatedText() {
   if (REP.loading) return "Updating…";
   if (REP.err) return "Couldn't load the data: " + REP.err;
   return REP.dataAt ? "Live · updated " + REP.dataAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
 }
-function rptDashHtml() {
-  if (!REP.data) return '<div class="empty">' + (REP.err ? esc(REP.err) + ' <button class="btn" data-rptrefresh="1">Try Again</button>' : "Loading the report data…") + "</div>";
-  // Only the reports you build and save show here: no built-in cards or tiles.
-  var h = '<div class="rpt-cards">';
-  rptTiles().forEach(function (t, i) {
-    var res = rptRun(t.cfg), tv = rptTotalVal(t.cfg, res);
-    var v = tv.v ? rptValFmt(tv.v, tv.x) + (tv.v.f === "days_to_deliver" && tv.x != null ? " days" : "") : "—";
-    h += '<button class="rpt-tile mine" data-rpttile="' + i + '"><span class="go">Open &rarr;</span>' + sbPinBtn(rptTileKey(t)) + '<div class="lbl">' + esc(t.name) +
-      '</div><div class="rpt-big sm">' + v + '</div><div class="rpt-sub">' + esc(t.tag) + "</div></button>";
-  });
-  h += "</div>";
-  if (!rptTiles().length) h += '<div class="empty">No reports yet. Click + New Report to build one, then pin it to the Scheduler bar if you want it there.</div>';
+function rptValText(v, x) { return rptValFmt(v, x) + (v.f === "days_to_deliver" && x != null ? " days" : ""); }
+// Short numbers for chart axes: $12k, 1.4k, $3.21
+function rptShort(v, x) {
+  if (x == null) return "";
+  var a = Math.abs(x), m = rptIsMoney(v.f) && v.agg !== "count" && v.agg !== "countd";
+  var s = a >= 1e6 ? (a / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M" : a >= 1e3 ? (a / 1e3).toFixed(a >= 1e4 ? 0 : 1) + "k" : String(Math.round(a * (a < 10 ? 100 : 1)) / (a < 10 ? 100 : 1));
+  return (x < 0 ? "-" : "") + (m ? "$" : "") + s;
+}
+/* --- time series: one value per week (Monday) or month across the card's period, empty ones included --- */
+function rptTimeUnit(cfg) {
+  if (cfg.time === "week" || cfg.time === "month") return cfg.time;
+  var r = rptCfgRange(cfg); return !r || (Date.parse(r.to) - Date.parse(r.from)) / 86400000 > 120 ? "month" : "week";
+}
+function rptBucket(d, unit) {
+  if (unit === "month") return d.slice(0, 7);
+  var t = new Date(d.slice(0, 10) + "T12:00:00"); t.setDate(t.getDate() - (t.getDay() + 6) % 7); return rptIso(t);
+}
+function rptBucketNext(k, unit) {
+  if (unit === "month") { var y = +k.slice(0, 4), m = +k.slice(5, 7); return m === 12 ? (y + 1) + "-01" : y + "-" + String(m + 1).padStart(2, "0"); }
+  var t = new Date(k + "T12:00:00"); t.setDate(t.getDate() + 7); return rptIso(t);
+}
+function rptBucketLabel(k, unit) { return RPT_MON[+k.slice(5, 7) - 1] + (unit === "month" ? " ’" + k.slice(2, 4) : " " + (+k.slice(8, 10))); }
+function rptSeries(cfg, unit) {
+  var df = cfg.dateF || "delivery_date", v = cfg.vals[0], g = {}, out = [];
+  rptFiltered(cfg).forEach(function (r) { var d = r[df] ? String(r[df]).slice(0, 10) : ""; if (d) { var k = rptBucket(d, unit); (g[k] = g[k] || []).push(r); } });
+  var keys = Object.keys(g).sort(), range = rptCfgRange(cfg);
+  if (!keys.length && !range) return out;
+  var k = rptBucket(range ? range.from : keys[0], unit), end = rptBucket(range ? (range.to < TODAY ? range.to : TODAY) : keys[keys.length - 1], unit);
+  while (k <= end && out.length < 3000) { out.push({ k: k, label: rptBucketLabel(k, unit), n: (g[k] || []).length, x: rptAggVal(g[k] || [], v) }); k = rptBucketNext(k, unit); }
+  return out.slice(-156);
+}
+/* --- the four kinds of card --- */
+function rptNumberHtml(cfg) {
+  var i = Math.min(cfg.big == null ? cfg.vals.length - 1 : cfg.big, cfg.vals.length - 1), v = cfg.vals[i], x = rptAggVal(rptFiltered(cfg), v), range = rptCfgRange(cfg), h = "";
+  h += '<div class="rc-num">' + rptValText(v, x) + "</div>";
+  if (cfg.cmp !== false && range) {
+    var prev = rptPrevRange(range), px = rptAggVal(rptFiltered(cfg, prev), v), was = "vs " + rptValText(v, px) + " the " + prev.days + " days before";
+    if (x != null && px) {
+      var pct = (x - px) / Math.abs(px) * 100, lowerBetter = v.f === "days_to_deliver" || /cost/.test(v.f || "");
+      var cls = Math.abs(pct) < 0.5 ? "flat" : (pct > 0) !== lowerBetter ? "up" : "down";
+      h += '<div class="rc-cmp ' + cls + '"><b>' + (Math.abs(pct) < 0.5 ? "= no change" : (pct > 0 ? "▲ " : "▼ ") + Math.abs(pct).toFixed(Math.abs(pct) < 10 ? 1 : 0) + "%") + "</b> " + esc(was) + "</div>";
+    } else h += '<div class="rc-cmp flat">' + esc(was) + "</div>";
+  }
+  if (cfg.spark !== false) {
+    var u = rptTimeUnit(cfg), s = rptSeries(cfg, u), pts = s.filter(function (p) { return p.x != null; });
+    if (pts.length > 1) {
+      var mx = Math.max.apply(null, pts.map(function (p) { return p.x; })), mn = Math.min(0, Math.min.apply(null, pts.map(function (p) { return p.x; })));
+      var xy = s.map(function (p, j) { return p.x == null ? null : (j / (s.length - 1) * 100).toFixed(2) + "," + (30 - (mx > mn ? (p.x - mn) / (mx - mn) : 0) * 28 - 1).toFixed(2); }).filter(Boolean);
+      h += '<svg class="rc-spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true"><polyline points="' + xy.join(" ") + '"/></svg>' +
+        '<div class="rc-sparklbl">' + (u === "week" ? "Week by week" : "Month by month") + "</div>";
+    }
+  }
   return h;
 }
-/* ── Reports → Motive tab: truck-days from Motive, read only ───────────────
-   A cross-check for timecards and mileage: which trucks ran, odometer start and end, first on / last off, hours,
-   and where the day's miles went (Bag orders, Internal freight, External). Nothing on this tab edits an order. */
-function motWeekRange() { if (!MOT.day) MOT.day = motYesterday(); var mon = motMonday(MOT.day); return { from: mon, to: motAddDays(mon, 6) }; }
-function motTabEnsure() {
-  if (!MOT.day) MOT.day = motYesterday();
-  var r = motWeekRange(), key = r.from;
-  if (MOT.loadedWeek === key || MOT.loading) return;
+function rptColsHtml(cfg, s, unit, tall) {
+  if (!s.length) return '<div class="rc-none">No orders in this period</div>';
+  var v = cfg.vals[0], mx = 0, step = Math.ceil(s.length / (tall ? 12 : 6));
+  s.forEach(function (p) { if (p.x != null && p.x > mx) mx = p.x; });
+  return '<div class="rc-chart' + (tall ? " tall" : "") + '"><div class="rc-y"><span>' + esc(rptShort(v, mx)) + "</span><span>0</span></div><div class=\"rc-plot\"><div class=\"rc-cols\">" +
+    s.map(function (p) {
+      var hg = mx > 0 && p.x > 0 ? Math.max(1.5, p.x / mx * 100) : 0;
+      return '<span class="rc-col" data-tip="' + esc((unit === "week" ? "Week of " : "") + p.label + ": " + rptValText(v, p.x) + " · " + p.n + " order" + (p.n === 1 ? "" : "s")) + '"><i style="height:' + hg.toFixed(1) + '%"></i></span>';
+    }).join("") + '</div><div class="rc-x">' + s.map(function (p, i) { return "<span>" + (i % step === 0 ? esc(p.label) : "") + "</span>"; }).join("") + "</div></div></div>";
+}
+function rptRankHtml(cfg, top) {
+  var res = rptRun(cfg), v = res.vals[0], mx = 0, n = top || 10;
+  var rows = res.rows.map(function (r) { return { l: r.labels.join(" · "), x: r.totV[0] }; })
+    .sort(function (a, b) { return (b.x == null ? -Infinity : b.x) - (a.x == null ? -Infinity : a.x); });
+  if (!rows.length) return '<div class="rc-none">No orders in this period</div>';
+  var shown = rows.slice(0, n), rest = rows.slice(n);
+  shown.forEach(function (r) { if (r.x > mx) mx = r.x; });
+  var h = '<div class="rc-rank">' + shown.map(function (r) {
+    return '<div class="rc-r" data-tip="' + esc(r.l + ": " + rptValText(v, r.x)) + '"><span class="rc-l">' + esc(r.l) + '</span><span class="rc-track"><i style="width:' +
+      (mx > 0 && r.x > 0 ? Math.max(1, r.x / mx * 100) : 0).toFixed(1) + '%"></i></span><span class="rc-v">' + rptValFmt(v, r.x) + "</span></div>"; }).join("") + "</div>";
+  if (rest.length) {
+    var adds = v.agg === "count" || v.agg === "sum", sum = rest.reduce(function (a, r) { return a + (r.x || 0); }, 0);
+    h += '<div class="rc-more">+ ' + rest.length + " more" + (adds ? " (" + rptValFmt(v, sum) + " together)" : "") + "</div>";
+  }
+  return h;
+}
+function rptMiniTable(cfg, max) {
+  var res = rptRun(cfg), dc = rptDisplay(res), k = dc.length - 1, rows = res.rows.slice();
+  if (!rows.length) return '<div class="rc-none">No orders in this period</div>';
+  rows.sort(function (a, b) { var x = dc[k].get(a), y = dc[k].get(b); return (y == null ? -Infinity : y) - (x == null ? -Infinity : x); });
+  var h = '<div class="rc-tblwrap"><table class="rc-tbl"><thead><tr>' + (res.rf.length ? res.rf.map(function (f) { return "<th>" + esc(rptNice(f)) + "</th>"; }).join("") : "<th></th>") +
+    dc.map(function (x) { return '<th class="r">' + esc(x.head) + "</th>"; }).join("") + "</tr></thead><tbody>" +
+    rows.slice(0, max).map(function (r) { return "<tr>" + (res.rf.length ? r.labels : ["All orders"]).map(function (l) { return "<td>" + esc(l) + "</td>"; }).join("") +
+      dc.map(function (x) { return '<td class="r' + (x.strong ? " strong" : "") + '">' + rptValFmt(x.v, x.get(r)) + "</td>"; }).join("") + "</tr>"; }).join("") +
+    '<tr class="tot"><td colspan="' + Math.max(1, res.rf.length) + '">Total</td>' + dc.map(function (x) { return '<td class="r">' + rptValFmt(x.v, x.tot) + "</td>"; }).join("") + "</tr></tbody></table></div>";
+  if (rows.length > max) h += '<div class="rc-more">+ ' + (rows.length - max) + " more rows. Open the card to see them all.</div>";
+  return h;
+}
+function rptCardBody(cfg, big) {
+  if (!cfg.vals || !cfg.vals.length) return '<div class="rc-none">Pick what to measure</div>';
+  var viz = rptViz(cfg);
+  if (viz === "trend") { var u = rptTimeUnit(cfg); return rptColsHtml(cfg, rptSeries(cfg, u), u, big); }
+  if (viz === "bars") return rptRankHtml(cfg, cfg.top || 10);
+  if (viz === "table") return rptMiniTable(cfg, big ? 15 : 8);
+  return rptNumberHtml(cfg);
+}
+// The small line under a card's name: only what differs from the dashboard (its own period, a type of order, extra filters).
+function rptCardSub(c) {
+  var parts = [], per = RPT_PER.filter(function (p) { return p[0] === c.per; })[0];
+  if (c.per !== "dash" && per) parts.push(c.per === "custom" ? isoToMdy(c.from) + " to " + isoToMdy(c.to) : per[1]);
+  var fl = (c.filters || []).filter(function (f) { return !rptIsNotCancelled(f); }), ty = fl.filter(function (f) { return f.f === "order_type" && f.op === "eq"; })[0];
+  if (ty) parts.push(ty.v + " only");
+  if (fl.length > (ty ? 1 : 0)) parts.push((fl.length - (ty ? 1 : 0)) + " filter" + (fl.length - (ty ? 1 : 0) === 1 ? "" : "s"));
+  if (c.dateF && c.dateF !== "delivery_date") parts.push("by " + rptNice(c.dateF).toLowerCase());
+  return parts.join(" · ");
+}
+function rptIsNotCancelled(f) { return f.f === "stage" && f.op === "ne" && String(f.v).toLowerCase() === "cancelled"; }
+function rptCardHtml(t, i, edit, preview) {
+  var c = t.cfg, sub = rptCardSub(c);
+  return '<div class="rd-card sz-' + rptSize(c) + " v-" + rptViz(c) + '"' + (preview ? "" : ' data-rdi="' + i + '"') + (edit ? ' draggable="true"' : "") + '><div class="rd-hd">' +
+    (edit ? '<span class="rd-grip" aria-hidden="true">⠿</span>' : "") +
+    '<span class="rd-t"><b>' + esc(t.name) + "</b>" + (sub ? "<small>" + esc(sub) + "</small>" : "") + "</span>" +
+    (preview ? "" : edit ? '<span class="rd-tools"><span class="rpt-seg">' + RPT_SIZE.map(function (s) {
+        return '<button class="' + (rptSize(c) === s[0] ? "on" : "") + '" data-rdact="size" data-i="' + i + '" data-v="' + s[0] + '">' + s[1] + "</button>"; }).join("") +
+      '</span><button class="btn sm" data-rdact="edit" data-i="' + i + '">Edit</button><button class="rd-x" data-rdact="del" data-i="' + i + '" title="Delete this card" aria-label="Delete this card">&times;</button></span>' :
+      sbPinBtn(rptTileKey(t))) +
+    '</div><div class="rd-body"' + (edit || preview ? "" : ' data-rpttile="' + i + '"') + ">" + rptCardBody(c, rptSize(c) === "l") + "</div></div>";
+}
+function rptDashHtml() {
+  if (!REP.data) return '<div class="empty">' + (REP.err ? esc(REP.err) + ' <button class="btn" data-rptrefresh="1">Try Again</button>' : "Loading the report data…") + "</div>";
+  var tiles = rptTiles();
+  if (!tiles.length) return '<div class="rd-empty"><b>Your dashboard is empty</b><p>Start with a set of everyday cards (orders, revenue, miles, revenue per mile, top customers, loads by truck) and change them from there, or build your own.</p>' +
+    '<div><button class="btn pri" data-rdact="starter">Add Starter Cards</button><button class="btn" data-rdact="new">Build My Own</button></div></div>';
+  return (REP.edit ? '<div class="rd-editnote">Drag a card by its name to move it. Pick Small, Half or Full for its width. Changes save as you go.</div>' : "") +
+    '<div class="rd-grid' + (REP.edit ? " editing" : "") + '">' + tiles.map(function (t, i) { return rptCardHtml(t, i, REP.edit); }).join("") + "</div>";
+}
+function rptAddStarter(btn) {
+  btn.disabled = true;
+  var ids = [];
+  RPT_STARTER.reduce(function (p, s) { return p.then(function () { return api("saved-report", { name: s[0], config: rptNewCfg(s[1]) }).then(function (res) { if (res && res.id) ids.push(res.id); }); }); }, Promise.resolve())
+    .then(function () { var lay = rptLayoutRow(), old = lay && lay.config && lay.config.order || [], body = { name: "__dashboard", config: { order: old.concat(ids) } };
+      if (lay && lay.id) body.id = lay.id; return api("saved-report", body); })
+    .then(function () { toast("Added " + RPT_STARTER.length + " cards"); }, function (err) { toast(err.message, true); })
+    .then(function () { REP.saved = null; render(); });
+}
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("[data-rdact]"); if (!b) return;
+  var act = b.dataset.rdact, t = rptTiles()[+b.dataset.i];
+  if (act === "layout") { REP.edit = !REP.edit; render(); return; }
+  if (act === "starter") { rptAddStarter(b); return; }
+  if (act === "new") { rptWinOpen(null); return; }
+  if (!t) return;
+  if (act === "edit") rptWinOpen(t);
+  else if (act === "size") { t.cfg.size = b.dataset.v; rptCardSave(t); render(); }
+  else if (act === "del") confirmModal("Delete the card “" + esc(t.name) + "”? It comes off the Dashboard and the Scheduler bar. The orders it reads are not touched.", function () {
+    api("saved-report/delete", { id: t.id }).then(function () { REP.saved = null; toast("Card deleted"); render(); }).catch(function (err) { toast(err.message, true); });
+  }, "Delete Card");
+});
+/* Edit Layout: drag a card onto another to put it there */
+document.addEventListener("dragstart", function (e) {
+  var c = e.target.closest && e.target.closest(".rd-grid.editing .rd-card"); if (!c) return;
+  REP.drag = +c.dataset.rdi; c.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", "card"); } catch (x) {}
+});
+document.addEventListener("dragover", function (e) {
+  if (REP.drag == null) return;
+  var c = e.target.closest && e.target.closest(".rd-grid.editing .rd-card"); if (!c) return;
+  e.preventDefault();
+  document.querySelectorAll(".rd-card.drop").forEach(function (x) { if (x !== c) x.classList.remove("drop"); });
+  if (+c.dataset.rdi !== REP.drag) c.classList.add("drop");
+});
+document.addEventListener("drop", function (e) {
+  if (REP.drag == null) return;
+  var c = e.target.closest && e.target.closest(".rd-grid.editing .rd-card"), from = REP.drag; REP.drag = null;
+  if (!c) return;
+  e.preventDefault();
+  var to = +c.dataset.rdi; if (to === from) { render(); return; }
+  var ids = rptTiles().map(function (t) { return t.id; }), moved = ids.splice(from, 1)[0];
+  ids.splice(to, 0, moved); rptLayoutSave(ids); render();
+});
+document.addEventListener("dragend", function () { if (REP.drag == null && !document.querySelector(".rd-card.dragging")) return; REP.drag = null;
+  document.querySelectorAll(".rd-card.dragging,.rd-card.drop").forEach(function (x) { x.classList.remove("dragging", "drop"); }); });
+/* Chart tooltips: anything with data-tip */
+var RC_TIP = null;
+document.addEventListener("mouseover", function (e) {
+  var el = e.target.closest && e.target.closest("[data-tip]");
+  if (!el) { if (RC_TIP) RC_TIP.hidden = true; return; }
+  if (!RC_TIP) { RC_TIP = document.createElement("div"); RC_TIP.className = "rc-tip"; document.body.appendChild(RC_TIP); }
+  RC_TIP.textContent = el.dataset.tip; RC_TIP.hidden = false;
+  var r = el.getBoundingClientRect(), tw = RC_TIP.offsetWidth;
+  RC_TIP.style.left = Math.max(6, Math.min(innerWidth - tw - 6, r.left + r.width / 2 - tw / 2)) + "px";
+  RC_TIP.style.top = Math.max(6, r.top - RC_TIP.offsetHeight - 6) + "px";
+});
+/* ── Motive (its own page, below Database): truck-days from Motive, read only ──────────────
+   Pick the dates (Yesterday, This Week, Last Week, This Month, Last Month, or your own), and Pull From Motive fetches every finished day in them
+   that isn't saved yet. The page shows the fleet's miles and hours, one row per truck (click it for its days), a truck-by-day grid, and external
+   RPM by customer. Click any day to open that one day (odometers, first on / last off, the orders on each truck). Nothing here edits an order. */
+var MOT_PER = [["yday", "Yesterday"], ["thiswk", "This Week"], ["lastwk", "Last Week"], ["month", "This Month"], ["lastmonth", "Last Month"], ["custom", "Custom"]];
+function motPerRange() {
+  var y = motYesterday(), mon = motMonday(TODAY), t = new Date(TODAY + "T12:00:00");
+  if (MOT.per === "yday") return { from: y, to: y };
+  if (MOT.per === "thiswk") return { from: mon, to: TODAY };
+  if (MOT.per === "lastwk") return { from: motAddDays(mon, -7), to: motAddDays(mon, -1) };
+  if (MOT.per === "month") return { from: TODAY.slice(0, 8) + "01", to: TODAY };
+  if (MOT.per === "lastmonth") return { from: rptIso(new Date(t.getFullYear(), t.getMonth() - 1, 1)), to: rptIso(new Date(t.getFullYear(), t.getMonth(), 0)) };
+  return { from: MOT.from || y, to: MOT.to || y };
+}
+function motViewRange() { if (!MOT.day) MOT.day = motYesterday(); return MOT.view === "day" ? { from: MOT.day, to: MOT.day } : motPerRange(); }
+// Read the saved days for what is on screen (once per range; Pull and the date controls ask again).
+function motEnsure2(r) {
+  var key = r.from + "|" + r.to;
+  if (MOT.loadedKey === key || MOT.loading) return;
   MOT.loading = true; MOT.err = "";
-  // mark the week as tried even when the load fails, or the redraw below would ask again forever (the tab shook); Pull / Refresh retries
-  motLoad(r.from, r.to).then(function () { MOT.loadedWeek = key; }, function (e) { MOT.loadedWeek = key; MOT.err = "Couldn't read the saved Motive days: " + (e.message || String(e)); })
-    .then(function () { MOT.loading = false; if (SEC === "reports" && REP.tab === "motive") render(); });
+  // mark the range as tried even when the load fails, or the redraw below would ask again forever; Pull retries
+  motLoad(r.from, r.to).then(function () { MOT.loadedKey = key; }, function (e) { MOT.loadedKey = key; MOT.err = "Couldn't read the saved Motive days: " + (e.message || String(e)); })
+    .then(function () { MOT.loading = false; if (SUB === "motive") render(); });
 }
 function motTrucks() {
   var list = (DB.trucks || []).filter(function (t) { return t.active !== false; }).map(function (t) { return String(t.number); });
@@ -5301,19 +5580,118 @@ function motDayStateText(day) {
   if (day > motYesterday()) return "Today isn't finished yet";
   return MOT.pulled[day] ? "" : "Not pulled yet";
 }
-function vMotiveTab() {
-  motTabEnsure();
-  var day = MOT.day, h = "";
-  if (MOT.err) h += '<div class="note-bar">' + esc(MOT.err) + "</div>";
-  if (MOT.view === "week") return h + motWeekHtml();
-  var trucks = motTrucks(), tot = 0, bag = 0, intf = 0, ext = 0, ran = 0;
-  trucks.forEach(function (t) { var b = motBuckets(t, day); if (b.total != null) { ran++; tot += b.total; bag += b.bag; intf += b.intf; ext += b.ext || 0; } });
+function motTilesHtml(t) {
+  return '<div class="mot-tiles mot-tiles6">' +
+    '<div class="mot-tile"><i>Fleet miles</i><b>' + Math.round(t.tot).toLocaleString() + "</b><small>" + esc(t.note) + "</small></div>" +
+    '<div class="mot-tile"><i class="b">Bag orders</i><b>' + Math.round(t.bag).toLocaleString() + "</b><small>" + motPct(t.bag, t.tot) + "</small></div>" +
+    '<div class="mot-tile"><i class="i">Internal freight</i><b>' + Math.round(t.intf).toLocaleString() + "</b><small>" + motPct(t.intf, t.tot) + "</small></div>" +
+    '<div class="mot-tile"><i class="x">External</i><b>' + Math.round(t.ext).toLocaleString() + "</b><small>" + motPct(t.ext, t.tot) + " · everything else</small></div>" +
+    '<div class="mot-tile"><i>Hours</i><b>' + (Math.round(t.hours * 10) / 10).toLocaleString() + "</b><small>engine on, all trucks</small></div>" +
+    '<div class="mot-tile"><i>Trucks ran</i><b>' + t.ran + "</b><small>" + (t.truckDays != null ? t.truckDays + " truck-days" : "of " + motTrucks().length) + "</small></div></div>";
+}
+function motPct(x, of) { return of > 0 ? Math.round(x / of * 100) + "% of the miles" : ""; }
+/* --- the date range: totals, a row per truck, a truck-by-day grid, external RPM --- */
+function motRangeHtml(r) {
+  var last = motYesterday(), days = motDaysBetween(r.from, r.to), done = days.filter(function (d) { return d <= last; });
+  var missing = done.filter(function (d) { return !MOT.pulled[d]; }), trucks = motTrucks(), per = {}, T = { tot: 0, bag: 0, intf: 0, ext: 0, hours: 0, ran: 0, truckDays: 0 };
+  trucks.forEach(function (t) {
+    var x = per[t] = { days: 0, miles: 0, hours: 0, bag: 0, intf: 0, ext: 0, over: 0 };
+    done.forEach(function (d) {
+      var row = motRow(t, d), b = motBuckets(t, d); if (!row || b.total == null) return;
+      x.days++; x.miles += b.total; x.bag += b.bag; x.intf += b.intf; x.ext += b.ext || 0; x.over += b.over; x.hours += motNum(row.hours) || 0;
+    });
+    if (x.days) { T.ran++; T.truckDays += x.days; T.tot += x.miles; T.bag += x.bag; T.intf += x.intf; T.ext += x.ext; T.hours += x.hours; }
+  });
+  T.note = done.length ? (done.length - missing.length) + " of " + done.length + " day" + (done.length === 1 ? "" : "s") + " saved" : "Today isn't finished yet";
+  var h = "";
+  if (missing.length) h += '<div class="note-bar mot-miss">' + missing.length + " finished day" + (missing.length === 1 ? " isn't" : "s aren't") + " pulled from Motive yet" +
+    (missing.length <= 6 ? " (" + missing.map(function (d) { return esc(fmtLongDay(d)); }).join(", ") + ")" : "") + ". Pull From Motive gets " + (missing.length === 1 ? "it" : "them") + ".</div>";
+  h += motTilesHtml(T);
+  // one row per truck, busiest first; click for its days
+  var order = trucks.slice().sort(function (a, b) { return per[b].miles - per[a].miles || a.localeCompare(b, undefined, { numeric: true }); });
+  h += '<div class="mot-h">Trucks <span>Click a truck for its days, or a day for every truck that day</span></div>' +
+    '<div class="grid-wrap mot-wrap"><table class="data mot-table"><thead><tr><th style="width:80px">Truck</th><th style="width:150px">Driver</th><th class="n" style="width:70px">Days</th>' +
+    '<th class="n" style="width:90px">Miles</th><th class="n" style="width:90px">Per day</th><th class="n" style="width:80px">Hours</th><th>Bag / Internal / External</th></tr></thead><tbody>';
+  order.forEach(function (t) {
+    var x = per[t], open = !!MOT.open[t];
+    if (!x.days) { h += '<tr class="mot-idle"><td><b>' + esc(t) + "</b></td><td>" + esc(motTruckDriver(t)) + '</td><td colspan="5" class="mute">' + (done.length ? "Did not run" : "") + "</td></tr>"; return; }
+    h += '<tr data-motopen="' + esc(t) + '" class="' + (open ? "sel" : "") + '"><td><b><span class="mot-car">' + (open ? "&#9662;" : "&#9656;") + "</span>" + esc(t) + "</b></td><td>" + esc(motTruckDriver(t)) + '</td><td class="n">' + x.days +
+      '</td><td class="n"><b>' + Math.round(x.miles).toLocaleString() + '</b></td><td class="n">' + Math.round(x.miles / x.days).toLocaleString() + '</td><td class="n">' + (Math.round(x.hours * 10) / 10) + "</td><td>" +
+      motBarHtml({ total: x.miles, bag: x.bag, intf: x.intf, ext: x.ext }) + (x.over ? '<span class="mot-over">Over by ' + Math.round(x.over * 10) / 10 + "</span>" : "") + "</td></tr>";
+    if (open) done.slice().reverse().forEach(function (d) {
+      var row = motRow(t, d), b = motBuckets(t, d); if (!row) return;
+      var ords = motOrdersFor(t, d), on = motCellOpen("list", t, d);
+      h += '<tr class="mot-sub' + (on ? " sel" : "") + '" data-motcell="list|' + esc(t) + "|" + d + '"><td></td><td>' + esc(fmtLongDay(d)) + '</td><td class="n mute">' + motFmtTime(row.first_on) + "–" + motFmtTime(row.last_off) + '</td><td class="n">' + Math.round(Number(row.miles) * 10) / 10 +
+        '</td><td class="mute">' + ords.length + " order" + (ords.length === 1 ? "" : "s") + '</td><td class="n">' + (row.hours != null ? row.hours : "—") + "</td><td>" + motBarHtml(b) +
+        '<span class="mot-nos">' + esc(ords.map(function (o) { return o.rexius_order_no || o.broker_load_no || ""; }).filter(Boolean).slice(0, 4).join(", ") + (ords.length > 4 ? "…" : "")) + "</span></td></tr>";
+      if (on) h += '<tr class="mot-cellrow"><td colspan="7">' + motOrdersHtml(t, d, true) + "</td></tr>";
+    });
+  });
+  h += '</tbody></table></div><div class="mot-legend"><span class="b">Bag orders</span><span class="i">Internal freight</span><span class="x">External (the rest of the truck\'s miles)</span></div>';
+  // truck × day, one Mon–Sun table per week (stacked), so every week has the same 7 columns whatever the dates: miles each day shaded by how far
+  // the truck ran, the small number is how many orders it had. Click a cell for that truck-day's orders, a date for the whole day.
+  if (days.length > 1 && days.length <= 62) {
+    h += '<div class="mot-h">Miles by day <span>The small number is how many orders the truck had. Click a cell for them, or a date for the whole day</span></div>';
+    var weeks = [], wk = motMonday(days[0]);
+    while (wk <= days[days.length - 1]) { weeks.push(wk); wk = motAddDays(wk, 7); }
+    weeks.forEach(function (w) { h += motWeekGrid(w, r, order); });
+  }
+  h += motBrokerTable(motRollup(r));
+  return h;
+}
+function motWeekGrid(mon, r, order) {
+  var wd = motDaysBetween(mon, motAddDays(mon, 6)), inR = function (d) { return d >= r.from && d <= r.to; }, fleetDay = {}, fleet = 0, body = "";
+  order.forEach(function (t) {
+    var sum = 0, any = false, openDay = "";
+    var cells = wd.map(function (d) {
+      if (!inR(d)) return '<td class="out"></td>';
+      var row = motRow(t, d), m = row ? motNum(row.miles) : null, n = motOrdersFor(t, d).length, on = motCellOpen("grid", t, d);
+      if (m) { sum += m; fleetDay[d] = (fleetDay[d] || 0) + m; }
+      if (m || n) any = true;
+      if (on) openDay = d;
+      var a = m ? Math.min(0.55, m / 700) : 0;
+      return '<td class="n' + (on ? " on" : "") + '" data-motcell="grid|' + esc(t) + "|" + d + '" title="' + (n ? n + " order" + (n === 1 ? "" : "s") + ". Click to see them" : "No orders. Click to check") + '"' +
+        (m ? ' style="background:color-mix(in srgb,var(--brand) ' + Math.round(a * 100) + '%,transparent)"' : "") + ">" + (m ? Math.round(m).toLocaleString() : '<span class="mute">—</span>') + (n ? "<sup>" + n + "</sup>" : "") + "</td>";
+    }).join("");
+    if (!any) return;
+    fleet += sum;
+    body += '<tr><td class="mot-gt"><b>' + esc(t) + "</b> <span>" + esc(motTruckDriver(t)) + "</span></td>" + cells + '<td class="n mot-gtot"><b>' + (sum ? Math.round(sum).toLocaleString() : "") + "</b></td></tr>";
+    if (openDay) body += '<tr class="mot-cellrow"><td colspan="9">' + motOrdersHtml(t, openDay, true) + "</td></tr>";
+  });
+  var head = '<div class="mot-wkh"><b>Week of ' + esc(fmtLongDay(mon)) + "</b><span>" + (fleet ? Math.round(fleet).toLocaleString() + " fleet miles" : "No miles saved") + "</span></div>";
+  if (!body) return head + '<div class="mot-wkempty">No truck ran or had orders this week.</div>';
+  return head + '<div class="grid-wrap mot-wrap"><table class="data mot-grid"><colgroup><col class="c-t">' + wd.map(function () { return "<col>"; }).join("") + '<col class="c-tot"></colgroup><thead><tr><th>Truck</th>' +
+    wd.map(function (d) { var lab = "<span>" + esc(new Date(d + "T12:00:00").toLocaleDateString([], { weekday: "short" })) + "</span>" + esc(isoToMdy(d).slice(0, 5));
+      return inR(d) ? '<th class="n mot-dh" data-motday="' + d + '" title="Open the whole day">' + lab + "</th>" : '<th class="n mot-dh out">' + lab + "</th>"; }).join("") +
+    '<th class="n">Week</th></tr></thead><tbody>' + body + '</tbody><tfoot><tr><td><b>Fleet</b></td>' +
+    wd.map(function (d) { return '<td class="n' + (inR(d) ? "" : " out") + '">' + (fleetDay[d] ? Math.round(fleetDay[d]).toLocaleString() : "") + "</td>"; }).join("") +
+    '<td class="n"><b>' + Math.round(fleet).toLocaleString() + "</b></td></tr></tfoot></table></div>";
+}
+/* --- one truck-day's orders: the Rexius order # first (external loads too, with their load #), what it was, and its miles or rate.
+   Click an order to open it in the side window, where its miles and cost can be changed. --- */
+function motOrdersHtml(t, d, withDay) {
+  var ords = motOrdersFor(t, d), b = motBuckets(t, d), row = motRow(t, d);
+  var h = '<div class="mot-det"><h3><span>Truck ' + esc(t) + " · " + esc(fmtLongDay(d)) + (row ? " · Motive " + Math.round(Number(row.miles) * 10) / 10 + " mi" : " · not in Motive") + "</span>" +
+    (withDay ? '<button class="btn sm" data-motday="' + d + '">Open The Day</button>' : "") + "</h3>";
+  if (!ords.length) h += '<div class="mot-ev mute">No orders on this truck that day.</div>';
+  ords.forEach(function (o) {
+    var internal = motIsInternal(o), tag = !internal ? "External" : o.is_transfer ? "Internal freight" : "Bag order", cls = !internal ? "x" : o.is_transfer ? "i" : "b";
+    var who = o.is_transfer ? (o.notes || "Internal freight") + (o.transfer_department_name ? " · " + o.transfer_department_name : "") :
+      internal ? (o.customer_name || (o.customer_party_id && party(o.customer_party_id) ? party(o.customer_party_id).name : "")) : (o.broker_name || o.customer_name || "");
+    h += '<button type="button" class="mot-ev mot-ord" data-motorder="' + o.id + '" title="Open this order"><span class="mot-tag ' + cls + '">' + tag + '</span><span class="mot-no">' + esc(o.rexius_order_no || o.transfer_no || "No order #") +
+      (!internal && o.broker_load_no ? " <small>Load " + esc(o.broker_load_no) + "</small>" : "") + "</span><span>" + esc(who) + '</span><span class="n">' +
+      (internal ? (motNum(o.miles) != null ? motNum(o.miles) + " mi" : "no miles yet") : (motNum(o.external_rate) != null ? "$" + motNum(o.external_rate).toLocaleString() : "no rate")) + "</span></button>";
+  });
+  if (b.total != null) h += '<div class="mot-ev mot-ord tot"><span class="mot-tag x">External</span><span></span><span>The rest of the truck\'s miles (deadhead, fuel, shop)</span><span class="n">' + Math.round(b.ext * 10) / 10 + " mi</span></div>";
+  return h + "</div>";
+}
+function motCellOpen(where, t, d) { return MOT.cell === where + "|" + t + "|" + d; }
+/* --- one day: every truck's odometers, first on / last off, hours, and where the miles went; click a truck for its orders --- */
+function motDayHtml(day) {
+  var h = "", trucks = motTrucks(), tot = 0, bag = 0, intf = 0, ext = 0, hours = 0, ran = 0;
+  trucks.forEach(function (t) { var b = motBuckets(t, day), row = motRow(t, day); if (b.total != null) { ran++; tot += b.total; bag += b.bag; intf += b.intf; ext += b.ext || 0; hours += motNum(row && row.hours) || 0; } });
   var state = motDayStateText(day);
-  h += '<div class="mot-tiles">' +
-    '<div class="mot-tile"><i>Fleet miles</i><b>' + Math.round(tot).toLocaleString() + "</b><small>" + (state ? esc(state) : ran + " truck" + (ran === 1 ? "" : "s") + " ran") + "</small></div>" +
-    '<div class="mot-tile"><i class="b">Bag orders</i><b>' + Math.round(bag).toLocaleString() + "</b></div>" +
-    '<div class="mot-tile"><i class="i">Internal freight</i><b>' + Math.round(intf).toLocaleString() + "</b></div>" +
-    '<div class="mot-tile"><i class="x">External</i><b>' + Math.round(ext).toLocaleString() + "</b><small>everything else the trucks ran</small></div></div>";
+  h += motTilesHtml({ tot: tot, bag: bag, intf: intf, ext: ext, hours: hours, ran: ran, note: state || fmtLongDay(day) });
   h += '<div class="grid-wrap mot-wrap"><table class="data mot-table"><thead><tr><th style="width:80px">Truck</th><th style="width:150px">Driver</th><th class="n" style="width:100px">Start odo</th><th class="n" style="width:100px">End odo</th>' +
     '<th class="n" style="width:80px">Miles</th><th style="width:96px">First on</th><th style="width:96px">Last off</th><th class="n" style="width:70px">Hours</th><th>Bag / Internal / External</th></tr></thead><tbody>';
   trucks.forEach(function (t) {
@@ -5326,39 +5704,29 @@ function vMotiveTab() {
   });
   h += '</tbody></table></div><div class="mot-legend"><span class="b">Bag orders</span><span class="i">Internal freight</span><span class="x">External (the rest of the truck\'s miles)</span></div>';
   if (MOT.pick) {
-    var b2 = motBuckets(MOT.pick, day), r2 = motRow(MOT.pick, day);
-    h += '<div class="mot-det"><h3>' + esc(MOT.pick) + " · " + esc(fmtLongDay(day)) + (r2 ? " · " + Math.round(Number(r2.miles) * 10) / 10 + " mi" : "") + "</h3>";
-    var ords = motOrdersFor(MOT.pick, day);
-    if (!ords.length) h += '<div class="mot-ev mute">No orders on this truck that day.</div>';
-    ords.forEach(function (o) {
-      var internal = motIsInternal(o), tag = !internal ? "External" : o.is_transfer ? "Internal freight" : "Bag order", cls = !internal ? "x" : o.is_transfer ? "i" : "b", lab = syncOrderLabel(o);
-      h += '<div class="mot-ev"><span class="mot-tag ' + cls + '">' + tag + "</span><span>" + esc(lab[0] + (lab[1] ? " · " + lab[1] : "")) + '</span><span class="n">' +
-        (internal ? (motNum(o.miles) != null ? motNum(o.miles) + " mi" : "no miles yet") : (motNum(o.external_rate) != null ? "$" + motNum(o.external_rate).toLocaleString() : "no rate")) + "</span></div>";
-    });
-    if (b2.total != null) h += '<div class="mot-ev tot"><span class="mot-tag x">External</span><span>The rest of the truck\'s miles</span><span class="n">' + Math.round(b2.ext * 10) / 10 + " mi</span></div>";
-    h += "</div>";
-  } else h += '<div class="rpt-foot">Click a truck to see its orders for the day.</div>';
+    h += '<div class="mot-pad">' + motOrdersHtml(MOT.pick, day, false) + "</div>";
+  } else h += '<div class="rpt-foot mot-foot">Click a truck to see its orders for the day; click an order to open it.</div>';
   return h;
 }
-function motWeekHtml() {
-  var r = motWeekRange(), days = motDaysBetween(r.from, r.to), trucks = motTrucks(), fleet = 0;
-  var h = '<div class="mot-wk"><div class="rpt-foot">Miles per truck per day from Motive. Click a day to open it.</div><table class="data mot-grid"><thead><tr><th>Truck</th>' +
-    days.map(function (d) { return '<th class="n">' + esc(fmtLongDay(d)) + "</th>"; }).join("") + '<th class="n">Week</th></tr></thead><tbody>';
-  trucks.forEach(function (t) {
-    var sum = 0;
-    h += "<tr><td><b>" + esc(t) + "</b> <span class=\"mute\">" + esc(motTruckDriver(t)) + "</span></td>" + days.map(function (d) {
-      var row = motRow(t, d), m = row ? motNum(row.miles) : null; if (m) sum += m;
-      var a = m ? Math.min(0.55, m / 700) : 0;
-      return '<td class="n" data-motday="' + d + '"' + (m ? ' style="background:color-mix(in srgb,var(--brand) ' + Math.round(a * 100) + '%,transparent)"' : "") + ">" + (m ? Math.round(m) : '<span class="mute">—</span>') + "</td>";
-    }).join("") + '<td class="n"><b>' + Math.round(sum).toLocaleString() + "</b></td></tr>";
-    fleet += sum;
+function vMotive() {
+  var r = motViewRange(), day = MOT.view === "day";
+  motEnsure2(r);
+  var ctx = day ? '<button class="btn sm" data-mot="back">&larr; All Dates</button>' + motTabContext() :
+    '<select class="mot-per" data-motper aria-label="Dates">' + MOT_PER.map(function (p) { return '<option value="' + p[0] + '"' + (MOT.per === p[0] ? " selected" : "") + ">" + p[1] + "</option>"; }).join("") + "</select>" +
+    '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-motfrom class="rpt-date" data-last-iso="' + r.from + '" value="' + esc(isoToMdy(r.from)) + '">' +
+    '<span class="lbl">to</span><input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-motto class="rpt-date" data-last-iso="' + r.to + '" value="' + esc(isoToMdy(r.to)) + '">';
+  var h = toolbarHtml("Motive", {
+    className: "orders-toolbar rpt-toolbar mot-toolbar", context: ctx,
+    secondary: '<button class="btn sm" data-mot="all" title="Every truck-day saved from Motive, all the data, as one CSV">Download All Motive</button>',
+    primary: '<button class="btn pri sm" data-mot="pull">Pull From Motive</button>'
   });
-  return h + '</tbody><tfoot><tr><td><b>Fleet</b></td><td colspan="7" class="mute">Week total, all trucks</td><td class="n"><b>' + Math.round(fleet).toLocaleString() + "</b></td></tr></tfoot></table></div>";
+  h += '<div class="grid-wrap rpt-page mot-page">' + (MOT.err ? '<div class="note-bar">' + esc(MOT.err) + "</div>" : "");
+  if (MOT.loading && MOT.loadedKey !== r.from + "|" + r.to) return h + '<div class="empty">Reading the saved Motive days…</div></div>';
+  return h + (day ? motDayHtml(MOT.day) : motRangeHtml(r)) + "</div>";
 }
 function motTabContext() {
   if (!MOT.day) MOT.day = motYesterday();
-  var r = motWeekRange(), label = MOT.view === "week" ? fmtLongDay(r.from) + " – " + fmtLongDay(r.to) : fmtLongDay(MOT.day);
-  return '<button class="btn sm mot-dt" data-mot="cal" aria-haspopup="dialog" aria-expanded="' + !!MOT.calOpen + '">' + esc(label) + ' <span class="mot-caret">&#9662;</span></button>';
+  return '<button class="btn sm mot-dt" data-mot="cal" aria-haspopup="dialog" aria-expanded="' + !!MOT.calOpen + '">' + esc(fmtLongDay(MOT.day)) + ' <span class="mot-caret">&#9662;</span></button>';
 }
 // Every truck-day ever saved, with all the data we hold and where the miles went, as one CSV.
 function motDownloadAll() {
@@ -5377,15 +5745,42 @@ function motDownloadAll() {
     busyEnd(); toast("Downloaded " + keys.length + " truck-days from " + (keys.length ? String(MOT.rows[keys[0]].day).slice(0, 10) : "—") + " to " + (keys.length ? String(MOT.rows[keys[keys.length - 1]].day).slice(0, 10) : "—"));
   }).catch(function (e) { busyEnd(); toast("Couldn't read the saved days: " + e.message, true); });
 }
-// Pull whatever is missing in view; when nothing is missing on a single finished day, pull that day again (Motive sometimes corrects a day).
+// Pull every finished day on screen that isn't saved. When they are all saved already, offer to pull them again (Motive sometimes corrects a day).
 function motPullVisible() {
-  var r = MOT.view === "week" ? motWeekRange() : { from: MOT.day, to: MOT.day }, days = motMissing(r.from, r.to), again = false;
-  if (!days.length && MOT.view === "day" && MOT.day <= motYesterday()) { days = [MOT.day]; again = true; }
-  if (!days.length) { toast(MOT.view === "week" ? "Everything in view is already saved." : "That day isn't finished yet.", MOT.view !== "week"); return; }
-  busyStart("Pulling from Motive…"); MOT.shopLast = 0;
-  motPull(days).then(function (n) { busyEnd(); toast((again ? "Refreshed " : "Saved ") + n + " truck-day" + (n === 1 ? "" : "s") + " from Motive" + (MOT.shopLast ? " · gave " + MOT.shopLast + " shop trip" + (MOT.shopLast === 1 ? "" : "s") + " to the shop drivers" : "")); MOT.calKey = ""; render(); },
-    function (e) { busyEnd(); toast("Motive: " + e.message, true); });
+  var r = motViewRange(), last = motYesterday(), done = motDaysBetween(r.from, r.to > last ? last : r.to), days = motMissing(r.from, r.to);
+  if (!done.length) { toast("Today isn't finished yet. Motive's days can be pulled from tomorrow.", true); return; }
+  var go = function (list, again) {
+    busyStart("Pulling from Motive…"); MOT.shopLast = 0;
+    motPull(list).then(function (n) { busyEnd(); toast((again ? "Pulled again: " : "Saved ") + n + " truck-day" + (n === 1 ? "" : "s") + " from Motive" + (MOT.shopLast ? " · gave " + MOT.shopLast + " shop trip" + (MOT.shopLast === 1 ? "" : "s") + " to the shop drivers" : "")); MOT.calKey = ""; MOT.loadedKey = ""; render(); },
+      function (e) { busyEnd(); toast("Motive: " + e.message, true); });
+  };
+  if (days.length) { go(days, false); return; }
+  if (done.length > 62) { toast("Every finished day in these dates is already saved.", false); return; }
+  confirmModal("Every finished day here is already saved. Pull " + (done.length === 1 ? "it" : "all " + done.length + " days") + " from Motive again? Use this when Motive has corrected a day.", function () { go(done, true); }, "Pull Again", true);
 }
+document.addEventListener("click", function (e) {
+  var mc = e.target.closest && e.target.closest("[data-motcell]");
+  if (mc) { MOT.cell = MOT.cell === mc.dataset.motcell ? "" : mc.dataset.motcell; render(); return; }
+  var mo = e.target.closest && e.target.closest("[data-motorder]");
+  if (mo) { openOrder(mo.dataset.motorder); return; }
+  var op = e.target.closest && e.target.closest("[data-motopen]");
+  if (op) { MOT.open[op.dataset.motopen] = !MOT.open[op.dataset.motopen]; render(); return; }
+  if (e.target.closest && e.target.closest('[data-mot="back"]')) { MOT.view = "range"; MOT.pick = null; motCalClose(); render(); }
+});
+document.addEventListener("change", function (e) {
+  if (e.target.matches && e.target.matches("select[data-motper]")) {
+    var cur = motPerRange(); MOT.per = e.target.value;
+    if (MOT.per === "custom") { MOT.from = MOT.from || cur.from; MOT.to = MOT.to || cur.to; } else try { localStorage.setItem("dept12MotPer", MOT.per); } catch (x) { /* not saved on this device */ }
+    MOT.open = {}; MOT.cell = ""; render(); return;
+  }
+  if (!(e.target.matches && e.target.matches("[data-motfrom],[data-motto]"))) return;
+  var f = $("[data-motfrom]"), t = $("[data-motto]");
+  if (f && t && f.dataset.lastIso && t.dataset.lastIso) {
+    MOT.per = "custom"; MOT.from = f.dataset.lastIso; MOT.to = t.dataset.lastIso;
+    if (MOT.to < MOT.from) { var s = MOT.from; MOT.from = MOT.to; MOT.to = s; }
+    MOT.open = {}; render();
+  }
+});
 
 /* The date button opens a month calendar: a green bar under a day means it is saved, amber means a finished day not pulled yet. */
 function motMonthStart(iso) { return iso.slice(0, 8) + "01"; }
@@ -5401,8 +5796,7 @@ function motCalHtml() {
     h += '<button class="' + cls + '" data-motday-pick="' + iso + '">' + d + "<em></em></button>";
   }
   return h + '</div><div class="mot-cal-lg"><span class="g">Saved</span><span class="a">Not pulled yet</span></div>' +
-    '<div class="mot-cal-ft"><button class="btn sm" data-motcal-view="' + (MOT.view === "week" ? "day" : "week") + '">' + (MOT.view === "week" ? "Show One Day" : "Show The Week") + '</button>' +
-    '<button class="btn sm" data-motcal-yday="1">Yesterday</button></div>';
+    '<div class="mot-cal-ft"><button class="btn sm" data-motcal-yday="1">Yesterday</button></div>';
 }
 function motCalClose() { MOT.calOpen = false; var el = document.getElementById("mot-cal"); if (el) { el.classList.add("closing"); setTimeout(function () { if (el.classList.contains("closing")) el.remove(); }, 130); } var b = document.querySelector(".mot-dt"); if (b) b.setAttribute("aria-expanded", "false"); }
 function motCalPaint() {
@@ -5433,7 +5827,7 @@ document.addEventListener("click", function (e) {
   if (b) {
     var k = b.dataset.mot;
     if (k === "cal") { MOT.calOpen ? motCalClose() : motCalOpen(); return; }
-    if (k === "pull") { MOT.loadedWeek = ""; motPullVisible(); return; }
+    if (k === "pull") { motPullVisible(); return; }
     if (k === "all") { motDownloadAll(); return; }
     return;
   }
@@ -5466,23 +5860,6 @@ function motRollup(range) {
   });
   return out;
 }
-var MOT_DASH = { key: "", loading: false };
-function motDashEnsure(range) {
-  var key = range.from + "|" + range.to;
-  if (MOT_DASH.key === key || MOT_DASH.loading) return;
-  MOT_DASH.loading = true;
-  motLoad(range.from, range.to).then(function () { MOT_DASH.key = key; }, function () { MOT_DASH.key = key; })
-    .then(function () { MOT_DASH.loading = false; if (SEC === "reports" && REP.tab === "dash") render(); });
-}
-function motDashCards(range) {
-  motDashEnsure(range);
-  var r = motRollup(range);
-  if (!r.days) return { miles: null, rpm: "" };
-  var rpm = r.ext > 0 && r.rev > 0 ? r.rev / r.ext : null;
-  return { roll: r, miles: '<div class="rpt-card"><div class="lbl">Total mileage</div><div class="rpt-big">' + Math.round(r.total).toLocaleString() + '</div><div class="rpt-sub">' +
-      Math.round(r.bag).toLocaleString() + " bag · " + Math.round(r.intf).toLocaleString() + " internal · " + Math.round(r.ext).toLocaleString() + " external (Motive)</div></div>",
-    rpm: '<div class="rpt-card"><div class="lbl">External RPM</div><div class="rpt-big">' + (rpm ? "$" + rpm.toFixed(2) : "—") + '</div><div class="rpt-sub">$' + Math.round(r.rev).toLocaleString() + " over " + Math.round(r.ext).toLocaleString() + " external miles, deadhead included</div></div>" };
-}
 function motBrokerTable(r) {
   var list = Object.keys(r.brokers).map(function (k) { var x = r.brokers[k]; return { who: k, loads: x.loads, rev: x.rev, miles: x.miles, rpm: x.miles ? x.rev / x.miles : null }; }).sort(function (a, b) { return b.rev - a.rev; });
   if (!list.length) return "";
@@ -5494,34 +5871,23 @@ function motBrokerTable(r) {
 function vReports() {
   rptSavedLoad();
   if (!REP.data && !REP.loading && !REP.err) rptDataLoad(); else if (REP.stale && !REP.loading) rptDataLoad();
-  var mot = REP.tab === "motive", trf = REP.tab === "transfer";
-  // the same bar as Orders and Current Week (compact buttons, one primary on the right), then everything else scrolls below it
-  var h = toolbarHtml("Reports", trf ? {
+  // the same bar as Orders and Current Week (compact buttons, one primary on the right), then the cards scroll below it
+  var h = toolbarHtml("Reports", {
     className: "orders-toolbar rpt-toolbar", context: "",
-    secondary: '<button class="btn sm" data-trf="csv" title="The transfer below, one line per order, as a CSV">Download CSV</button>',
-    primary: '<button class="btn pri sm" data-trf="mark">Mark Transfer Done</button>'
-  } : mot ? {
-    className: "orders-toolbar rpt-toolbar", context: motTabContext(),
-    secondary: '<button class="btn sm" data-mot="all" title="Every truck-day saved from Motive, all the data, as one CSV">Download All Motive</button>',
-    primary: '<button class="btn pri sm" data-mot="pull">Pull From Motive</button>'
-  } : {
-    className: "orders-toolbar rpt-toolbar", context: "",
-    secondary: '<button class="btn sm" data-rptrefresh="1">Refresh Data</button><button class="btn sm" data-report="dump">Export Everything</button>',
-    primary: '<button class="btn pri sm" id="rpt-new">+ New Report</button>'
+    secondary: '<button class="btn sm" data-rptrefresh="1">Refresh Data</button><button class="btn sm" data-report="dump">Export Everything</button>' +
+      (rptTiles().length ? '<button class="btn sm' + (REP.edit ? " active" : "") + '" data-rdact="layout" aria-pressed="' + !!REP.edit + '">' + (REP.edit ? "Done Editing" : "Edit Layout") + "</button>" : ""),
+    primary: '<button class="btn pri sm" id="rpt-new">+ Add Card</button>'
   });
-  h += '<div class="grid-wrap rpt-page"><div class="rpt-tabs" role="tablist"><button class="' + (REP.tab === "dash" ? "on" : "") + '" data-rpttab="dash" role="tab">Dashboard</button>' +
-    '<button class="' + (mot ? "on" : "") + '" data-rpttab="motive" role="tab">Motive</button>' +
-    '<button class="' + (trf ? "on" : "") + '" data-rpttab="transfer" role="tab">Transfer</button></div>';
-  if (!mot && !trf) h += rptPeriodStrip();
-  if (REP.noSql && !mot && !trf) h += '<div class="note-bar">Saved reports are not set up in the database yet, so nothing can be saved yet. Run the saved reports SQL first.</div>';
-  return h + (trf ? vTransferTab() : mot ? vMotiveTab() : rptDashHtml()) + "</div>";
+  h += '<div class="grid-wrap rpt-page">' + rptPeriodStrip();
+  if (REP.noSql) h += '<div class="note-bar">Saved reports are not set up in the database yet, so nothing can be saved yet. Run the saved reports SQL first.</div>';
+  return h + rptDashHtml() + "</div>";
 }
-/* ── Reports → Transfer: billing the internal transfers ───────────────────
+/* ── Billing → Internal Transfers ─────────────────────────────────────────
    Every delivered bag and internal freight order carries a dollar amount (miles × the Internal Rate). Roughly once a week
    (sometimes mid-week) all departments are transferred together. This tab lists what is due since the last transfer, by
    department and truck, up to a chosen delivery date; Mark Transfer Done saves it as one batch with your batch number, and
    those orders drop off the list for good. Undo removes a batch and its orders become due again. */
-var TRF = { loaded: false, loading: false, err: "", batches: [], done: {}, amt: {}, adj: {}, from: "", through: "", fold: {}, open: {}, lines: {} };
+var TRF = { loaded: false, loading: false, err: "", batches: [], done: {}, amt: {}, adj: {}, from: "", through: "", past: false, open: {}, lines: {} };
 function trfLoad() {
   if (TRF.loading) return; TRF.loading = true;
   api("transfer/list", {}).then(function (r) {
@@ -5530,7 +5896,7 @@ function trfLoad() {
     TRF.amt = {}; ((r && r.amounts) || []).forEach(function (x) { TRF.amt[x.id] = { amount: Number(x.amount) || 0, batch_no: x.batch_no }; });
     TRF.adj = {}; ((r && r.adjusted) || []).forEach(function (x) { TRF.adj[x.id] = Number(x.diff) || 0; });
   }, function (e) { TRF.err = /function|schema|relation|does not exist/i.test(e.message) ? "Transfers are not set up in the database yet. Run the transfers SQL first." : e.message; })
-    .then(function () { TRF.loaded = true; TRF.loading = false; if (SEC === "reports" && REP.tab === "transfer") render(); });
+    .then(function () { TRF.loaded = true; TRF.loading = false; if (SUB === "transfers" || SUB === "int" || SUB === "xfer") render(); });
 }
 function trfDay(ts) { return rptIso(new Date(ts)); }   // the local calendar day a timestamp falls on
 function trfDept(v) { v = String(v == null ? "" : v).trim(); return !v ? "(no department)" : /^\d+$/.test(v) ? "Dept " + v : v; }
@@ -5539,10 +5905,18 @@ function trfMoney(n) { return "$" + (Math.round(n * 100) / 100).toLocaleString(u
    Also, for orders ALREADY transferred: if the cost has changed since (or the order was cancelled), the difference is flagged, and it goes out as an adjustment (plus or
    minus) in the next transfer when the order's delivery date is inside the same dates. "late" lists orders that were delivered on or before the last transfer's last day but
    were not in it (no cost then): they are in the total, and flagged so it doesn't come as a surprise. */
+/* The year the page shows: this year unless another is picked (not remembered, so on Jan 1 it opens on the new year by itself).
+   Due now, Missing a cost, the totals and Past transfers all count only deliveries in that year. */
+function trfYear() { return TRF.year || TODAY.slice(0, 4); }
+function trfYears() {
+  var ys = {}; ys[TODAY.slice(0, 4)] = 1;
+  (REP.data || []).forEach(function (r) { if ((r.order_type === "Bag Order" || r.order_type === "Internal Freight") && r.delivery_date) ys[String(r.delivery_date).slice(0, 4)] = 1; });
+  return Object.keys(ys).sort().reverse();
+}
 function trfDue() {
-  var thru = TRF.through || motYesterday(), last = TRF.batches[0], lastThru = last ? String(last.through_date).slice(0, 10) : "";
+  var thru = TRF.through || motYesterday(), last = TRF.batches[0], lastThru = last ? String(last.through_date).slice(0, 10) : "", yr = trfYear();
   var out = { lines: [], missing: [], late: [], changes: [], adjust: [], depts: {}, total: 0, miles: 0, from: "" };
-  var inRange = function (d) { return !!d && d <= thru && !(TRF.from && d < TRF.from); };
+  var inRange = function (d) { return !!d && d.slice(0, 4) === yr && d <= thru && !(TRF.from && d < TRF.from); };
   var bump = function (dep, trk, amt, mi, adj) {
     var D = out.depts[dep] = out.depts[dep] || { orders: 0, adj: 0, miles: 0, amount: 0, trucks: {} };
     D.miles += mi; D.amount += amt; if (adj) D.adj++; else D.orders++;
@@ -5552,7 +5926,7 @@ function trfDue() {
   (REP.data || []).forEach(function (r) {
     if (r.order_type !== "Bag Order" && r.order_type !== "Internal Freight") return;
     var d = r.delivery_date ? String(r.delivery_date).slice(0, 10) : "", id = r.order_id, dep = trfDept(r.pivot_department), trk = r.truck_number || "(no truck)", mi = rptNum(r.miles) || 0;
-    var no = r.rexius_order_no || r.broker_load_no || "";
+    var oo = id ? order(id) : null, no = r.rexius_order_no || r.broker_load_no || (oo && oo.transfer_no) || "";
     if (id && TRF.done[id]) {
       var rec = TRF.amt[id]; if (!rec) return;
       var was = rec.amount + (TRF.adj[id] || 0), cur = r.stage === "cancelled" ? 0 : (rptNum(r.internal_freight_amount) || 0);
@@ -5597,47 +5971,162 @@ function trfAgo(iso) {
   var n = Math.round((new Date(TODAY + "T12:00:00") - new Date(String(iso).slice(0, 10) + "T12:00:00")) / 864e5);
   return n <= 0 ? "today" : n === 1 ? "yesterday" : n + " days ago";
 }
-function vTransferTab() {
+/* Missing a cost, app wide: every delivered bag order and internal freight load (the 2025 history aside) that isn't transferred and has no cost,
+   so it can't go in a transfer. The tile opens a window to type the miles (the cost follows the Internal Rate) or a cost; Save writes them the same
+   way Sync Delivery Dates does, and those orders show as due. */
+function trfNoCost() {
+  var last = motYesterday();
+  return orders().filter(function (o) {
+    var d = String(o.delivery_date || "").slice(0, 10);
+    return motIsInternal(o) && !isHistorical(o) && o.stage !== "cancelled" && d && d <= last && d.slice(0, 4) === trfYear() && !TRF.done[o.id] && !(motNum(o.internal_freight_amount) > 0);
+  }).sort(function (a, b) { return String(b.delivery_date).localeCompare(String(a.delivery_date)) || String(a.truck_number || "").localeCompare(String(b.truck_number || ""), undefined, { numeric: true }); });
+}
+var NC = { month: "", edit: {} };
+function ncOpen() {
+  var list = trfNoCost();
+  if (!list.length) { toast("Every delivered order has a cost."); return; }
+  NC.edit = {}; NC.month = "";
+  var months = {}; list.forEach(function (o) { var k = String(o.delivery_date).slice(0, 7); months[k] = (months[k] || 0) + 1; });
+  openModal('<div class="modal-hd nc-hd"><h2>Missing a cost · ' + trfYear() + '</h2><select id="nc-month" class="rb-sel" aria-label="Month"><option value="">All months (' + list.length + ")</option>" +
+    Object.keys(months).sort().reverse().map(function (k) { return '<option value="' + k + '">' + RPT_MON[+k.slice(5, 7) - 1] + " " + k.slice(0, 4) + " (" + months[k] + ")</option>"; }).join("") + "</select></div>" +
+    '<div class="modal-body nc-body"><p class="mrv-lead">Delivered bag orders and internal freight with no cost yet, so they aren\'t in any transfer. Type the miles and the cost follows the Internal Rate, or type the cost. Save, and they show as due on Internal Transfers.</p><div id="nc-list"></div></div>' +
+    '<div class="modal-ft"><span class="nc-ct" id="nc-ct"></span><span style="flex:1"></span><button class="btn" id="modal-cancel">Close</button><button class="btn pri" id="nc-save">Save</button></div>');
+  $("#modal").classList.add("wide-modal", "nc-modal");
+  ncPaint();
+}
+function ncPaint() {
+  var list = trfNoCost().filter(function (o) { return !NC.month || String(o.delivery_date).slice(0, 7) === NC.month; }), cur = "", h = "";
+  h += '<table class="data nc-tbl"><colgroup><col style="width:92px"><col style="width:64px"><col style="width:120px"><col><col style="width:140px"><col style="width:96px"><col style="width:110px"></colgroup>' +
+    "<thead><tr><th>Delivered</th><th>Truck</th><th>Type</th><th>Order</th><th>Department</th><th class=\"n\">Miles</th><th class=\"n\">Cost</th></tr></thead><tbody>";
+  list.slice(0, 600).forEach(function (o) {
+    var mk = String(o.delivery_date).slice(0, 7), e = NC.edit[o.id] || {}, lab = syncOrderLabel(o), m = e.m != null ? e.m : motNum(o.miles);
+    if (mk !== cur) { cur = mk; h += '<tr class="nc-mo"><td colspan="7">' + RPT_MON[+mk.slice(5, 7) - 1] + " " + mk.slice(0, 4) + "</td></tr>"; }
+    var auto = m != null ? motFreightCost(m) : null;
+    h += "<tr><td>" + esc(isoToMdy(String(o.delivery_date).slice(0, 10))) + "</td><td>" + esc(o.truck_number || "—") + '</td><td><span class="mot-tag ' + (o.is_transfer ? "i" : "b") + '">' + (o.is_transfer ? "Internal freight" : "Bag order") + "</span></td>" +
+      '<td class="nc-ord"><b>' + esc(o.is_transfer ? (o.transfer_no || "") : (o.rexius_order_no || "No order #")) + "</b> <span>" + esc(o.is_transfer ? (o.notes || "Internal freight") : (lab[1] || "")) + "</span></td>" +
+      "<td>" + esc(o.is_transfer ? (o.transfer_department_name || "") : trfDept(o.department)) + "</td>" +
+      '<td><input class="mrv-in nc-in" data-nc="' + o.id + '|m" inputmode="decimal" aria-label="Miles" value="' + (e.m != null ? e.m : (motNum(o.miles) != null ? o.miles : "")) + '"></td>' +
+      '<td><input class="mrv-in nc-in" data-nc="' + o.id + '|c" inputmode="decimal" aria-label="Cost" value="' + (e.c != null ? e.c : "") + '" placeholder="' + (auto != null ? "$" + auto.toFixed(2) : "") + '"></td></tr>';
+  });
+  if (list.length > 600) h += '<tr><td colspan="7" class="rpt-none">The first 600 of ' + list.length + " are shown. Pick a month to see the rest.</td></tr>";
+  $("#nc-list").innerHTML = h + "</tbody></table>";
+  ncCount();
+}
+function ncCount() {
+  var n = Object.keys(NC.edit).filter(function (id) { var e = NC.edit[id]; return (e.m != null && e.m > 0) || (e.c != null && e.c > 0); }).length, el = $("#nc-ct");
+  if (el) el.textContent = n ? n + " order" + (n === 1 ? "" : "s") + " to save" : "";
+}
+document.addEventListener("input", function (e) {
+  var el = e.target.closest && e.target.closest("[data-nc]"); if (!el) return;
+  var p = el.dataset.nc.split("|"), v = el.value.replace(/[^0-9.]/g, ""), n = v === "" || v === "." ? null : Number(v), ed = NC.edit[p[0]] = NC.edit[p[0]] || {};
+  if (p[1] === "m") { ed.m = n; var c = document.querySelector('[data-nc="' + p[0] + '|c"]'), auto = n != null ? motFreightCost(n) : null; if (c) c.placeholder = auto != null ? "$" + auto.toFixed(2) : ""; }
+  else ed.c = n;
+  ncCount();
+});
+document.addEventListener("change", function (e) {
+  if (e.target.id === "nc-month") { NC.month = e.target.value; ncPaint(); }
+  else if (e.target.matches && e.target.matches("select[data-trfyear]")) { TRF.year = e.target.value === TODAY.slice(0, 4) ? "" : e.target.value; TRF.from = ""; TRF.through = ""; TRF.open = {}; render(); }
+});
+document.addEventListener("click", function (e) {
+  if (e.target.closest && e.target.closest("[data-trf-nocost]")) { ncOpen(); return; }
+  if (!(e.target.closest && e.target.closest("#nc-save"))) return;
+  var jobs = Object.keys(NC.edit).map(function (id) { return { id: id, e: NC.edit[id] }; }).filter(function (j) { return (j.e.m != null && j.e.m > 0) || (j.e.c != null && j.e.c > 0); });
+  if (!jobs.length) { toast("Type miles or a cost first.", true); return; }
+  var btn = $("#nc-save"); btn.disabled = true; busyStart("Saving costs…");
+  var i = 0, failed = 0;
+  (function next() {
+    if (i >= jobs.length) {
+      busyEnd();
+      return reload().then(function () { REP.stale = true; rptDataLoad(); closeModal(); toast("Saved " + (jobs.length - failed) + " order" + (jobs.length - failed === 1 ? "" : "s") + (failed ? " · " + failed + " failed" : ""), failed > 0); render(); });
+    }
+    var j = jobs[i++], body = { order_id: j.id };
+    if (j.e.m != null && j.e.m > 0) body.miles = String(j.e.m);
+    if (j.e.c != null && j.e.c > 0) body.freight_amount = String(j.e.c);
+    api("freight", body).then(function () { return body.miles ? api("order/update", { id: j.id, miles_confirmed_at: new Date().toISOString() }) : null; })
+      .catch(function (err) { failed++; console.error(err); }).then(next);
+  })();
+});
+// What bag orders and internal freight delivered in these dates were charged (their cost), by department and truck, transferred or not.
+function trfCharged(from, to) {
+  var out = { total: 0, depts: {} };
+  (REP.data || []).forEach(function (r) {
+    if (r.order_type !== "Bag Order" && r.order_type !== "Internal Freight") return;
+    var d = r.delivery_date ? String(r.delivery_date).slice(0, 10) : "", amt = rptNum(r.internal_freight_amount) || 0;
+    if (r.stage === "cancelled" || !d || d < from || d > to || !amt) return;
+    var dep = trfDept(r.pivot_department), trk = r.truck_number || "(no truck)", D = out.depts[dep] = out.depts[dep] || { amount: 0, trucks: {} };
+    D.amount += amt; D.trucks[trk] = (D.trucks[trk] || 0) + amt; out.total += amt;
+  });
+  return out;
+}
+function vTransfers() {
+  if (!REP.data && !REP.loading && !REP.err) rptDataLoad(); else if (REP.stale && !REP.loading) rptDataLoad();
   if (!TRF.loaded && !TRF.loading) trfLoad();
-  if (!TRF.through) TRF.through = motYesterday();
-  if (TRF.err) return '<div class="note-bar">' + esc(TRF.err) + "</div>";
-  if (!REP.data || !TRF.loaded) return '<div class="empty">Loading…</div>';
-  var due = trfDue(), last = TRF.batches[0], days = last ? Math.round((new Date(TODAY + "T12:00:00") - new Date(trfDay(last.done_at) + "T12:00:00")) / 864e5) : null;
-  var late = days == null || days >= 7, nOrd = due.lines.length, nAdj = due.adjust.length, any = nOrd || nAdj;
-  var h = '<div class="trf-status"><div class="trf-state"><span class="trf-dot' + (any && late ? " due" : any ? " soon" : "") + '"></span><div>' +
-    '<div class="trf-big">' + (last ? "Last transfer " + esc(new Date(last.done_at).toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" })) + " · " + trfAgo(trfDay(last.done_at)) + (last.batch_no ? " · batch " + esc(last.batch_no) : "") : "No transfer done yet") + "</div>" +
-    '<div class="trf-sub">' + (any ? trfMoney(due.total) + " across " + nOrd + " order" + (nOrd === 1 ? "" : "s") + (nAdj ? " and " + nAdj + " adjustment" + (nAdj === 1 ? "" : "s") : "") + " is due" + (late ? ". It has been a week or more." : ".") : "Nothing is due " + (TRF.from ? "from " + esc(isoToMdy(TRF.from)) + " " : "") + "through " + esc(isoToMdy(TRF.through)) + ".") + "</div></div></div>" +
-    // The dates sit in their own fixed block, so they stay put whatever the text beside them says.
+  var yr = trfYear(), cur = yr === TODAY.slice(0, 4);
+  if (!TRF.through || TRF.through.slice(0, 4) !== yr) TRF.through = cur ? motYesterday() : yr + "-12-31";
+  var h = toolbarHtml("Internal Transfers", {
+    className: "orders-toolbar rpt-toolbar",
+    context: '<select class="btn trf-year" data-trfyear aria-label="Year">' + trfYears().map(function (y) { return '<option value="' + y + '"' + (y === yr ? " selected" : "") + ">" + y + "</option>"; }).join("") + "</select>",
+    secondary: '<button class="btn sm" data-trf="csv" title="What is due, one line per order, as a CSV">Download CSV</button>',
+    primary: '<button class="btn pri sm" data-trf="mark">Mark Transfer Done</button>'
+  }) + '<div class="grid-wrap rpt-page trf-page">';
+  if (TRF.err) return h + '<div class="note-bar">' + esc(TRF.err) + "</div></div>";
+  if (REP.err) return h + '<div class="note-bar">Couldn\'t load the orders: ' + esc(REP.err) + "</div></div>";
+  if (!REP.data || !TRF.loaded) return h + '<div class="empty">Loading…</div></div>';
+  // a transfer belongs to the year of the last delivery date it covers
+  var yrBatches = TRF.batches.filter(function (b) { return String(b.through_date).slice(0, 4) === yr; }), yrSent = yrBatches.reduce(function (a, b) { return a + (Number(b.total) || 0); }, 0);
+  var due = trfDue(), last = cur ? TRF.batches[0] : yrBatches[0];
+  var days = last ? Math.round((new Date(TODAY + "T12:00:00") - new Date(trfDay(last.done_at) + "T12:00:00")) / 864e5) : null;
+  var nOrd = due.lines.length, nAdj = due.adjust.length, any = nOrd || nAdj, late = any && (days == null || days >= 7);
+  var month = cur ? trfCharged(TODAY.slice(0, 8) + "01", TODAY) : { total: 0, depts: {} }, ytd = trfCharged(yr + "-01-01", cur ? TODAY : yr + "-12-31");
+  var noCost = trfNoCost().length;
+  // the tally
+  h += '<div class="mot-tiles trf-tiles">' +
+    '<div class="mot-tile' + (late ? " bad" : "") + '"><i>Due now</i><b>' + trfMoney(due.total) + "</b><small>" + (any ? nOrd + " order" + (nOrd === 1 ? "" : "s") + (nAdj ? " + " + nAdj + " adj" : "") + (due.from ? " since " + esc(isoToMdy(due.from)) : "") : "Nothing due") + "</small></div>" +
+    '<div class="mot-tile"><i>Transferred in ' + yr + "</i><b>" + trfMoney(yrSent) + "</b><small>" + yrBatches.length + " transfer" + (yrBatches.length === 1 ? "" : "s") + "</small></div>" +
+    '<div class="mot-tile' + (late ? " bad" : "") + '"><i>Last transfer</i><b>' + (last ? esc(isoToMdy(trfDay(last.done_at)).slice(0, 5)) : "—") + "</b><small>" + (last ? trfAgo(trfDay(last.done_at)) + (last.batch_no ? " · batch " + esc(last.batch_no) : "") : "None yet") + "</small></div>" +
+    (noCost ? '<button type="button" class="mot-tile warn trf-nc" data-trf-nocost="1" title="See them and add the costs"><i>Missing a cost</i><b>' + noCost.toLocaleString() + "</b><small>Not in any transfer. Click to add the costs</small></button>" :
+      '<div class="mot-tile"><i>Missing a cost</i><b>0</b><small>Every delivered order has one</small></div>') + "</div>";
+  // the dates "due now" covers
+  h += '<div class="trf-status"><div class="trf-sub">Due now is every delivered bag order and internal freight load not transferred yet' + (TRF.from ? ", from " + esc(isoToMdy(TRF.from)) : "") + ", through " + esc(isoToMdy(TRF.through)) + ".</div>" +
     '<div class="trf-range"><span class="lbl">From</span>' +
     '<input type="text" inputmode="numeric" placeholder="Earliest" data-smartdate data-trffrom class="rpt-date" data-last-iso="' + TRF.from + '" value="' + esc(TRF.from ? isoToMdy(TRF.from) : "") + '" title="Leave empty to include everything not transferred yet">' +
-    '<span class="lbl">Through</span><span class="rpt-seg" role="group" aria-label="Through">' +
-    [[motYesterday(), "Yesterday"], [TODAY, "Today"]].map(function (x) { return '<button class="' + (TRF.through === x[0] ? "on" : "") + '" data-trfthru="' + x[0] + '">' + x[1] + "</button>"; }).join("") + "</span>" +
+    '<span class="lbl">Through</span>' + (cur ? '<span class="rpt-seg" role="group" aria-label="Through">' +
+    [[motYesterday(), "Yesterday"], [TODAY, "Today"]].map(function (x) { return '<button class="' + (TRF.through === x[0] ? "on" : "") + '" data-trfthru="' + x[0] + '">' + x[1] + "</button>"; }).join("") + "</span>" : "") +
     '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-trfdate class="rpt-date" data-last-iso="' + TRF.through + '" value="' + esc(isoToMdy(TRF.through)) + '"></div></div>';
   h += trfFlagsHtml(due);
-  h += '<div class="rpt-card trf-card"><table class="trf-tbl"><thead><tr><th>Department / truck</th><th>Orders</th><th>Miles</th><th>Amount</th></tr></thead><tbody>';
-  var deps = Object.keys(due.depts).sort(), cnt = function (x) { return x.orders + (x.adj ? " + " + x.adj + " adj" : ""); };
-  deps.forEach(function (d) {
-    var D = due.depts[d], closed = !!TRF.fold[d];
-    h += '<tr class="trf-dep' + (closed ? "" : " open") + '" data-trffold="' + esc(d) + '"><td><i>&#9656;</i>' + esc(d) + "</td><td>" + cnt(D) + "</td><td>" + Math.round(D.miles).toLocaleString() + "</td><td>" + trfMoney(D.amount) + "</td></tr>";
-    if (!closed) Object.keys(D.trucks).sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); }).forEach(function (t) {
-      var T = D.trucks[t]; h += '<tr class="trf-trk"><td>Truck ' + esc(t) + "</td><td>" + cnt(T) + "</td><td>" + Math.round(T.miles).toLocaleString() + "</td><td>" + trfMoney(T.amount) + "</td></tr>"; });
+  // by department, trucks underneath: what is due now, and what was charged this month and this year (transferred or not)
+  var deps = {}; [due.depts, month.depts, ytd.depts].forEach(function (o) { Object.keys(o).forEach(function (k) { deps[k] = 1; }); });
+  var dk = Object.keys(deps).sort(function (a, b) { return ((ytd.depts[b] || {}).amount || 0) - ((ytd.depts[a] || {}).amount || 0) || a.localeCompare(b); });
+  var cnt = function (x) { return x ? x.orders + (x.adj ? " + " + x.adj + " adj" : "") : ""; }, money = function (n) { return n ? trfMoney(n) : '<span class="mute">—</span>'; };
+  h += '<div class="trf-h"><span class="lbl">By department · ' + yr + '</span><span class="trf-flag-sub">' + (cur ? "This month and year to date are" : "The year total is") + " what was charged for deliveries in those dates, transferred or not</span></div>" +
+    '<div class="rpt-card trf-card"><table class="trf-tbl trf-depts"><thead><tr><th>Department / truck</th><th>Orders due</th><th>Miles due</th><th>Due now</th>' + (cur ? "<th>This month</th><th>Year to date</th>" : "<th>Year total</th>") + "</tr></thead><tbody>";
+  dk.forEach(function (d) {
+    var D = due.depts[d], M = month.depts[d], Y = ytd.depts[d], trucks = {};
+    [D && D.trucks, M && M.trucks, Y && Y.trucks].forEach(function (o) { if (o) Object.keys(o).forEach(function (k) { trucks[k] = 1; }); });
+    h += '<tr class="trf-dep trf-dep-fixed"><td>' + esc(d) + "</td><td>" + cnt(D) + "</td><td>" + (D ? Math.round(D.miles).toLocaleString() : "") + "</td><td>" + money(D && D.amount) + "</td>" + (cur ? "<td>" + money(M && M.amount) + "</td>" : "") + "<td>" + money(Y && Y.amount) + "</td></tr>";
+    Object.keys(trucks).sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); }).forEach(function (t) {
+      var T = D && D.trucks[t];
+      h += '<tr class="trf-trk"><td>Truck ' + esc(t) + "</td><td>" + cnt(T) + "</td><td>" + (T ? Math.round(T.miles).toLocaleString() : "") + "</td><td>" + money(T && T.amount) + "</td>" + (cur ? "<td>" + money(M && M.trucks[t]) + "</td>" : "") + "<td>" + money(Y && Y.trucks[t]) + "</td></tr>";
+    });
   });
-  h += deps.length ? '<tr class="trf-tot"><td>Total to transfer</td><td>' + cnt({ orders: nOrd, adj: nAdj }) + "</td><td>" + Math.round(due.miles).toLocaleString() + "</td><td>" + trfMoney(due.total) + "</td></tr>" :
-    '<tr><td colspan="4" class="trf-none">Nothing to transfer ' + (TRF.from ? "from " + esc(isoToMdy(TRF.from)) + " " : "") + "through " + esc(isoToMdy(TRF.through)) + ".</td></tr>";
+  h += dk.length ? '<tr class="trf-tot"><td>Total</td><td>' + cnt({ orders: nOrd, adj: nAdj }) + "</td><td>" + Math.round(due.miles).toLocaleString() + "</td><td>" + trfMoney(due.total) + "</td>" + (cur ? "<td>" + trfMoney(month.total) + "</td>" : "") + "<td>" + trfMoney(ytd.total) + "</td></tr>" :
+    '<tr><td colspan="' + (cur ? 6 : 5) + '" class="trf-none">Nothing charged in ' + yr + ".</td></tr>";
   h += "</tbody></table></div>";
-  h += '<div class="trf-h"><span class="lbl">Done</span></div><div class="rpt-card trf-card"><table class="trf-tbl trf-hist"><thead><tr><th>Done</th><th>Batch</th><th>Covers</th><th>Orders</th><th>Amount</th><th></th></tr></thead><tbody>';
-  if (!TRF.batches.length) h += '<tr><td colspan="6" class="trf-none">No transfers yet.</td></tr>';
-  TRF.batches.forEach(function (b) {
+  // past transfers
+  var lastB = yrBatches[0];
+  h += '<button type="button" class="trf-h trf-past" data-trfpast="1" aria-expanded="' + !!TRF.past + '"><i>' + (TRF.past ? "&#9662;" : "&#9656;") + '</i><span class="lbl">Past transfers in ' + yr + " (" + yrBatches.length + ")</span>" +
+    '<span class="trf-flag-sub">' + (lastB ? "Last: " + esc(isoToMdy(trfDay(lastB.done_at))) + (lastB.batch_no ? " · batch " + esc(lastB.batch_no) : "") + " · " + trfMoney(lastB.total) + " · " + lastB.order_count + " orders" : "None yet") + "</span></button>";
+  if (!TRF.past) return h + "</div>";
+  h += '<div class="rpt-card trf-card"><table class="trf-tbl trf-hist"><thead><tr><th>Done</th><th>Batch</th><th>Covers</th><th>Orders</th><th>Amount</th><th></th></tr></thead><tbody>';
+  if (!yrBatches.length) h += '<tr><td colspan="6" class="trf-none">No transfers in ' + yr + ".</td></tr>";
+  yrBatches.forEach(function (b) {
     var open = !!TRF.open[b.id];
     h += '<tr class="trf-b' + (open ? " open" : "") + '" data-trfopen="' + b.id + '"><td><i>&#9656;</i>' + esc(isoToMdy(trfDay(b.done_at))) + "</td><td>" + esc(b.batch_no || "—") + "</td><td>" +
       esc((b.from_date ? isoToMdy(String(b.from_date).slice(0, 10)) + " – " : "through ") + isoToMdy(String(b.through_date).slice(0, 10))) + "</td><td>" + b.order_count + "</td><td>" + trfMoney(b.total) +
       '</td><td class="act"><button class="btn sm" data-trfundo="' + b.id + '">Undo</button></td></tr>';
-    if (open) {
-      var ls = TRF.lines[b.id];
-      h += '<tr class="trf-detail"><td colspan="6">' + (!ls ? "Loading…" : trfBatchDetail(ls)) + "</td></tr>";
-    }
+    if (open) h += '<tr class="trf-detail"><td colspan="6">' + (!TRF.lines[b.id] ? "Loading…" : trfBatchDetail(TRF.lines[b.id])) + "</td></tr>";
   });
-  return h + "</tbody></table></div>";
+  return h + "</tbody></table></div></div>";
 }
 function trfBatchDetail(ls) {
   var D = {}; ls.forEach(function (l) { var d = D[l.department || "(no department)"] = D[l.department || "(no department)"] || {}, t = d[l.truck_number || "(no truck)"] = d[l.truck_number || "(no truck)"] || { n: 0, mi: 0, amt: 0 }; if (!l.adjustment) { t.n++; t.mi += +l.miles || 0; } else t.adj = (t.adj || 0) + 1; t.amt += +l.amount || 0; });
@@ -5667,17 +6156,17 @@ function trfMarkModal() {
 }
 function trfCsv() {
   var due = trfDue(), q = function (v) { v = String(v == null ? "" : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-  var rows = due.lines.map(function (l) { return { department: l.department, truck: l.truck_number, date: l.delivery_date, miles: l.miles, amount: l.amount, kind: "Order" }; })
-    .concat(due.adjust.map(function (a) { return { department: a.department, truck: a.truck_number, date: a.delivery_date, miles: 0, amount: a.diff, kind: "Adjustment: order " + a.no + " was " + a.from_amount.toFixed(2) + ", now " + a.to_amount.toFixed(2) }; }));
-  var lines = ["Department,Truck,Delivery date,Miles,Amount,Kind"].concat(rows.sort(function (a, b) { return (a.department + a.truck + a.date).localeCompare(b.department + b.truck + b.date, undefined, { numeric: true }); })
-    .map(function (l) { return [l.department, l.truck, l.date, l.miles, l.amount.toFixed(2), l.kind].map(q).join(","); }));
+  var rows = due.lines.map(function (l) { return { department: l.department, truck: l.truck_number, no: l.no, date: l.delivery_date, miles: l.miles, amount: l.amount, kind: "Order" }; })
+    .concat(due.adjust.map(function (a) { return { department: a.department, truck: a.truck_number, no: a.no, date: a.delivery_date, miles: 0, amount: a.diff, kind: "Adjustment: was " + a.from_amount.toFixed(2) + ", now " + a.to_amount.toFixed(2) }; }));
+  var lines = ["Department,Truck,Order # / IF #,Delivery date,Miles,Amount,Kind"].concat(rows.sort(function (a, b) { return (a.department + a.truck + a.date).localeCompare(b.department + b.truck + b.date, undefined, { numeric: true }); })
+    .map(function (l) { return [l.department, l.truck, l.no, l.date, l.miles, l.amount.toFixed(2), l.kind].map(q).join(","); }));
   saveBlob("dept12_transfer_through_" + TRF.through + ".csv", new TextEncoder().encode(lines.join("\n") + "\n"), "text/csv"); toast("Exported the transfer");
 }
 document.addEventListener("click", function (e) {
   var b = e.target.closest && e.target.closest("[data-trf]");
   if (b) { if (b.dataset.trf === "mark") trfMarkModal(); else if (b.dataset.trf === "csv") trfCsv(); return; }
   var th = e.target.closest && e.target.closest("[data-trfthru]"); if (th) { TRF.through = th.dataset.trfthru; render(); return; }
-  var f = e.target.closest && e.target.closest("[data-trffold]"); if (f) { TRF.fold[f.dataset.trffold] = !TRF.fold[f.dataset.trffold]; render(); return; }
+  if (e.target.closest && e.target.closest("[data-trfpast]")) { TRF.past = !TRF.past; render(); return; }
   var u = e.target.closest && e.target.closest("[data-trfundo]");
   if (u) { var id = u.dataset.trfundo; confirmModal("Undo this transfer? Its orders become due again.", function () {
     api("transfer/delete", { id: id }).then(function () { TRF.loaded = false; TRF.lines = {}; trfLoad(); toast("Transfer undone"); }).catch(function (err) { toast(err.message, true); });
@@ -5693,111 +6182,192 @@ document.addEventListener("change", function (e) {
   if (e.target.matches && e.target.matches("[data-trfdate]") && e.target.dataset.lastIso) { TRF.through = e.target.dataset.lastIso; render(); }
   else if (e.target.matches && e.target.matches("[data-trffrom]")) { TRF.from = e.target.dataset.lastIso || ""; render(); }
 });
-/* --- the pivot window --- */
-function rptFieldOpts() {
-  var f = (REP.fields || []).slice(); Object.keys(RPT_DERIVED).forEach(function (k) { if (f.indexOf(k) < 0) f.push(k); });
-  return f.sort().map(function (k) { return '<option value="' + esc(k) + '"' + (k in RPT_DERIVED ? ' label="calculated"' : "") + "></option>"; }).join("");
-}
+/* --- the card editor ---
+   Left: four numbered steps (what to measure, how to show it, which orders, which dates). Right: the card as it will
+   look on the Dashboard, and under it the numbers behind it (click a row for its orders). The pivot underneath is unchanged. */
 function rptFieldOk(f) { return !f || (REP.fields || []).indexOf(f) >= 0 || (f in RPT_DERIVED); }
+// While a new card has no name of its own, its name follows the choices ("Total revenue by customer / broker").
+function rptAutoName(c) {
+  var v = rptValLabel(c.vals[0] || { agg: "count", f: "" }), viz = rptViz(c);
+  return viz === "trend" ? v + " over time" : (viz === "bars" || viz === "table") && c.rows.length ? v + " by " + c.rows.map(rptNice).join(" and ").toLowerCase() : v;
+}
 function rptWinOpen(tile) {
-  var c = tile ? rptFixCfg(rptCfgCopy(tile.cfg)) : { v: 2, rows: ["party"], cols: "", vals: [{ agg: "count", f: "" }, { agg: "sum", f: "revenue" }], big: 1, filters: [RPT_NOT_CANCELLED], per: "dash", dateF: "delivery_date" };
+  var c = tile ? rptFixCfg(rptCfgCopy(tile.cfg)) : rptNewCfg({ viz: "number" });
   if (!c.vals || !c.vals.length) c.vals = [{ agg: "count", f: "" }];
+  if (!c.rows) c.rows = [];
   if (!c.dateF) c.dateF = "delivery_date"; if (!c.per) c.per = "dash";
   if (c.per === "custom" && (!c.from || !c.to)) { var r0 = rptDashRange(); c.from = r0.from; c.to = r0.to; }
-  REP.win = { id: tile && tile.id || null, name: tile ? tile.name : "New report", cfg: c, sortCol: null, dir: -1, drill: null };
+  c.viz = rptViz(c);
+  REP.win = { id: tile && tile.id || null, name: tile ? tile.name : rptAutoName(c), auto: !tile, cfg: c, sortCol: null, dir: -1, drill: null };
   var pinKey = REP.win.id ? "r:" + REP.win.id : "";
-  openModal('<div class="modal-hd rpt-hd"><input class="rpt-name" id="rpt-name" value="' + esc(REP.win.name) + '"' + "" + '>' +
-    (pinKey ? rptPinSwitch(pinKey) : '<span class="rpt-tog off" title="Save the report first, then you can pin it">Save to pin on the Scheduler bar</span>') +
-    '<button class="btn sm" id="rpt-csv">Export CSV</button></div>' +
-    '<div class="modal-body rpt-win"><datalist id="rpt-fields">' + rptFieldOpts() + '</datalist><div id="rpt-out"></div><div id="rpt-ctlbox"></div></div>' +
-    '<div class="modal-ft">' + (REP.win.id ? '<button class="btn bad" id="rpt-del">Delete Report</button>' : "") + '<span style="flex:1"></span>' +
-    (REP.win.id ? '<button class="btn" id="rpt-saveas">Save As New</button><button class="btn pri" id="rpt-save">Save Changes</button>' : '<button class="btn pri" id="rpt-save">Save Report</button>') +
+  openModal('<div class="modal-hd rpt-hd"><input class="rpt-name" id="rpt-name" aria-label="Card name" value="' + esc(REP.win.name) + '">' +
+    (pinKey ? rptPinSwitch(pinKey) : "") + '<button class="btn sm" id="rpt-csv">Export CSV</button></div>' +
+    '<div class="modal-body rpt-win"><div class="rb-side" id="rpt-ctlbox"></div><div class="rb-main"><div class="rb-lbl">On the Dashboard</div><div class="rb-prev" id="rpt-prev"></div>' +
+    '<div class="rb-lbl">The numbers behind it <span>Click a row to see its orders</span></div><div id="rpt-out"></div></div></div>' +
+    '<div class="modal-ft">' + (REP.win.id ? '<button class="btn bad" id="rpt-del">Delete Card</button>' : "") + '<span style="flex:1"></span>' +
+    (REP.win.id ? '<button class="btn" id="rpt-saveas">Save As New Card</button><button class="btn pri" id="rpt-save">Save Changes</button>' : '<button class="btn pri" id="rpt-save">Add To Dashboard</button>') +
     '<button class="btn" id="modal-cancel">Close</button></div>');
   $("#modal").classList.add("wide-modal", "rpt-modal");
+  $("#rpt-name").addEventListener("input", function () { if (REP.win) { REP.win.auto = false; REP.win.name = this.value; rptPrevPaint(); } });
   rptWinControls(); rptWinUpdate();
 }
-function rptNice(f) { return String(f == null ? "" : f).replace(/_/g, " "); }
+var RPT_LABEL = { party: "Customer / broker", order_type: "Order type", delivered_month: "Month delivered", stage: "Status", pivot_department: "Department", truck_number: "Truck",
+  revenue: "Revenue", internal_miles: "Miles driven", days_to_deliver: "Days to deliver", delivery_date: "Delivery date", order_date: "Order date", release_date: "Release date",
+  billed_date: "Billed date", pallet_count: "Pallets", rexius_order_no: "Order #" };
+function rptNice(f) { f = String(f == null ? "" : f); if (RPT_LABEL[f]) return RPT_LABEL[f]; f = f.replace(/_/g, " "); return f.charAt(0).toUpperCase() + f.slice(1); }
 function rptPinSwitch(key) {
   var on = sbPins().indexOf(key) >= 0;
   return '<button class="rpt-tog' + (on ? " on" : "") + '" role="switch" aria-checked="' + on + '" data-sbpin="' + esc(key) + '"><i></i>Show on Scheduler bar</button>';
 }
-function rptFldSel(attr, val, ph, i) {
-  var opts = (REP.fields || []).slice(); Object.keys(RPT_DERIVED).forEach(function (k) { if (opts.indexOf(k) < 0) opts.push(k); }); opts.sort();
-  if (val && opts.indexOf(val) < 0) opts.unshift(val);
-  return '<select class="rpt-sel rpt-fsel" ' + attr + (i != null ? ' data-i="' + i + '"' : "") + '><option value="">' + esc(ph || "Choose…") + "</option>" +
-    opts.map(function (o) { return '<option value="' + esc(o) + '"' + (o === val ? " selected" : "") + ">" + esc(rptNice(o)) + (o in RPT_DERIVED ? " (calculated)" : "") + "</option>"; }).join("") + "</select>";
+var RPT_MEASURES = [["Number of orders", "count", ""], ["Total revenue", "sum", "revenue"], ["Total miles driven", "sum", "internal_miles"], ["Average days to deliver", "avg", "days_to_deliver"],
+  ["Revenue per mile", "ratio", "revenue", "internal_miles"], ["Total pallets", "sum", "pallet_count"]];
+var RPT_GROUPS = ["party", "customer", "broker", "truck_number", "driver_name", "pivot_department", "order_type", "delivered_month", "delivery_state", "delivery_city", "equipment_type", "stage"];
+var RPT_TYPES = [["", "All"], ["External", "External"], ["Bag Order", "Bag Orders"], ["Internal Freight", "Internal Freight"]];
+var RPT_OPS_PLAIN = { eq: "is", ne: "is not", contains: "contains", gt: "is more than", gte: "is at least", lt: "is less than", lte: "is at most", blank: "is blank", notblank: "is not blank" };
+function rptIsNum(f) { return !!(REP.numeric && REP.numeric[f]) || RPT_DERIVED[f] === 1; }
+function rptAllFields() { var f = (REP.fields || []).slice(); Object.keys(RPT_DERIVED).forEach(function (k) { if (f.indexOf(k) < 0) f.push(k); }); return f.sort(function (a, b) { return rptNice(a).localeCompare(rptNice(b)); }); }
+function rptEnc(v) { return v.agg === "count" ? "count" : v.agg === "ratio" ? "ratio:" + v.f + ":" + v.f2 : v.agg + ":" + v.f; }
+function rptDec(s) { var p = s.split(":"); return p[0] === "count" ? { agg: "count", f: "" } : p[0] === "ratio" ? { agg: "ratio", f: p[1], f2: p[2] } : { agg: p[0], f: p[1] }; }
+function rptOpt(val, text, cur) { return '<option value="' + esc(val) + '"' + (val === cur ? " selected" : "") + ">" + esc(text) + "</option>"; }
+function rptMeasureSelect(v, i) {
+  var cur = rptEnc(v), all = rptAllFields(), nums = all.filter(rptIsNum), seen = {}, o = "";
+  var grp = function (label, items) { items = items.filter(function (it) { return !seen[it[0]] && (seen[it[0]] = 1); }); return items.length ? '<optgroup label="' + label + '">' + items.map(function (it) { return rptOpt(it[0], it[1], cur); }).join("") + "</optgroup>" : ""; };
+  o += grp("Most used", RPT_MEASURES.filter(function (m) { return !m[2] || (rptFieldOk(m[2]) && (!m[3] || rptFieldOk(m[3]))); }).map(function (m) { return [rptEnc({ agg: m[1], f: m[2], f2: m[3] }), m[0]]; }));
+  o += grp("Totals", nums.map(function (f) { return ["sum:" + f, "Total " + rptNice(f).toLowerCase()]; }));
+  o += grp("Averages", nums.map(function (f) { return ["avg:" + f, "Average " + rptNice(f).toLowerCase()]; }));
+  o += grp("Highest and lowest", nums.reduce(function (a, f) { return a.concat([["max:" + f, "Highest " + rptNice(f).toLowerCase()], ["min:" + f, "Lowest " + rptNice(f).toLowerCase()]]); }, []));
+  o += grp("How many different", all.filter(function (f) { return !rptIsNum(f); }).map(function (f) { return ["countd:" + f, "Different " + rptNice(f).toLowerCase()]; }));
+  if (!seen[cur]) o = rptOpt(cur, rptValLabel(v), cur) + o;
+  return '<select class="rb-sel" data-rb="val" data-i="' + i + '">' + o + "</select>";
 }
-/* A search box that is also a drop-down: click it to see every column, type to narrow the list. kind: rows, cols or vals. */
-function rptAllFields() { var f = (REP.fields || []).slice(); Object.keys(RPT_DERIVED).forEach(function (k) { if (f.indexOf(k) < 0) f.push(k); }); return f.sort(); }
-function rptComboHtml(kind, ph) {
-  return '<div class="rpt-combo"><input class="rpt-fin rpt-find" type="text" autocomplete="off" spellcheck="false" data-rptcombo="' + kind + '" placeholder="' + esc(ph) + '"><div class="rpt-menu" hidden></div></div>';
+function rptFieldSelect(rb, val, i, blank) {
+  var all = rptAllFields(), common = RPT_GROUPS.filter(rptFieldOk);
+  if (val && common.indexOf(val) < 0 && all.indexOf(val) < 0) common.unshift(val);
+  return '<select class="rb-sel" data-rb="' + rb + '"' + (i != null ? ' data-i="' + i + '"' : "") + ">" + (blank ? rptOpt("", blank, val || "") : "") +
+    '<optgroup label="Most used">' + common.map(function (f) { return rptOpt(f, rptNice(f), val); }).join("") + "</optgroup>" +
+    '<optgroup label="Every column">' + all.filter(function (f) { return common.indexOf(f) < 0; }).map(function (f) { return rptOpt(f, rptNice(f), val); }).join("") + "</optgroup></select>";
 }
-function rptMenuFill(inp) {
-  var kind = inp.dataset.rptcombo, q = inp.value.trim().toLowerCase().replace(/ /g, "_"), menu = inp.nextElementSibling, c = REP.win.cfg;
-  var list = rptAllFields().filter(function (k) { return !q || k.indexOf(q) >= 0; });
-  menu.innerHTML = list.length ? list.map(function (k) {
-    var on = kind === "rows" ? (c.rows || []).indexOf(k) >= 0 : kind === "cols" ? c.cols === k : false;
-    return '<button type="button" class="rpt-opt' + (on ? " on" : "") + '" data-rptpick="' + esc(k) + '" data-kind="' + kind + '">' + esc(rptNice(k)) +
-      '<span>' + (REP.numeric[k] || RPT_DERIVED[k] === 1 ? "number" : k in RPT_DERIVED ? "calculated" : "text / date") + "</span></button>"; }).join("") : '<div class="rpt-opt-none">No column matches.</div>';
-  menu.hidden = false;
+function rptSeg(rb, items, cur, cls) {
+  return '<span class="rpt-seg rb-seg' + (cls ? " " + cls : "") + '">' + items.map(function (it) { return '<button type="button" class="' + (it[0] === cur ? "on" : "") + '" data-rb="' + rb + '" data-v="' + esc(it[0]) + '">' + esc(it[1]) + "</button>"; }).join("") + "</span>";
 }
-function rptMenuPick(k, kind) {
-  var c = REP.win.cfg;
-  if (kind === "rows") { if (c.rows.indexOf(k) < 0) c.rows.push(k); }
-  else if (kind === "cols") c.cols = k;
-  else c.vals.push(REP.numeric[k] || RPT_DERIVED[k] === 1 ? { agg: "sum", f: k } : { agg: "countd", f: k });
-  REP.win.drill = null; rptWinControls(); rptWinUpdate();
-}
-document.addEventListener("focusin", function (e) { if (e.target.dataset && e.target.dataset.rptcombo) rptMenuFill(e.target); });
-document.addEventListener("input", function (e) { if (e.target.dataset && e.target.dataset.rptcombo) rptMenuFill(e.target); });
-document.addEventListener("mousedown", function (e) {
-  var o = e.target.closest && e.target.closest("[data-rptpick]");
-  if (o) { e.preventDefault(); rptMenuPick(o.dataset.rptpick, o.dataset.kind); return; }
-  if (e.target.closest && e.target.closest(".rpt-combo")) return;
-  document.querySelectorAll(".rpt-menu").forEach(function (m) { m.hidden = true; });
-});
-document.addEventListener("keydown", function (e) {
-  if (!e.target.dataset || !e.target.dataset.rptcombo) return;
-  if (e.key === "Escape") { e.stopPropagation(); e.target.nextElementSibling.hidden = true; }
-  else if (e.key === "Enter") { var first = e.target.nextElementSibling.querySelector("[data-rptpick]"); if (first) { e.preventDefault(); rptMenuPick(first.dataset.rptpick, first.dataset.kind); } }
-}, true);
-/* Report builder side panel. Three tabs: Rows & Columns, Time Period, Filter. Rows = what the report is grouped by; Columns = the numbers worked out for each row. */
-var RPT_ATTR_SUGGEST = ["party", "order_type", "delivered_month", "stage", "pivot_department", "truck_number", "customer", "broker"];
-var RPT_MEAS_SUGGEST = [["Count", "count", ""], ["Sum revenue", "sum", "revenue"], ["Sum internal miles", "sum", "internal_miles"], ["Average days to deliver", "avg", "days_to_deliver"], ["Ratio revenue / internal miles", "ratio", "revenue", "internal_miles"]];
+var RPT_VIZ_ICON = {
+  number: '<span class="rb-123">123</span>',
+  trend: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 20v-5M10 20V9M15 20v-7M20 20V5"/></svg>',
+  bars: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h15M4 12h10M4 18h6"/></svg>',
+  table: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M10 4v16"/></svg>'
+};
+function rptStep(n, title, body) { return '<div class="rb-step"><div class="rb-h"><span class="rb-n">' + n + "</span>" + esc(title) + "</div>" + body + "</div>"; }
+function rptFilterIdx(c, test) { var fl = c.filters || []; for (var i = 0; i < fl.length; i++) if (test(fl[i])) return i; return -1; }
+function rptIsType(f) { return f.f === "order_type" && f.op === "eq"; }
 function rptWinControls() {
-  var c = REP.win.cfg, h = "", tab = REP.win.tab || "add", ok = function (k) { return rptFieldOk(k); };
-  // Rows
-  var attrs = RPT_ATTR_SUGGEST.filter(function (k) { return ok(k) && (c.rows || []).indexOf(k) < 0; });
-  var hRows = '<div class="rpt-sec"><div class="rpt-t">Rows</div><div class="rpt-chips">' + (c.rows || []).map(function (f, i) {
-    return '<span class="rpt-chip">' + esc(rptNice(f)) + ' <button data-rptdo="rowdel" data-i="' + i + '" title="Remove">&times;</button></span>'; }).join("") +
-    ((c.rows || []).length ? "" : '<span class="rpt-note">No rows yet: the report is one total.</span>') + "</div>" +
-    rptComboHtml("rows", "Add a row: click for every column, or type to search") +
-    (attrs.length ? '<div class="rpt-chips rpt-sugs">' + attrs.map(function (k) { return '<button type="button" class="rpt-sug attr" data-rptdo="addattr" data-f="' + esc(k) + '">+ ' + esc(rptNice(k)) + "</button>"; }).join("") + "</div>" : "") + "</div>";
-  // Columns (the pivot's "across" field) and Values (the numbers worked out for each row)
-  var hSplit = '<div class="rpt-sec"><div class="rpt-t">Columns</div><div class="rpt-chips">' + (c.cols ? '<span class="rpt-chip">' + esc(rptNice(c.cols)) + ' <button data-rptdo="coldel" title="Remove">&times;</button></span>' :
-    '<span class="rpt-note">None: each value is its own column.</span>') + "</div>" + rptComboHtml("cols", "Add a column: click for every column, or type to search") + "</div>";
-  var hVals = '<div class="rpt-sec"><div class="rpt-t">Values</div><div>' + c.vals.map(function (v, i) {
-    return '<div class="rpt-line"><select class="rpt-sel" data-rptin="vagg" data-i="' + i + '">' + Object.keys(RPT_AGG).map(function (a) { return '<option value="' + a + '"' + (v.agg === a ? " selected" : "") + ">" + RPT_AGG[a] + "</option>"; }).join("") + "</select>" +
-      (v.agg === "count" ? "" : rptFldSel('data-rptin="vf"', v.f, "column", i) + (v.agg === "ratio" ? '<span class="rpt-note">&divide;</span>' + rptFldSel('data-rptin="vf2"', v.f2, "column", i) : "")) +
-      (c.vals.length > 1 ? ' <button class="rpt-x" data-rptdo="valdel" data-i="' + i + '" title="Remove">&times;</button>' : "") + "</div>"; }).join("") + "</div>" +
-    rptComboHtml("vals", "Add a value: click for every column, or type to search") +
-    '<div class="rpt-chips rpt-sugs">' + RPT_MEAS_SUGGEST.filter(function (m) { return !m[2] || (ok(m[2]) && (!m[3] || ok(m[3]))); }).map(function (m) {
-      return '<button type="button" class="rpt-sug meas" data-rptdo="addmeas" data-m="' + RPT_MEAS_SUGGEST.indexOf(m) + '">+ ' + esc(m[0]) + "</button>"; }).join("") + "</div></div>";
-  // Filter
-  var hFil = '<div class="rpt-sec"><div class="rpt-t">Only include</div><div>' + (c.filters || []).map(function (f, i) {
-    return '<div class="rpt-line">' + rptFldSel('data-rptin="ff"', f.f, "column", i) + '<select class="rpt-sel" data-rptin="fop" data-i="' + i + '">' + Object.keys(RPT_OPS).map(function (o) { return '<option value="' + o + '"' + (f.op === o ? " selected" : "") + ">" + RPT_OPS[o] + "</option>"; }).join("") + "</select>" +
-      (f.op === "blank" || f.op === "notblank" ? "" : '<input class="rpt-fin" data-rptin="fv" data-i="' + i + '" value="' + esc(f.v == null ? "" : f.v) + '" placeholder="value">') +
-      ' <button class="rpt-x" data-rptdo="fdel" data-i="' + i + '" title="Remove">&times;</button></div>'; }).join("") +
-    '<button class="rpt-add" data-rptdo="fadd">+ Add</button></div></div>';
-  // Time period
-  var hPer = '<div class="rpt-sec"><div class="rpt-t">Time period</div><div class="rpt-line"><select class="rpt-sel" data-rptin="per">' + RPT_PER.map(function (x) { return '<option value="' + x[0] + '"' + (c.per === x[0] ? " selected" : "") + ">" + x[1] + "</option>"; }).join("") + "</select>" +
-    (c.per === "all" ? "" : '<span class="rpt-note">by</span>' + rptFldSel('data-rptin="datef"', c.dateF, "date column")) + "</div>" +
-    (c.per === "custom" ? '<div class="rpt-line"><input type="text" inputmode="numeric" data-smartdate data-rptwfrom class="rpt-date" data-last-iso="' + c.from + '" value="' + esc(isoToMdy(c.from)) + '"><span class="rpt-note">to</span><input type="text" inputmode="numeric" data-smartdate data-rptwto class="rpt-date" data-last-iso="' + c.to + '" value="' + esc(isoToMdy(c.to)) + '"></div>' : "") +
-    '<label class="rpt-chk"><input type="checkbox" data-rptin="bars"' + (c.bars ? " checked" : "") + "> Show bars</label></div>";
-  var tabs = [["add", "Rows & Columns"], ["period", "Time Period"], ["filter", "Filter"]];
-  h = '<div class="rpt-ptabs" role="tablist">' + tabs.map(function (t) { return '<button type="button" role="tab" class="' + (tab === t[0] ? "on" : "") + '" aria-selected="' + (tab === t[0]) + '" data-rptptab="' + t[0] + '">' + t[1] + "</button>"; }).join("") + "</div>";
-  h += tab === "add" ? hRows + hSplit + hVals : tab === "filter" ? hFil : hPer;
-  $("#rpt-ctlbox").innerHTML = h;
+  var w = REP.win, c = w.cfg, viz = c.viz, box = $("#rpt-ctlbox"), keep = box.scrollTop, h = "";
+  if (!w.id) h += '<div class="rb-ex"><select class="rb-sel" data-rb="example" aria-label="Start from an example"><option value="">Start from an example…</option>' +
+    RPT_STARTER.map(function (s, i) { return '<option value="' + i + '">' + esc(s[0]) + "</option>"; }).join("") + "</select></div>";
+  // 1. what to measure
+  var m = c.vals.map(function (v, i) { return '<div class="rb-row">' + rptMeasureSelect(v, i) + (c.vals.length > 1 ? '<button type="button" class="rd-x" data-rb="valdel" data-i="' + i + '" title="Remove" aria-label="Remove">&times;</button>' : "") + "</div>"; });
+  h += rptStep(1, "What do you want to measure?", (viz === "table" ? m.join("") + '<button type="button" class="rb-link" data-rb="valadd">+ Add Another Number</button>' : m[0]));
+  // 2. how to show it
+  var o = '<div class="rb-viz">' + RPT_VIZ.map(function (z) { return '<button type="button" class="' + (viz === z[0] ? "on" : "") + '" data-rb="viz" data-v="' + z[0] + '">' + RPT_VIZ_ICON[z[0]] + "<b>" + z[1] + "</b><small>" + z[2] + "</small></button>"; }).join("") + "</div>";
+  if (viz === "number") o += '<label class="rb-chk"><input type="checkbox" data-rb="cmp"' + (c.cmp !== false ? " checked" : "") + "> Compare with the same number of days before</label>" +
+    '<label class="rb-chk"><input type="checkbox" data-rb="spark"' + (c.spark !== false ? " checked" : "") + "> Show a small trend line</label>";
+  if (viz === "trend") o += '<div class="rb-f"><span>Each bar is one</span>' + rptSeg("time", [["week", "Week"], ["month", "Month"]], rptTimeUnit(c)) + "</div>";
+  if (viz === "bars") o += '<div class="rb-f"><span>Compare by</span>' + rptFieldSelect("row", c.rows[0], 0) + '</div><div class="rb-f"><span>Show the top</span>' + rptSeg("top", [["5", "5"], ["10", "10"], ["20", "20"], ["50", "50"]], String(c.top || 10)) + "</div>";
+  if (viz === "table") o += '<div class="rb-f"><span>One row for each</span>' + c.rows.map(function (f, i) { return '<div class="rb-row">' + rptFieldSelect("row", f, i) + (c.rows.length > 1 ? '<button type="button" class="rd-x" data-rb="rowdel" data-i="' + i + '" title="Remove" aria-label="Remove">&times;</button>' : "") + "</div>"; }).join("") +
+    '<button type="button" class="rb-link" data-rb="rowadd">+ Break Down Further</button></div><div class="rb-f"><span>Split into columns by</span>' + rptFieldSelect("cols", c.cols, null, "Nothing (one column per number)") + "</div>";
+  o += '<div class="rb-f"><span>Width on the Dashboard</span>' + rptSeg("size", RPT_SIZE, rptSize(c)) + "</div>";
+  h += rptStep(2, "Show it as", o);
+  // 3. which orders
+  var ti = rptFilterIdx(c, rptIsType), cx = rptFilterIdx(c, rptIsNotCancelled), other = (c.filters || []).map(function (f, i) { return [f, i]; }).filter(function (x) { return x[1] !== ti && x[1] !== cx; });
+  h += rptStep(3, "Which orders?", rptSeg("otype", RPT_TYPES, ti >= 0 ? c.filters[ti].v : "", "two") +
+    '<label class="rb-chk"><input type="checkbox" data-rb="cxl"' + (cx < 0 ? " checked" : "") + "> Include cancelled orders</label>" +
+    other.map(function (x) { var f = x[0];
+      return '<div class="rb-flt"><button type="button" data-rb="fedit" data-i="' + x[1] + '">' + esc(rptNice(f.f) + " " + RPT_OPS_PLAIN[f.op] + (f.op === "blank" || f.op === "notblank" ? "" : " " + f.v)) + "</button>" +
+        '<button type="button" class="rd-x" data-rb="fdel" data-i="' + x[1] + '" title="Remove" aria-label="Remove filter">&times;</button></div>'; }).join("") +
+    '<button type="button" class="rb-link" data-rb="fadd">+ Only Include Orders Where…</button>');
+  // 4. which dates
+  var dash = RPT_PER.filter(function (p) { return p[0] === REP.per; })[0];
+  var p = '<select class="rb-sel" data-rb="per">' + RPT_PER.map(function (x) { return rptOpt(x[0], x[0] === "dash" ? "Same as the Dashboard (" + (dash ? dash[1] : "Custom") + ")" : x[1], c.per); }).join("") + "</select>";
+  if (c.per === "custom") p += '<div class="rb-row rb-dates"><input type="text" inputmode="numeric" data-smartdate data-rptwfrom class="rpt-date" data-last-iso="' + c.from + '" value="' + esc(isoToMdy(c.from)) + '"><span>to</span>' +
+    '<input type="text" inputmode="numeric" data-smartdate data-rptwto class="rpt-date" data-last-iso="' + c.to + '" value="' + esc(isoToMdy(c.to)) + '"></div>';
+  if (c.per !== "all") p += '<div class="rb-f"><span>Go by each order’s</span><select class="rb-sel" data-rb="datef">' + rptAllFields().filter(function (f) { return /date$|_at$/.test(f); }).map(function (f) { return rptOpt(f, rptNice(f), c.dateF); }).join("") + "</select></div>";
+  h += rptStep(4, "Time period", p);
+  box.innerHTML = h; box.scrollTop = keep;
+}
+function rptSetViz(c, v) {
+  c.viz = v; delete c.size;
+  if (v !== "table") { c.cols = ""; c.vals = c.vals.slice(0, 1); delete c.big; }
+  if (v === "number" || v === "trend") c.rows = [];
+  if (v === "bars") c.rows = [c.rows[0] || "party"];
+  if (v === "table" && !c.rows.length) c.rows = ["party"];
+}
+function rptBuilder(e) {
+  var el = e.target.closest && e.target.closest("[data-rb]"); if (!el || !REP.win) return;
+  var form = el.tagName === "SELECT" || el.type === "checkbox";
+  if ((e.type === "change") !== form) return;
+  var w = REP.win, c = w.cfg, a = el.dataset.rb, i = +(el.dataset.i || 0), v = form ? el.value : el.dataset.v;
+  var redo = function () {
+    if (w.auto) { w.name = rptAutoName(c); var nm = $("#rpt-name"); if (nm) nm.value = w.name; }
+    w.drill = null; w.sortCol = null; rptWinControls(); rptWinUpdate();
+  };
+  c.filters = c.filters || [];
+  if (a === "example") { if (v === "") return; var s = RPT_STARTER[+v]; w.cfg = c = rptNewCfg(s[1]); w.auto = false; w.name = s[0]; $("#rpt-name").value = s[0]; return redo(); }
+  if (a === "val") c.vals[i] = rptDec(v);
+  else if (a === "valadd") c.vals.push({ agg: "sum", f: "revenue" });
+  else if (a === "valdel") c.vals.splice(i, 1);
+  else if (a === "viz") rptSetViz(c, v);
+  else if (a === "cmp") c.cmp = el.checked;
+  else if (a === "spark") c.spark = el.checked;
+  else if (a === "time") c.time = v;
+  else if (a === "top") c.top = +v;
+  else if (a === "row") c.rows[i] = v;
+  else if (a === "rowadd") c.rows.push(RPT_GROUPS.filter(function (f) { return rptFieldOk(f) && c.rows.indexOf(f) < 0; })[0] || "order_type");
+  else if (a === "rowdel") c.rows.splice(i, 1);
+  else if (a === "cols") c.cols = v;
+  else if (a === "size") c.size = v;
+  else if (a === "otype") { var ti = rptFilterIdx(c, rptIsType); if (ti >= 0) c.filters.splice(ti, 1); if (v) c.filters.push({ f: "order_type", op: "eq", v: v }); }
+  else if (a === "cxl") { var cx = rptFilterIdx(c, rptIsNotCancelled); if (el.checked && cx >= 0) c.filters.splice(cx, 1); else if (!el.checked && cx < 0) c.filters.push(Object.assign({}, RPT_NOT_CANCELLED)); }
+  else if (a === "fdel") c.filters.splice(i, 1);
+  else if (a === "fedit") return rptFilterMenu(el, c.filters[i], function (f) { c.filters[i] = f; redo(); });
+  else if (a === "fadd") return rptFilterMenu(el, null, function (f) { c.filters.push(f); redo(); });
+  else if (a === "per") { c.per = v; if (v === "custom") { var r = rptDashRange(); c.from = c.from || r.from; c.to = c.to || r.to; } }
+  else if (a === "datef") c.dateF = v;
+  else return;
+  redo();
+}
+document.addEventListener("click", function (e) { if (e.target.closest && e.target.closest("#rpt-ctlbox")) rptBuilder(e); });
+document.addEventListener("change", function (e) { if (e.target.closest && e.target.closest("#rpt-ctlbox")) rptBuilder(e); });
+function rptMenuClose() { var m = document.querySelector(".rpb-menu"); if (m) m.remove(); }
+function rptMenuOpen(anchor, html, wire) {
+  rptMenuClose();
+  var box = $("#rpt-ctlbox"), m = document.createElement("div"); m.className = "rpb-menu"; m.innerHTML = html; box.appendChild(m);
+  var ar = anchor.getBoundingClientRect(), br = box.getBoundingClientRect();
+  m.style.left = Math.max(0, Math.min(br.width - 300, ar.left - br.left)) + "px"; m.style.top = (ar.bottom - br.top + box.scrollTop + 4) + "px";
+  wire(m); var s = m.querySelector("select,.s"); if (s) s.focus();
+}
+function rptFilterMenu(anchor, ex, done) {
+  var all = rptAllFields();
+  rptMenuOpen(anchor, '<form><select id="rpb-ff">' + all.map(function (f) { return '<option value="' + esc(f) + '"' + (ex && ex.f === f ? " selected" : "") + ">" + esc(rptNice(f)) + "</option>"; }).join("") +
+    '</select><select id="rpb-fo">' + Object.keys(RPT_OPS_PLAIN).map(function (o) { return '<option value="' + o + '"' + (ex && ex.op === o ? " selected" : "") + ">" + RPT_OPS_PLAIN[o] + "</option>"; }).join("") +
+    '</select><input class="v" id="rpb-fv" list="rpb-fl" autocomplete="off" placeholder="value" value="' + esc(ex && ex.v != null ? ex.v : "") + '"><datalist id="rpb-fl"></datalist><button class="btn pri" type="submit">Apply</button></form>', function (m) {
+    var ff = m.querySelector("#rpb-ff"), fo = m.querySelector("#rpb-fo"), fv = m.querySelector("#rpb-fv"), dl = m.querySelector("#rpb-fl");
+    function sync() {
+      var seen = {}; (REP.data || []).forEach(function (r) { if (r[ff.value] != null && r[ff.value] !== "") seen[String(r[ff.value]).slice(0, 60)] = 1; });
+      dl.innerHTML = Object.keys(seen).sort().slice(0, 60).map(function (x) { return '<option value="' + esc(x) + '">'; }).join("");
+      fv.hidden = fo.value === "blank" || fo.value === "notblank";
+    }
+    sync(); ff.onchange = sync; fo.onchange = sync;
+    m.onkeydown = function (e) { if (e.key === "Escape") { e.stopPropagation(); rptMenuClose(); } };
+    m.querySelector("form").onsubmit = function (e) {
+      e.preventDefault(); var v = fv.value.trim(), blank = fo.value === "blank" || fo.value === "notblank";
+      if (!v && !blank) { fv.focus(); return; }
+      rptMenuClose(); done({ f: ff.value, op: fo.value, v: blank ? "" : v });
+    };
+  });
+}
+document.addEventListener("mousedown", function (e) { if (!e.target.closest || e.target.closest(".rpb-menu") || e.target.closest("[data-rb]")) return; rptMenuClose(); });
+function rptPrevPaint() {
+  var pv = $("#rpt-prev"), w = REP.win; if (!pv || !w) return;
+  pv.innerHTML = REP.data ? rptCardHtml({ name: ($("#rpt-name") || {}).value || w.name, cfg: w.cfg }, 0, false, true) : "";
 }
 function rptWinRun() {
   var w = REP.win, res = rptRun(w.cfg), dc = rptDisplay(res), rows = res.rows.slice();
@@ -5809,6 +6379,15 @@ function rptWinRun() {
 function rptWinUpdate() {
   var w = REP.win, out = $("#rpt-out"); if (!w || !out) return;
   if (!REP.data) { out.innerHTML = '<div class="empty">Loading the report data…</div>'; return; }
+  rptPrevPaint();
+  if (w.cfg.viz === "trend" && w.cfg.vals.length) {
+    var u = rptTimeUnit(w.cfg), s = rptSeries(w.cfg, u), v0 = w.cfg.vals[0];
+    var cnt = v0.agg !== "count";
+    out.innerHTML = '<div class="grid-wrap rpt-tbl"><table class="data"><thead><tr><th>' + (u === "week" ? "Week of" : "Month") + '</th><th class="r">' + esc(rptValLabel(v0)) + "</th>" + (cnt ? '<th class="r">Orders</th>' : "") + "</tr></thead><tbody>" +
+      s.slice().reverse().map(function (p) { return "<tr><td>" + esc(u === "week" ? isoToMdy(p.k) : p.label) + '</td><td class="r n">' + rptValFmt(v0, p.x) + "</td>" + (cnt ? '<td class="r n">' + p.n.toLocaleString() + "</td>" : "") + "</tr>"; }).join("") +
+      (s.length ? "" : '<tr><td colspan="3" class="rpt-none">No orders match.</td></tr>') + "</tbody></table></div>";
+    return;
+  }
   var d = rptWinRun(), res = d.res, dc = d.dc, c = w.cfg;
   if (!res.vals.length) { out.innerHTML = '<div class="empty">Add at least one value.</div>'; return; }
   var arrow = function (i) { return w.sortCol === i ? (w.dir > 0 ? " &#9650;" : " &#9660;") : ""; };
@@ -5850,30 +6429,12 @@ function rptWinCsv() {
 }
 function rptWinSave(asNew) {
   var w = REP.win, name = ($("#rpt-name").value || "").trim();
-  if (!name) { toast("Give the report a name", true); return; }
-  if (!w.cfg.vals.length) { toast("Add at least one value", true); return; }
+  if (!name) { toast("Give the card a name", true); return; }
+  if (!w.cfg.vals.length) { toast("Pick what to measure", true); return; }
   var body = { name: name, config: w.cfg };
   if (w.id && !asNew) body.id = w.id;
-  api("saved-report", body).then(function () { REP.saved = null; REP.noSql = false; closeModal(); REP.win = null; toast("Saved to the Dashboard"); render(); })
+  api("saved-report", body).then(function () { REP.saved = null; REP.noSql = false; closeModal(); REP.win = null; toast(w.id && !asNew ? "Card saved" : "Added to the Dashboard"); render(); })
     .catch(function (err) { toast(/function|schema|relation|does not exist/i.test(err.message) ? "Saved reports are not set up yet. Run the saved reports SQL first." : err.message, true); });
-}
-function rptWinChange(el) {
-  var w = REP.win, c = w.cfg, i = el.dataset.i != null ? +el.dataset.i : -1, k = el.dataset.rptin, v = el.value, redo = false;
-  if (/^(rowadd|cols|vf|vf2|ff|datef)$/.test(k) && v && !rptFieldOk(v.trim())) { toast("No column called “" + v + "”. Pick one from the list.", true); el.value = ""; return; }
-  v = (v || "").trim();
-  if (k === "rowadd") { if (v && c.rows.indexOf(v) < 0) c.rows.push(v); redo = true; }
-  else if (k === "cols") c.cols = v;
-  else if (k === "vagg") { c.vals[i].agg = v; if (v === "count") { c.vals[i].f = ""; } redo = true; }
-  else if (k === "vf") c.vals[i].f = v;
-  else if (k === "vf2") c.vals[i].f2 = v;
-  else if (k === "ff") c.filters[i].f = v;
-  else if (k === "fop") { c.filters[i].op = v; redo = true; }
-  else if (k === "fv") c.filters[i].v = v;
-  else if (k === "datef") c.dateF = v || "delivery_date";
-  else if (k === "bars") c.bars = el.checked;
-  else if (k === "per") { c.per = v; if (v === "custom") { var r = rptDashRange(); c.from = c.from || r.from; c.to = c.to || r.to; } redo = true; }
-  if (c.cols && !rptFieldOk(c.cols)) c.cols = "";
-  w.drill = null; if (redo) rptWinControls(); rptWinUpdate();
 }
 document.addEventListener("change", function (e) {
   var el = e.target;
@@ -5885,7 +6446,6 @@ document.addEventListener("change", function (e) {
   }
   if (!REP.win || !el.closest || !el.closest(".rpt-win")) return;
   if (el.matches("[data-rptwfrom],[data-rptwto]")) { var f2 = $("#modal [data-rptwfrom]"), t2 = $("#modal [data-rptwto]"); if (f2.dataset.lastIso && t2.dataset.lastIso) { REP.win.cfg.from = f2.dataset.lastIso; REP.win.cfg.to = t2.dataset.lastIso; REP.win.cfg.per = "custom"; REP.win.drill = null; rptWinUpdate(); } return; }
-  if (el.dataset.rptin) rptWinChange(el);
 });
 /* ═══ 05-settings-nav-search ═══ */
 /* ── Settings (D54) ──────────────────────────────────────────────────────── */
@@ -6068,7 +6628,8 @@ function settingsHelp() {
       "The header <b>+</b> adds a field, and Manage Columns controls field order and visibility. Archived directory records remain on historical orders."],
     ["Mileage, delivery dates, and rates",
       "<b>Sync Delivery Dates</b> copies completed schedule dates back to orders, saves Motive's miles for those days, and opens a window listing the delivered " +
-      "orders that still need mileage. Type the miles (and change the cost if you need to), Save, and the order leaves the list. The Motive tab under Reports shows each truck's day."],
+      "orders that still need mileage. Type the miles (and change the cost if you need to), Save, and the order leaves the list. <b>Motive</b> (below Database) shows every truck's miles and hours for any dates, and one day in detail. " +
+      "<b>Billing → Internal Transfers</b> adds up those costs by department and marks each transfer done."],
     ["Settings and shortcuts",
       "General contains theme, accent, font, order numbering, and Scheduler sizing. Shortcuts can be " +
       "re-recorded, and <b>Add shortcut</b> gives an action an additional key combination."],
@@ -6076,7 +6637,7 @@ function settingsHelp() {
       "Undo and Redo cover changes made in the current session. Open History for the shared audit trail and " +
       "review a reversible change before restoring it. External actions such as sending data to another service remain recorded but are not reversed remotely."],
     ["Reports",
-      "Choose a date range in Reports, then export the order report for analysis in Excel. Internal Freight has its own transfer report. " +
+      "The Reports dashboard holds the cards you build; Export Everything downloads every order for Excel. " +
       "Exports use stored order fields and department codes; they do not depend on the visible order-number pattern."]
   ];
   return faqs.map(function (f) {
@@ -6091,10 +6652,12 @@ var NAV = [
       { k: "driver", t: "Driver Tabs" }] },
   { k: "orders", t: "Orders", subs: [{ k: "int", t: "Bag Orders" }, { k: "xfer", t: "Internal Freight" },
       { k: "ext", t: "External Orders" }] },
-  { k: "billing", t: "Billing", subs: [{ k: "bill", t: "Invoices & Packages" }] },
-  { k: "reports", t: "Reports", subs: [{ k: "rep", t: "Export & Reports" }] },
+  { k: "billing", t: "Billing", subs: [{ k: "bill", t: "Invoices & Packages" }, { k: "transfers", t: "Internal Transfers" }] },
+  { k: "reports", t: "Reports", subs: [{ k: "rep", t: "Dashboard" }] },
   { k: "database", t: "Database", subs: [{ k: "bagger", t: "Bagger Customers" }, { k: "brokers", t: "External Customers" },
-      { k: "pickdrop", t: "Pick/Drop List" }, { k: "fleet", t: "Fleet" }] }
+      { k: "pickdrop", t: "Pick/Drop List" }, { k: "fleet", t: "Fleet" }] },
+  // One entry under Database, drawn the same way (navMenuHtml): Motive's truck-days, miles and hours.
+  { k: "motive", t: "Motive", subs: [{ k: "motive", t: "Motive" }] }
 ];
 /* Settings (D54) is reached from the header gear, not the main nav, so it lives
    outside NAV — subsOf resolves its tabs specially. */
@@ -6251,7 +6814,8 @@ function ordersToolbarExtras() {
    One pull saves each truck-day to Supabase (motive_daily) and records the day as pulled, so a day is asked
    from Motive once. Today is never pulled (it is not finished). Sync Delivery Dates syncs the dates, makes sure
    Motive's days are saved, then opens the review window for delivered orders whose mileage is not confirmed. */
-var MOT = { rows: {}, pulled: {}, from: "", to: "", loading: false, err: "", view: "day", day: "", pick: null, week: "" };
+var MOT = { rows: {}, pulled: {}, from: "", to: "", loading: false, err: "", view: "range", per: "lastwk", open: {}, day: "", pick: null, week: "" };
+try { var _mp = localStorage.getItem("dept12MotPer"); if (/^(yday|thiswk|lastwk|month|lastmonth)$/.test(_mp || "")) MOT.per = _mp; } catch (e) { /* not saved on this device */ }
 function motAddDays(iso, n) { var d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n); return rptIso(d); }
 function motYesterday() { return motAddDays(TODAY, -1); }
 function motMonday(iso) { var d = new Date(iso + "T12:00:00"), k = (d.getDay() + 6) % 7; d.setDate(d.getDate() - k); return rptIso(d); }
@@ -6518,7 +7082,7 @@ function runSyncAll(btn) {
     .catch(function (err) { btn.disabled = false; busyEnd(); toast(err.message, true); });
 }
 function syncOrderLabel(o) {
-  if (o.is_transfer) return [o.notes || "Internal freight", o.transfer_department_name || ""];
+  if (o.is_transfer) return [o.transfer_no || o.notes || "Internal freight", (o.transfer_no && o.notes ? o.notes + (o.transfer_department_name ? " · " : "") : "") + (o.transfer_department_name || "")];
   if (o.kind === "internal") return [o.rexius_order_no || "Bag order", o.customer_name || (o.customer_party_id && party(o.customer_party_id) ? party(o.customer_party_id).name : "")];
   var who = o.broker_name || o.customer_name || "";
   return [o.rexius_order_no || o.broker_load_no || "External order", who];
@@ -6584,7 +7148,7 @@ function render() {
       requestAnimationFrame(function () { schedNode.scrollTop = schedScrollTop; });
     }
   } else if (SUB === "cw" || SUB === "driver" || SUB === "int" || SUB === "xfer" || SUB === "ext" ||
-             SUB === "bill" || SUB === "rep" || SEC === "database") {
+             SUB === "bill" || SUB === "transfers" || SUB === "rep" || SUB === "motive" || SEC === "database") {
     // Inserted straight into #main, not wrapped in a .pad (D137/D140,
     // extended to the three Orders trackers D237, and to Billing/Database
     // D256) — identical to how vScheduler()'s own toolbar+grid-wrap pair
@@ -6603,7 +7167,7 @@ function render() {
     // `main`/`.grid-wrap` already provide generically, just with padding.
     main.insertAdjacentHTML("beforeend", SUB === "cw" ? vCurrentWeek() : SUB === "driver" ? vDriverView() :
       SUB === "int" ? vInternal() : SUB === "xfer" ? vInternalFreight() : SUB === "ext" ? vOrders("external") :
-      SUB === "bill" ? vBilling() : SUB === "rep" ? vReports() : vDatabase(SUB));
+      SUB === "bill" ? vBilling() : SUB === "transfers" ? vTransfers() : SUB === "rep" ? vReports() : SUB === "motive" ? vMotive() : vDatabase(SUB));
   } else {
     var html = SUB === "rep" ? vReports() : vSettings(SUB);
     var pad = document.createElement("div");
@@ -6727,10 +7291,10 @@ function searchResults(qraw) {
     var v = arguments[i]; if (v != null && String(v).toLowerCase().indexOf(q) >= 0) return true; } return false; }
   DB.orders.forEach(function (o) {
     var cust = o.customer_party_id && party(o.customer_party_id), brok = o.broker_party_id && party(o.broker_party_id);
-    if (has(o.rexius_order_no, o.broker_load_no, o.po_number, o.delivery_number, o.notes,
+    if (has(o.rexius_order_no, o.broker_load_no, o.transfer_no, o.po_number, o.delivery_number, o.notes,
             cust && cust.name, brok && brok.name)) {
-      out.push({ type: o.kind === "internal" ? "Internal" : "Order",
-        label: (o.rexius_order_no || o.broker_load_no || "no #") + " · " + buildChip(o).title,
+      out.push({ type: o.is_transfer ? "Internal Freight" : o.kind === "internal" ? "Internal" : "Order",
+        label: (o.rexius_order_no || o.broker_load_no || o.transfer_no || "no #") + " · " + buildChip(o).title,
         sub: [o.po_number && "PO " + o.po_number, o.broker_load_no && "load " + o.broker_load_no,
               o.delivery_number && "del " + o.delivery_number].filter(Boolean).join(" · "),
         run: function () { openOrder(o.id); } });
@@ -9273,7 +9837,7 @@ document.addEventListener("click", function (e) {
     paintRowSel(g, table); return;
   }
   var t = e.target.closest("[data-sec],[data-sub],[data-stage],[data-report],[data-open],[data-pkgrow],[data-route-edit]," +
-    "[data-pkg],[data-nodelivery],[data-restore-order],[data-tracker-collapse],[data-tracker-collapse-more],[data-tsort],[data-rpttab],[data-rpttile],[data-rptsort],[data-rptcell],[data-rptdo],[data-rptptab],[data-rptrefresh],[data-rptopen],#rpt-new,#rpt-csv,#rpt-save,#rpt-saveas,#rpt-del," +
+    "[data-pkg],[data-nodelivery],[data-restore-order],[data-tracker-collapse],[data-tracker-collapse-more],[data-tsort],[data-rpttile],[data-rptsort],[data-rptcell],[data-rptrefresh],[data-rptopen],#rpt-new,#rpt-csv,#rpt-save,#rpt-saveas,#rpt-del," +
     "[data-copy-order],[data-addcust],[data-addcol]," +
     "[data-addrow],[data-delrows],[data-archiverows],[data-delarchived],[data-archiveview],[data-orderdelrows],[data-ordercancelrows],[data-delete-doc],[data-frreset],[data-catadd],[data-catdel],[data-sortsave],[data-sortclear]," +
     "[data-addsheet],[data-sheet-addrow],[data-sheet-addcol],[data-sheet-rename]," +
@@ -9843,21 +10407,9 @@ document.addEventListener("click", function (e) {
     toast("Shortcuts reset to defaults"); return;
   }
   if (t.id === "sync-all") { runSyncAll(t); return; }
-  if (t.dataset.rpttab) { REP.tab = t.dataset.rpttab; render(); return; }
   if (t.dataset.rptrefresh) { rptDataLoad(); render(); return; }
   if (t.dataset.rpttile) { rptWinOpen(rptTiles()[+t.dataset.rpttile]); return; }
-  if (t.id === "rpt-new") { REP.tab = "dash"; rptWinOpen(null); return; }
-  if (t.dataset.rptdo && REP.win) { var rc = REP.win.cfg, ri2 = +t.dataset.i, act = t.dataset.rptdo;
-    if (act === "addattr") { if (rc.rows.indexOf(t.dataset.f) < 0) rc.rows.push(t.dataset.f); }
-    else if (act === "addmeas") { var sm = RPT_MEAS_SUGGEST[+t.dataset.m]; rc.vals.push(sm[1] === "count" ? { agg: "count", f: "" } : sm[1] === "ratio" ? { agg: "ratio", f: sm[2], f2: sm[3] } : { agg: sm[1], f: sm[2] }); }
-    else if (act === "rowdel") rc.rows.splice(ri2, 1);
-    else if (act === "coldel") rc.cols = "";
-    else if (act === "valadd") rc.vals.push({ agg: "sum", f: "" });
-    else if (act === "valdel") rc.vals.splice(ri2, 1);
-    else if (act === "fadd") { rc.filters = rc.filters || []; rc.filters.push({ f: "", op: "eq", v: "" }); }
-    else if (act === "fdel") rc.filters.splice(ri2, 1);
-    REP.win.drill = null; rptWinControls(); rptWinUpdate(); return; }
-  if (t.dataset.rptptab && REP.win) { REP.win.tab = t.dataset.rptptab; rptWinControls(); return; }
+  if (t.id === "rpt-new") { rptWinOpen(null); return; }
   if (t.dataset.rptsort && REP.win) { var rw = REP.win, rs = +t.dataset.rptsort;
     if (rw.sortCol === rs) rw.dir = -rw.dir; else { rw.sortCol = rs; rw.dir = rs === -1 ? 1 : -1; } rw.drill = null; rptWinUpdate(); return; }
   if (t.dataset.rptcell && REP.win) { var pc = t.dataset.rptcell.split("|"), dd = REP.win.drill;
@@ -9868,10 +10420,10 @@ document.addEventListener("click", function (e) {
   if (t.id === "rpt-saveas" && REP.win) { rptWinSave(true); return; }
   if (t.id === "rpt-del" && REP.win && REP.win.id) {
     var delId = REP.win.id;
-    confirmModal("Delete this report? It comes off the Dashboard and the Scheduler bar. The orders it reads are not touched.", function () {
-      api("saved-report/delete", { id: delId }).then(function () { REP.saved = null; REP.win = null; toast("Report deleted"); render(); })
+    confirmModal("Delete this card? It comes off the Dashboard and the Scheduler bar. The orders it reads are not touched.", function () {
+      api("saved-report/delete", { id: delId }).then(function () { REP.saved = null; REP.win = null; toast("Card deleted"); render(); })
         .catch(function (err) { toast(err.message, true); });
-    }, "Delete Report");
+    }, "Delete Card");
     return;
   }
   if (t.dataset.rptper) {
@@ -10592,6 +11144,15 @@ document.addEventListener("input", function (e) {
   var pinp = e.target.closest && e.target.closest("[data-partycombo]");
   if (pinp) { pinp.removeAttribute("data-partyid"); renderPartySuggest(pinp); }
 }, true);
+/* Emptying an order's Pickup or Drop box and leaving it clears that location (it is optional). */
+document.addEventListener("change", function (e) {
+  var inp = e.target.closest && e.target.closest("[data-loccombo]");
+  if (!inp || inp.value.trim() || /^stop:/.test(inp.dataset.loccombo)) return;
+  var oid = inp.dataset.oid, field = inp.dataset.loccombo, o = order(oid);
+  if (!o || !o[field]) return;
+  var body = { id: oid }; body[field] = null;
+  api("order/update", body).then(function (row) { patchOrderLocal(oid, row); }).then(reload).catch(function (err) { toast(err.message, true); });
+});
 document.addEventListener("focus", function (e) {
   var inp = e.target.closest && e.target.closest("[data-loccombo]");
   if (inp && inp.value.trim()) renderLocSuggest(inp, true);

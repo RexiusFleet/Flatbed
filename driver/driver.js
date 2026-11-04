@@ -513,6 +513,11 @@
             return lsHtml(lines.concat(["<b>PICK:</b> " + esc(pick) + apptTag(apptLabel(o, "pick", day)),
             "<b>DROP:</b> " + esc(drop) + apptTag(apptLabel(o, "drop", day))]));
         }
+        // Internal freight: its Pickup and Drop (when either is set) under the load info, printed like an external load's.
+        if (o && o.is_transfer && (o.pickup_name || o.delivery_name)) {
+            return loadTextHtml(r.chip) + '<div style="margin-top:6px">' + lsHtml(["<b>PICK:</b> " + esc(stopLine(o.pickup_name, o.pickup_address, o.pickup_city, o.pickup_state)),
+                "<b>DROP:</b> " + esc(stopLine(o.delivery_name, o.delivery_address, o.delivery_city, o.delivery_state))]) + "</div>";
+        }
         // Bag orders: the same EARLY / ANYTIME and FORKLIFT boxes as Current Week.
         var fl = o && o.kind === "internal" && !o.is_transfer ? flagsHtml(bagFlags(o)) : "";
         return loadTextHtml(r.chip) + (fl ? '<div style="margin-top:6px">' + fl + "</div>" : "");
@@ -979,25 +984,31 @@
     function scanBtn(key, big) {
         return '<button class="' + (big ? "btn" : "btn sm") + '" data-scan="' + esc(key) + '" title="Scan the POD / BOL">Scan</button>';
     }
-    // Store map: a picture of the store (PNG in the storeimages folder) for bag orders.
-    function storeMapUrl(o) {
-        var u = o && o.customer_map_url || "";
-        return /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(u) ? u : "";
+    // Maps: a picture of the store (PNG in the storeimages folder) for bag orders, and the Pickup's and Drop's
+    // pictures (Pick/Drop List -> Map) for internal freight. A button shows only when there is a picture link.
+    function mapImg(u) {
+        return /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(u || "") ? u : "";
+    }
+    function loadMaps(o) {
+        if (!o) return [];
+        if (o.is_transfer) return [["pick", "Pickup Map", mapImg(o.pickup_map_url), o.pickup_name || "Pickup"],
+            ["drop", "Drop Map", mapImg(o.delivery_map_url), o.delivery_name || "Drop"]].filter(function (m) { return m[2]; });
+        return o.kind === "internal" && mapImg(o.customer_map_url) ? [["store", "Store Map", mapImg(o.customer_map_url), o.customer_name || "Store"]] : [];
     }
     function storeMapBtn(key, big) {
-        var o = orderForKey(key);
-        return o && o.kind === "internal" && !o.is_transfer && storeMapUrl(o)
-            ? '<button class="btn sm smap-btn" data-smap="' + esc(key) + '">Store Map</button>' : "";
+        return loadMaps(orderForKey(key)).map(function (m) {
+            return '<button class="btn sm smap-btn" data-smap="' + esc(key) + '" data-smap-k="' + m[0] + '">' + m[1] + "</button>";
+        }).join("");
     }
-    function openStoreMap(key) {
-        var o = orderForKey(key), url = storeMapUrl(o);
-        if (!url || document.querySelector(".smap")) return;
+    function openStoreMap(key, k) {
+        var m = loadMaps(orderForKey(key)).filter(function (x) { return x[0] === (k || "store"); })[0];
+        if (!m || document.querySelector(".smap")) return;
         var el = document.createElement("div");
-        el.className = "smap"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Store map");
+        el.className = "smap"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", m[1]);
         el.innerHTML = '<div class="smap-top"><button class="btn" data-smap-close>Close</button>' +
-            '<div class="smap-title"><b>' + esc(o.customer_name || "Store") + "</b><span>Store map</span></div>" +
-            '<a class="btn" href="' + esc(url) + '" target="_blank" rel="noopener">Open Full Size</a></div>' +
-            '<div class="smap-body"><img src="' + esc(url) + '" alt="Store map for ' + esc(o.customer_name || "this store") + '"></div>';
+            '<div class="smap-title"><b>' + esc(m[3]) + "</b><span>" + esc(m[1]) + "</span></div>" +
+            '<a class="btn" href="' + esc(m[2]) + '" target="_blank" rel="noopener">Open Full Size</a></div>' +
+            '<div class="smap-body"><img src="' + esc(m[2]) + '" alt="' + esc(m[1] + " for " + m[3]) + '"></div>';
         document.body.appendChild(el);
         document.body.style.overflow = "hidden";
     }
@@ -1209,7 +1220,7 @@
             return;
         }
         var smb = e.target.closest("[data-smap]");
-        if (smb) { openStoreMap(smb.getAttribute("data-smap")); return; }
+        if (smb) { openStoreMap(smb.getAttribute("data-smap"), smb.getAttribute("data-smap-k")); return; }
         if (e.target.closest("[data-smap-close]")) { closeStoreMap(); return; }
         var zb = e.target.closest("[data-zoom]");
         if (zb) {
