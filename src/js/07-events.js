@@ -227,14 +227,14 @@ document.addEventListener("click", function (e) {
     paintRowSel(g, table); return;
   }
   var t = e.target.closest("[data-sec],[data-sub],[data-stage],[data-report],[data-open],[data-pkgrow],[data-route-edit]," +
-    "[data-pkg],[data-nodelivery],[data-restore-order],[data-tracker-collapse],[data-tracker-collapse-more],[data-tsort],[data-rpttile],[data-rptsort],[data-rptcell],[data-rptrefresh],[data-rptopen],#rpt-new,#rpt-csv,#rpt-save,#rpt-saveas,#rpt-del," +
+    "[data-pkg],[data-nodelivery],[data-restore-order],[data-tracker-collapse],[data-tracker-collapse-more],[data-tsort]," +
     "[data-copy-order],[data-addcust],[data-addcol]," +
     "[data-addrow],[data-delrows],[data-archiverows],[data-delarchived],[data-archiveview],[data-orderdelrows],[data-ordercancelrows],[data-delete-doc],[data-frreset],[data-catadd],[data-catdel],[data-sortsave],[data-sortclear]," +
     "[data-addsheet],[data-sheet-addrow],[data-sheet-addcol],[data-sheet-rename]," +
     "[data-managecols],[data-colup],[data-coldown],[data-adddb]," +
     "#theme,#sync-all,#jump-btn,#today-jump,#logo-home,#add-truck,#add-driver," +
     "#add-pickdrop,#add-department,#new-order,#xfer-add,#xfer-bulk,#xfer-save-bulk,#dw-close,#group-btn,#scrim,#nav-scrim,#int-add,#int-bulk,#int-save-bulk,#push-driver-tabs," +
-    "#modal-cancel,#modal-save,#modal-save-loc,#modal-save-dept,#modal-save-truck,#modal-save-driver,#col-save,#col-delete,#condfmt-save,#field-save,#field-options-save,#db-save,#confirm-del,#confirm-archive-delete,#confirm-customer-archive,#ss-toggle,#ifr-toggle,[data-sbpin],[data-rptper]," +
+    "#modal-cancel,#modal-save,#modal-save-loc,#modal-save-dept,#modal-save-truck,#modal-save-driver,#col-save,#col-delete,#condfmt-save,#field-save,#field-options-save,#db-save,#confirm-del,#confirm-archive-delete,#confirm-customer-archive,#ss-toggle,#ifr-toggle,[data-sbpin]," +
     "#profile-btn,[data-profile],[data-setpref],[data-showsched],[data-screc],[data-screset],[data-scresetall]," +
     "[data-cw-step],[data-schedsize-step],[data-schedsize-reset],[data-accent-pick],[data-accent-save],[data-accent-forget],[data-custom-accent-toggle],[data-numbering-save]," +
     "#navtoggle,[data-navto],[data-navsec],[data-navcycle],[data-bill-done],[data-bill-dl],[data-reopen-bill]," +
@@ -797,36 +797,11 @@ document.addEventListener("click", function (e) {
     toast("Shortcuts reset to defaults"); return;
   }
   if (t.id === "sync-all") { runSyncAll(t); return; }
-  if (t.dataset.rptrefresh) { rptDataLoad(); render(); return; }
-  if (t.dataset.rpttile) { rptWinOpen(rptTiles()[+t.dataset.rpttile]); return; }
-  if (t.id === "rpt-new") { rptWinOpen(null); return; }
-  if (t.dataset.rptsort && REP.win) { var rw = REP.win, rs = +t.dataset.rptsort;
-    if (rw.sortCol === rs) rw.dir = -rw.dir; else { rw.sortCol = rs; rw.dir = rs === -1 ? 1 : -1; } rw.drill = null; rptWinUpdate(); return; }
-  if (t.dataset.rptcell && REP.win) { var pc = t.dataset.rptcell.split("|"), dd = REP.win.drill;
-    REP.win.drill = dd && dd.ri === +pc[0] && dd.ci === +pc[1] ? null : { ri: +pc[0], ci: +pc[1] }; rptWinUpdate(); return; }
-  if (t.dataset.rptopen) { closeModal(); REP.win = null; openOrder(t.dataset.rptopen); return; }
-  if (t.id === "rpt-csv" && REP.win) { rptWinCsv(); return; }
-  if (t.id === "rpt-save" && REP.win) { rptWinSave(false); return; }
-  if (t.id === "rpt-saveas" && REP.win) { rptWinSave(true); return; }
-  if (t.id === "rpt-del" && REP.win && REP.win.id) {
-    var delId = REP.win.id;
-    confirmModal("Delete this card? It comes off the Dashboard and the Scheduler bar. The orders it reads are not touched.", function () {
-      api("saved-report/delete", { id: delId }).then(function () { REP.saved = null; REP.win = null; toast("Card deleted"); render(); })
-        .catch(function (err) { toast(err.message, true); });
-    }, "Delete Card");
-    return;
-  }
-  if (t.dataset.rptper) {
-    var rv = t.dataset.rptper; REP.per = rv;
-    if (rv !== "custom") { REP.from = ""; REP.to = ""; try { localStorage.setItem("dept12RepPer", rv); } catch (x) {} }
-    render(); return;
-  }
   if (t.dataset.sbpin) {
     var pk = t.dataset.sbpin, pins = sbPins().slice(), pi = pins.indexOf(pk);
     if (pi >= 0) pins.splice(pi, 1);
     else { if (pins.length >= SB_MAX) { toast("The Scheduler bar holds " + SB_MAX + ". Unpin one first.", true); return; } pins.push(pk); }
     sbSetPins(pins);
-    [].forEach.call(document.querySelectorAll(".rpt-tog[data-sbpin]"), function (b) { var on = pins.indexOf(b.dataset.sbpin) >= 0; b.classList.toggle("on", on); b.setAttribute("aria-checked", on); });
     render();
     return;
   }
