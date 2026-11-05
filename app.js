@@ -5686,7 +5686,7 @@ function motOrdersHtml(t, d, withDay) {
   return h + "</div>";
 }
 function motCellOpen(where, t, d) { return MOT.cell === where + "|" + t + "|" + d; }
-/* --- Day By Day: every finished day in the dates, newest first, each one the whole fleet: odometer in and out, miles, time in (first on),
+/* --- Timekeeping: every finished day in the dates, newest first, each one the whole fleet: odometer in and out, miles, time in (first on),
    time out (last off), hours and orders per truck, with a Fleet line under it. Click a truck for its orders that day. --- */
 function motDayTotals(day) {
   var x = { miles: 0, hours: 0, ran: 0, first: null, last: null, ords: 0, idle: [] };
@@ -5747,12 +5747,13 @@ function motDayHtml(day) {
 function vMotive() {
   var r = motViewRange(), day = MOT.view === "day";
   motEnsure2(r);
+  // Report / Timekeeping: the shared segmented control (.rpt-seg), first on the bar
+  var seg = '<span class="rpt-seg" role="group" aria-label="Show">' + [["sum", "Report"], ["daily", "Timekeeping"]].map(function (x) {
+    return '<button type="button" class="' + (MOT.mode === x[0] ? "on" : "") + '" data-motmode="' + x[0] + '" aria-pressed="' + (MOT.mode === x[0]) + '">' + x[1] + "</button>"; }).join("") + "</span>";
   var ctx = day ? '<button class="btn sm" data-mot="back">&larr; All Dates</button>' + motTabContext() :
-    '<select class="mot-per" data-motper aria-label="Dates">' + MOT_PER.map(function (p) { return '<option value="' + p[0] + '"' + (MOT.per === p[0] ? " selected" : "") + ">" + p[1] + "</option>"; }).join("") + "</select>" +
+    seg + '<select class="mot-per" data-motper aria-label="Dates">' + MOT_PER.map(function (p) { return '<option value="' + p[0] + '"' + (MOT.per === p[0] ? " selected" : "") + ">" + p[1] + "</option>"; }).join("") + "</select>" +
     '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-motfrom class="rpt-date" data-last-iso="' + r.from + '" value="' + esc(isoToMdy(r.from)) + '">' +
-    '<span class="lbl">to</span><input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-motto class="rpt-date" data-last-iso="' + r.to + '" value="' + esc(isoToMdy(r.to)) + '">' +
-    '<span class="rpt-seg" role="group" aria-label="Show">' + [["sum", "Summary"], ["daily", "Day By Day"]].map(function (x) {
-      return '<button type="button" class="' + (MOT.mode === x[0] ? "on" : "") + '" data-motmode="' + x[0] + '" aria-pressed="' + (MOT.mode === x[0]) + '">' + x[1] + "</button>"; }).join("") + "</span>";
+    '<span class="lbl">to</span><input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-motto class="rpt-date" data-last-iso="' + r.to + '" value="' + esc(isoToMdy(r.to)) + '">';
   var h = toolbarHtml("Motive", {
     className: "orders-toolbar rpt-toolbar mot-toolbar", context: ctx,
     secondary: '<button class="btn sm" data-mot="all" title="Every truck-day saved from Motive, all the data, as one CSV">Download All Motive</button>',
