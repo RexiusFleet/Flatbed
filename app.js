@@ -5731,7 +5731,7 @@ function vMotive() {
   var r = motViewRange(), day = MOT.view === "day";
   motEnsure2(r);
   // Report / Timekeeping: the shared segmented control (.rpt-seg), first on the bar
-  var seg = '<span class="rpt-seg" role="group" aria-label="Show">' + [["sum", "Report"], ["daily", "Timekeeping"]].map(function (x) {
+  var seg = '<span class="rpt-seg" role="group" aria-label="Show">' + [["sum", "Summary"], ["daily", "Timekeeping"]].map(function (x) {
     return '<button type="button" class="' + (MOT.mode === x[0] ? "on" : "") + '" data-motmode="' + x[0] + '" aria-pressed="' + (MOT.mode === x[0]) + '">' + x[1] + "</button>"; }).join("") + "</span>";
   var ctx = day ? '<button class="btn sm" data-mot="back">&larr; All Dates</button>' + motTabContext() :
     seg + '<select class="mot-per" data-motper aria-label="Dates">' + MOT_PER.map(function (p) { return '<option value="' + p[0] + '"' + (MOT.per === p[0] ? " selected" : "") + ">" + p[1] + "</option>"; }).join("") + "</select>" +
@@ -5898,14 +5898,151 @@ function vReports() {
   // the same bar as Orders and Current Week (compact buttons, one primary on the right), then the cards scroll below it
   var h = toolbarHtml("Reports", {
     className: "orders-toolbar rpt-toolbar", context: "",
-    secondary: '<button class="btn sm" data-rptrefresh="1">Refresh Data</button><button class="btn sm" data-report="dump">Export Everything</button>' +
-      (rptTiles().length ? '<button class="btn sm' + (REP.edit ? " active" : "") + '" data-rdact="layout" aria-pressed="' + !!REP.edit + '">' + (REP.edit ? "Done Editing" : "Edit Layout") + "</button>" : ""),
-    primary: '<button class="btn pri sm" id="rpt-new">+ Add Card</button>'
+    secondary: '<button class="btn sm" data-rptrefresh="1">Refresh Data</button>',
+    primary: '<button class="btn pri sm" data-report="dump">Export Everything</button>'
   });
   h += '<div class="grid-wrap rpt-page">' + rptPeriodStrip();
   if (REP.noSql) h += '<div class="note-bar">Saved reports are not set up in the database yet, so nothing can be saved yet. Run the saved reports SQL first.</div>';
-  return h + rptDashHtml() + "</div>";
+  return h + rdxHtml() + "</div>";
 }
+/* ── Reports dashboard: fixed cards, Internal on the left and External on the right (2026-11-05) ─────────────
+   Totals across the top (orders delivered, ELD miles, RPM), then two columns. Drag a card onto another card in the same group to move it;
+   the order is saved in the saved row "__dashboard2" ({ tot: [ids], int: [ids], ext: [ids] }). Miles: the ELD's total for the fleet; internal
+   miles are the miles on bag and internal freight orders (a bag order with none typed uses its customer's standard miles); external miles are the
+   rest of the ELD's miles (deadhead included). Each RPM is that side's revenue over its miles. */
+var RDX = { eldKey: "", eldLoading: false, drag: null };
+var RDX_CARDS = {
+  tot: [["orders", "Total Orders Delivered"], ["miles", "Total Miles"], ["rpm", "Total RPM"]],
+  int: [["int_rpm", "Internal RPM"], ["bag_n", "Bag Orders By Customer"], ["bag_mi", "Mileage By Bag Customer"]],
+  ext: [["ext_rpm", "External RPM"], ["ext_rev", "External Revenue"], ["ext_n", "Orders By Customer"]]
+};
+function rdxOrderRow() { return (REP.saved || []).filter(function (r) { return r.name === "__dashboard2"; })[0] || null; }
+function rdxOrder(g) {
+  var row = rdxOrderRow(), saved = row && row.config && Array.isArray(row.config[g]) ? row.config[g] : [], ids = RDX_CARDS[g].map(function (c) { return c[0]; });
+  return saved.filter(function (id) { return ids.indexOf(id) >= 0; }).concat(ids.filter(function (id) { return saved.indexOf(id) < 0; }));
+}
+var RDX_SAVE = Promise.resolve();
+function rdxOrderSave(g, order) {
+  var row = rdxOrderRow(), cfg = {};
+  Object.keys(RDX_CARDS).forEach(function (k) { cfg[k] = k === g ? order : rdxOrder(k); });
+  if (row) row.config = cfg; else REP.saved = (REP.saved || []).concat([{ id: null, name: "__dashboard2", config: cfg }]);
+  RDX_SAVE = RDX_SAVE.then(function () {
+    var r = rdxOrderRow(), body = { name: "__dashboard2", config: r.config };
+    if (r.id) body.id = r.id;
+    return api("saved-report", body).then(function (res) { var rr = rdxOrderRow(); if (rr && res && res.id) rr.id = res.id; });
+  }).catch(function (err) { toast("The card order didn't save: " + err.message, true); });
+}
+function rdxPrev(r) {
+  var a = new Date(r.from + "T12:00:00"), b = new Date(r.to + "T12:00:00"), n = Math.round((b - a) / 864e5) + 1;
+  var e = new Date(a); e.setDate(e.getDate() - 1); var s = new Date(e); s.setDate(s.getDate() - n + 1);
+  return { from: rptIso(s), to: rptIso(e) };
+}
+// The ELD days for this period and the one before it (read from the saved days; nothing is pulled from the ELD here).
+function rdxEld(r, p) {
+  var key = p.from + "|" + r.to;
+  if (RDX.eldKey === key || RDX.eldLoading) return;
+  RDX.eldLoading = true;
+  motLoad(p.from, r.to).then(function () {}, function () {}).then(function () { RDX.eldKey = key; RDX.eldLoading = false; if (SEC === "reports") render(); });
+}
+function rdxFigure(r) {
+  var o = { n: 0, nInt: 0, nExt: 0, intMi: 0, intRev: 0, extRev: 0, bagN: {}, bagMi: {}, extN: {}, eld: 0 };
+  (REP.data || []).forEach(function (x) {
+    var d = String(x.delivery_date || "").slice(0, 10); if (!d || d < r.from || d > r.to) return;
+    o.n++;
+    if (x.order_type === "External") { o.nExt++; o.extRev += x.revenue || 0; o.extN[x.party] = (o.extN[x.party] || 0) + 1; return; }
+    var mi = rptNum(x.miles); if (mi == null && x.order_type === "Bag Order") mi = rptNum(x.customer_standard_miles);
+    o.nInt++; o.intMi += mi || 0; o.intRev += x.revenue || 0;
+    if (x.order_type === "Bag Order") { var c = x.customer || "(no customer)"; o.bagN[c] = (o.bagN[c] || 0) + 1; o.bagMi[c] = (o.bagMi[c] || 0) + (mi || 0); }
+  });
+  Object.keys(MOT.rows).forEach(function (k) { var d = k.split("|")[1]; if (d >= r.from && d <= r.to) o.eld += motNum(MOT.rows[k].miles) || 0; });
+  o.extMi = Math.max(0, o.eld - o.intMi);
+  o.rpm = o.eld ? (o.intRev + o.extRev) / o.eld : null;
+  o.intRpm = o.intMi ? o.intRev / o.intMi : null;
+  o.extRpm = o.extMi ? o.extRev / o.extMi : null;
+  return o;
+}
+function rdxNum(n, d) { return n == null || !isFinite(n) ? "—" : n.toLocaleString(undefined, { minimumFractionDigits: d || 0, maximumFractionDigits: d || 0 }); }
+function rdxMoney(n, d) { return n == null || !isFinite(n) ? "—" : (n < 0 ? "-$" : "$") + rdxNum(Math.abs(n), d); }
+function rdxCmp(cur, old, days) {
+  if (cur == null || old == null || !old) return "";
+  var p = Math.round((cur - old) / Math.abs(old) * 100);
+  return '<span class="rc-cmp ' + (p === 0 ? "flat" : p > 0 ? "up" : "down") + '"><b>' + (p === 0 ? "= no change" : (p > 0 ? "&#9650; " : "&#9660; ") + Math.abs(p) + "%") + "</b> vs the " + days + " days before</span>";
+}
+// A ranked list: the name and its count (or miles), most first.
+function rdxList(map, unit) {
+  var list = Object.keys(map).map(function (k) { return [k, map[k]]; }).sort(function (a, b) { return b[1] - a[1] || a[0].localeCompare(b[0]); }), top = list.slice(0, 12);
+  if (!top.length) return '<div class="rdx-sub">None in these dates</div>';
+  return '<div class="rdx-list">' + top.map(function (x) {
+    return '<span class="rdx-nm" title="' + esc(x[0]) + '">' + esc(x[0]) + '</span><span class="rdx-v">' + rdxNum(x[1]) + (unit || "") + "</span>";
+  }).join("") + "</div>" + (list.length > top.length ? '<div class="rdx-sub">' + (list.length - top.length) + " more</div>" : "");
+}
+function rdxCardHtml(g, id, o, b, days) {
+  var title = RDX_CARDS[g].filter(function (c) { return c[0] === id; })[0][1], body;
+  var big = function (v, sub) { return '<div class="rdx-big">' + v + '</div><div class="rdx-sub">' + (sub || "&nbsp;") + "</div>"; };
+  if (id === "orders") body = big(rdxNum(o.n), rdxCmp(o.n, b.n, days));
+  else if (id === "miles") body = big(rdxNum(o.eld), rdxCmp(o.eld, b.eld, days));
+  else if (id === "rpm") body = big(rdxMoney(o.rpm, 2), rdxCmp(o.rpm, b.rpm, days));
+  else if (id === "int_rpm") body = big(rdxMoney(o.intRpm, 2), rdxNum(o.nInt) + " orders · " + rdxNum(o.intMi) + " mi · " + rdxMoney(o.intRev));
+  else if (id === "ext_rpm") body = big(rdxMoney(o.extRpm, 2), rdxNum(o.nExt) + " orders · " + rdxNum(o.extMi) + " mi");
+  else if (id === "ext_rev") body = big(rdxMoney(o.extRev), rdxCmp(o.extRev, b.extRev, days));
+  else if (id === "bag_n") body = rdxList(o.bagN, "");
+  else if (id === "ext_n") body = rdxList(o.extN, "");
+  else body = rdxList(o.bagMi, " mi");
+  return '<section class="rdx-card' + (/_n$|_mi$/.test(id) ? " list" : "") + '" data-rdx="' + g + "|" + id + '"><h3>' + esc(title) + "</h3>" + body + "</section>";
+}
+function rdxGroupHtml(g, o, b, days) {
+  return '<div class="rdx-g rdx-g-' + g + '" data-rdxg="' + g + '">' + rdxOrder(g).map(function (id) { return rdxCardHtml(g, id, o, b, days); }).join("") + "</div>";
+}
+function rdxHtml() {
+  if (REP.err) return '<div class="note-bar">' + esc(REP.err) + "</div>";
+  if (!REP.data) return '<div class="empty">Reading the report data…</div>';
+  var r = rptDashRange(), p = rdxPrev(r), days = Math.round((new Date(r.to + "T12:00:00") - new Date(r.from + "T12:00:00")) / 864e5) + 1;
+  rdxEld(r, p);
+  var o = rdxFigure(r), b = rdxFigure(p);
+  return '<div class="rdx">' + rdxGroupHtml("tot", o, b, days) +
+    '<div class="rdx-cols"><div class="rdx-col"><div class="rdx-colh int">Internal</div>' + rdxGroupHtml("int", o, b, days) + "</div>" +
+    '<div class="rdx-col"><div class="rdx-colh ext">External</div>' + rdxGroupHtml("ext", o, b, days) + "</div></div></div>";
+}
+// Drag a card onto another card in the same group: it takes that card's place. Pointer events, so a mouse, a pen and a finger all work
+// (a finger has to hold still for a moment first, so a swipe still scrolls the page).
+function rdxClearOver() { [].forEach.call(document.querySelectorAll(".rdx-card.over"), function (x) { x.classList.remove("over"); }); }
+function rdxOverCard(x, y) {
+  var el = document.elementFromPoint(x, y), c = el && el.closest && el.closest(".rdx-card");
+  return c && RDX.drag && c.dataset.rdx.split("|")[0] === RDX.drag.g && c.dataset.rdx.split("|")[1] !== RDX.drag.id ? c : null;
+}
+function rdxDragStart() {
+  var d = RDX.drag; d.on = true; d.el.classList.add("dragging"); document.body.classList.add("rdx-dragging");
+}
+function rdxDragEnd(drop) {
+  var d = RDX.drag; if (!d) return;
+  clearTimeout(d.hold); RDX.drag = null;
+  document.body.classList.remove("rdx-dragging"); if (d.el) d.el.classList.remove("dragging");
+  var over = document.querySelector(".rdx-card.over"); rdxClearOver();
+  if (!drop || !d.on || !over) return;
+  var target = over.dataset.rdx.split("|")[1], cur = rdxOrder(d.g), from = cur.indexOf(d.id), to = cur.indexOf(target);
+  var order = cur.filter(function (id) { return id !== d.id; });
+  order.splice(order.indexOf(target) + (from < to ? 1 : 0), 0, d.id);
+  rdxOrderSave(d.g, order); render();
+}
+document.addEventListener("pointerdown", function (e) {
+  var c = e.button === 0 && e.target.closest && e.target.closest(".rdx-card"); if (!c) return;
+  var p = c.dataset.rdx.split("|");
+  RDX.drag = { g: p[0], id: p[1], el: c, x: e.clientX, y: e.clientY, on: false, touch: e.pointerType !== "mouse", hold: null };
+  if (RDX.drag.touch) RDX.drag.hold = setTimeout(function () { if (RDX.drag && !RDX.drag.on) rdxDragStart(); }, 350);
+});
+document.addEventListener("pointermove", function (e) {
+  var d = RDX.drag; if (!d) return;
+  var far = Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 6;
+  if (!d.on) { if (!far) return; if (d.touch) { rdxDragEnd(false); return; } rdxDragStart(); }
+  e.preventDefault();
+  var c = rdxOverCard(e.clientX, e.clientY);
+  if (!c) rdxClearOver(); else if (!c.classList.contains("over")) { rdxClearOver(); c.classList.add("over"); }
+});
+document.addEventListener("pointerup", function () { if (RDX.drag) rdxDragEnd(true); });
+document.addEventListener("pointercancel", function () { if (RDX.drag) rdxDragEnd(false); });
+// once a finger drag has started, the page must not scroll under it
+document.addEventListener("touchmove", function (e) { if (RDX.drag && RDX.drag.on) e.preventDefault(); }, { passive: false });
+document.addEventListener("keydown", function (e) { if (e.key === "Escape" && RDX.drag) rdxDragEnd(false); }, true);
 /* ── Billing → Internal Transfers ─────────────────────────────────────────
    Every delivered bag and internal freight order carries a dollar amount (miles × the Internal Rate). Roughly once a week
    (sometimes mid-week) all departments are transferred together. This tab lists what is due since the last transfer, by
