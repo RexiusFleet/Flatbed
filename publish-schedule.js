@@ -217,12 +217,24 @@ function buildPayload(dates, data) {
     outside
   };
 }
+/* Before anything is published, every color must be a real hex color and every link a plain https:// address. The driver and
+   bag plant pages put these into style="" and href="" attributes, so a bad value saved anywhere (a note's fill, a department
+   color, a location's map link) is dropped here instead of reaching every iPad. */
+const HEX = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+function cleanPayload(v, key) {
+  if (Array.isArray(v)) return v.map((x) => cleanPayload(x, key));
+  if (v && typeof v === "object") { const out = {}; Object.keys(v).forEach((k) => { out[k] = cleanPayload(v[k], k); }); return out; }
+  if (typeof v !== "string" || !key) return v;
+  if (/(^|_)(color|fill|edge|tint)$/i.test(key)) return HEX.test(v) ? v : null;
+  if (/(^|_)(map|url|href|link)s?$/i.test(key) || /_map_url$|^map_/i.test(key)) return v === "" || /^https:\/\/[^\s"'<>]+$/i.test(v) ? v : "";
+  return v;
+}
 async function push(d, rpc) {
   var start = d.start_date || null;
   if (start !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(start))) throw new Error("start_date must be YYYY-MM-DD");
   var dates = await rpc("driver_week_dates", { p_start: start, p_count: parseInt(d.days == null ? 3 : d.days, 10) || 3 });
   var data = await rpc("driver_week_data", { p_from: dates[0], p_to: dates[dates.length - 1] });
-  return buildPayload(dates, data);
+  return cleanPayload(buildPayload(dates, data));
 }
 
 window.Dept12BuildSchedule = push;

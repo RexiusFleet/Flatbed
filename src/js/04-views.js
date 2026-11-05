@@ -5,10 +5,10 @@
 // The column header takes the driver's color (a tint with a thick line along the bottom), see .has-dc in app.css.
 // A saved driver color can carry see-through (8 digit hex); the header line and tint use the solid color.
 function dcSolid(c) { c = String(c || ""); return /^#[0-9a-f]{8}$/i.test(c) ? c.slice(0, 7) : c; }
-function dcClass(t) { return t.driver_color ? " has-dc" : ""; }
-function dcStyle(t) { return t.driver_color ? "--dc:" + esc(dcSolid(t.driver_color)) + ";" : ""; }
+function dcClass(t) { return isHex(t.driver_color) ? " has-dc" : ""; }
+function dcStyle(t) { return isHex(t.driver_color) ? "--dc:" + dcSolid(t.driver_color) + ";" : ""; }
 function truckColHeader(t) {
-  var dc = t.driver_color ? ' style="--dc:' + esc(t.driver_color) + '"' : "";
+  var dc = isHex(t.driver_color) ? ' style="--dc:' + t.driver_color + '"' : "";
   return '<span class="drv"' + dc + '>' + esc(dFirst(t.driver_name) || "— unassigned —") + "</span>" +
     '<span class="trk">' + esc(t.number) + " " + esc(t.eq || "") + "</span>";
 }
@@ -107,19 +107,19 @@ function cellInner(key) {
   if (v.oid) { var o = order(v.oid); if (o) return chipHtml(o, true, 'data-from="' + key + '"', v.cat, v.fmt, pushColorFor(o, v), !!v.pushedAt); }
   var fill = effFill(v), fm = v.fmt || {};
   var st = "";
-  if (fm.text && fm.text.charAt(0) === "#") st += "color:" + fm.text + ";";
+  if (isHex(fm.text)) st += "color:" + fm.text + ";";
   else if (fill) st += "color:" + textOn(fill) + ";";
   if (fm.bold) st += "font-weight:800;";
   if (fm.italic) st += "font-style:italic;";
   if (fm.size) { var _fs = parseInt(fm.size, 10); if (_fs > 0) st += "font-size:" + _fs + "px;"; }
-  if (fm.font) st += "font-family:" + fm.font + ";";
+  if (cssFont(fm.font)) st += "font-family:" + cssFont(fm.font) + ";";
   return '<div class="txt"' + (st ? ' style="' + st + '"' : "") + ">" + esc(v.text || "") + "</div>";
 }
 /* Effective fill for a non-chip cell: manual fmt.fill wins over the category/
    conditional color (D67). */
 function effFill(v) {
   var f = (v && v.fmt && v.fmt.fill) || (v && v.cat) || "";
-  return (f && f.charAt && f.charAt(0) === "#") ? f : "";
+  return isHex(f) ? f : "";
 }
 /* Per-side cell borders (D73; style+width D79) — real CSS borders on the inner
    `.cell` (box-sizing:border-box, fills the td) so they never shift the grid and
@@ -128,11 +128,11 @@ function effFill(v) {
    fmt.border = { t,b,l,r : "#hex", s: style, w: px }, any subset of sides. */
 function cellBorderCss(cv) {
   var b = cv && cv.fmt && cv.fmt.border; if (!b) return "";
-  var st = b.s || "solid", w = (b.w || 1) + "px ", out = "";
-  if (b.t) out += "border-top:" + w + st + " " + b.t + ";";
-  if (b.b) out += "border-bottom:" + w + st + " " + b.b + ";";
-  if (b.l) out += "border-left:" + w + st + " " + b.l + ";";
-  if (b.r) out += "border-right:" + w + st + " " + b.r + ";";
+  var st = cssBorderStyle(b.s), w = Math.min(8, Math.max(1, parseInt(b.w, 10) || 1)) + "px ", out = "";
+  if (isHex(b.t)) out += "border-top:" + w + st + " " + b.t + ";";
+  if (isHex(b.b)) out += "border-bottom:" + w + st + " " + b.b + ";";
+  if (isHex(b.l)) out += "border-left:" + w + st + " " + b.l + ";";
+  if (isHex(b.r)) out += "border-right:" + w + st + " " + b.r + ";";
   return out;
 }
 /* One scheduler/Current-Week cell — used by the initial build AND Current Week so
@@ -640,10 +640,13 @@ function schedStatsHtml() {
 function schedStatsPaint() {
   var el = document.getElementById("sched-stats"); if (!el) return;
   rptSavedLoad();
-  if (!REP.data && !REP.loading && !REP.err) rptDataLoad();
-  else if (REP.stale && !REP.loading) rptDataLoad();
-  var year = SCHED_STAT.day.slice(0, 4);
-  if (SCHED_STAT.motYear !== year) { SCHED_STAT.motYear = year; motLoad(year + "-01-01", year + "-12-31").then(schedStatsPaint, function () {}); }
+  // the report rows (and the year's ELD days) are only needed when something is pinned here: nothing pinned, nothing to fetch
+  if (REP.saved && sbPins().filter(sbLabel).length) {
+    if (!REP.data && !REP.loading && !REP.err) rptDataLoad();
+    else if (REP.stale && !REP.loading) rptDataLoad();
+    var year = SCHED_STAT.day.slice(0, 4);
+    if (SCHED_STAT.motYear !== year) { SCHED_STAT.motYear = year; motLoad(year + "-01-01", year + "-12-31").then(schedStatsPaint, function () {}); }
+  }
   el.innerHTML = schedStatsHtml();
 }
 var schedStatRaf = 0;
@@ -778,7 +781,7 @@ function dvChip(o, v, truck, day) {
     // the Pickup and Drop (when either is set) print the same way as on an external load
     var pd = o.pickup_location_id || o.delivery_location_id ? "\n\n<b>PICK:</b> " + esc(dvPlace(locById(o.pickup_location_id))) + "\n\n<b>DROP:</b> " + esc(dvPlace(locById(o.delivery_location_id))) : "";
     return { html: esc([o.notes, o.driver_note].filter(Boolean).join("\n") || "(no load info)") + pd,
-             color: dept && dept.color && dept.color.charAt(0) === "#" ? dept.color : null };
+             color: dept && isHex(dept.color) ? dept.color : null };
   }
   if (isExt(o)) {
     var tag = function (t) { return t ? ' <span class="appt">APPT ' + esc(t) + "</span>" : ""; };
@@ -828,7 +831,8 @@ function dvScanStatusHtml(oid) {
 /* Maps: the picture saved on a location (Map / Store Map in the Database). A bag order shows its store's;
    internal freight shows its Pickup's and Drop's. Same buttons and full-screen viewer a driver gets.
    Picture links only; a button shows only when its location has one. */
-function dvMapImg(u) { return /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(u || "") ? u : ""; }
+// a map is an https:// address of a picture; anything else (a javascript: link, a page) is not shown
+function dvMapImg(u) { u = String(u || ""); return /^https:\/\/[^\s"'<>]+$/i.test(u) && /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(u) ? u : ""; }
 function dvMaps(o) {
   if (!o) return [];
   if (o.is_transfer) return [["pick", "Pickup Map", o.pickup_location_id], ["drop", "Drop Map", o.delivery_location_id]].map(function (m) {
@@ -871,7 +875,7 @@ function dvSlotCellsHtml(key) {
   var v = CELLS[key], o = v && v.oid ? order(v.oid) : null, truck = truckById(key.split("|")[0]);
   var ch = dvChip(o, v, truck, key.split("|")[1]);
   var chipBody = ch.html ? '<div class="load-txt' + (ch.color ? "" : " unfilled") + '"' +
-    (ch.color ? ' style="background:' + esc(ch.color) + ";color:" + textOn(ch.color) + '"' : "") + ">" + ch.html +
+    (isHex(ch.color) ? ' style="background:' + ch.color + ";color:" + textOn(ch.color) + '"' : "") + ">" + ch.html +
     (o && o.is_transfer && dvMaps(o).length ? '<div class="chip-scan">' + dvStoreMapBtn(o) + "</div>" : "") +
     (o && !o.is_transfer ? '<div class="chip-scan">' + dvStoreMapBtn(o) + '<button class="btn sm dv-dead" tabindex="-1" title="Drivers use this on their own page">Scan POD / BOL</button>' +
       dvScanStatusHtml(o.id) + "</div>" : "") + "</div>" : "";
@@ -1768,7 +1772,7 @@ function designationRuleColor(categoryId) {
   var field = fieldBySlugKey("bagger", "category_id");
   var color = field ? condFmtColor(field, cat.name) : null;
   if (!color) color = CATCOLOR[categoryId]; // defensive during an unmigrated bootstrap
-  return color && String(color).charAt(0) === "#" ? color : "";
+  return isHex(color) ? color : "";
 }
 /* Employee numbers (drivers.employee_no). Not part of the normal bootstrap: read on demand through api_driver_employee_nos and
    kept in EMP.by {driver_id: number}. EMP.ok is false when that SQL has not been run yet (the column then says so). */
@@ -1912,7 +1916,7 @@ function fieldCell(f, ctx) {
     if (f.storage === "column:drivers.color") {
       var t3 = ctx.trucks.obj;
       if (!t3.driver_id) return '<td><div class="cell" style="color:var(--ink-3)">—</div></td>';
-      var col = (t3.driver_color && String(t3.driver_color).charAt(0) === "#") ? t3.driver_color : "#888888";
+      var col = (isHex(t3.driver_color)) ? t3.driver_color : "#888888";
       // A color chip that opens the toolbar's Sheets-style picker (D85), like the
       // internal designation cells — not a raw <input type=color>.
       return '<td><div class="cell" style="padding:0"><button class="colorchip" data-colorchip="' + t3.driver_id +
@@ -1926,7 +1930,7 @@ function fieldCell(f, ctx) {
     var gslot = gparts ? ctx[gparts[0]] : null;
     if (!gslot) return '<td><div class="cell" style="color:var(--ink-3)">—</div></td>';
     var gval = gslot.obj[gparts[1]];
-    var gcol = (gval && String(gval).charAt(0) === "#") ? gval : "#888888";
+    var gcol = (isHex(gval)) ? gval : "#888888";
     return '<td><div class="cell" style="padding:0"><button class="colorchip" data-colorchip-generic="' +
       gparts[0] + "|" + gslot.id + "|" + gparts[1] + '" style="background:' + gcol + ';color:' + textOn(gcol) +
       '">' + esc(gcol) + "</button></div></td>";
@@ -2163,14 +2167,14 @@ function vDatabase(which) {
 function fmtStyles(fmt, bold) {
   fmt = fmt || {};
   var td = "", cell = "";
-  if (fmt.fill && fmt.fill.charAt(0) === "#") td += "background-color:" + fmt.fill + ";";
+  if (isHex(fmt.fill)) td += "background-color:" + fmt.fill + ";";
   cell += cellBorderCss({ fmt: fmt });
-  if (fmt.text && fmt.text.charAt(0) === "#") cell += "color:" + fmt.text + ";";
-  else if (fmt.fill && fmt.fill.charAt(0) === "#") cell += "color:" + textOn(fmt.fill) + ";";
+  if (isHex(fmt.text)) cell += "color:" + fmt.text + ";";
+  else if (isHex(fmt.fill)) cell += "color:" + textOn(fmt.fill) + ";";
   if (fmt.bold || bold) cell += "font-weight:" + (fmt.bold ? "700" : "600") + ";";
   if (fmt.italic) cell += "font-style:italic;";
   if (fmt.size) { var _fs = parseInt(fmt.size, 10); if (_fs > 0) cell += "font-size:" + _fs + "px;"; }
-  if (fmt.font) cell += "font-family:" + fmt.font + ";";
+  if (cssFont(fmt.font)) cell += "font-family:" + cssFont(fmt.font) + ";";
   return { td: td, cell: cell };
 }
 function dcell(table, id, field, val, bold, condColor) {
@@ -2230,14 +2234,14 @@ function designationSelect(l, gridMode) {
 function sheetCellStyles(fmt) {
   fmt = fmt || {};
   var td = "", cell = "";
-  if (fmt.fill && fmt.fill.charAt(0) === "#") td += "background-color:" + fmt.fill + ";";
+  if (isHex(fmt.fill)) td += "background-color:" + fmt.fill + ";";
   cell += cellBorderCss({ fmt: fmt });
-  if (fmt.text && fmt.text.charAt(0) === "#") cell += "color:" + fmt.text + ";";
-  else if (fmt.fill && fmt.fill.charAt(0) === "#") cell += "color:" + textOn(fmt.fill) + ";";
+  if (isHex(fmt.text)) cell += "color:" + fmt.text + ";";
+  else if (isHex(fmt.fill)) cell += "color:" + textOn(fmt.fill) + ";";
   if (fmt.bold) cell += "font-weight:700;";
   if (fmt.italic) cell += "font-style:italic;";
   if (fmt.size) { var _fs = parseInt(fmt.size, 10); if (_fs > 0) cell += "font-size:" + _fs + "px;"; }
-  if (fmt.font) cell += "font-family:" + fmt.font + ";";
+  if (cssFont(fmt.font)) cell += "font-family:" + cssFont(fmt.font) + ";";
   return { td: td, cell: cell };
 }
 function sheetCellHtml(sid, r, c, cell) {
@@ -2300,8 +2304,9 @@ function rptRange(per, from, to) {
   if (per === "all") return { from: "0000-01-01", to: "9999-12-31" };
   if (per === "month") s = new Date(t.getFullYear(), t.getMonth(), 1);
   else if (per === "ytd") s = new Date(t.getFullYear(), 0, 1);
-  else if (per === "custom" && from && to) return { from: from, to: to };
-  else s = new Date(t.getFullYear(), t.getMonth() - 3, t.getDate() + 1);
+  else if (per === "custom" && from && to) return from <= to ? { from: from, to: to } : { from: to, to: from };
+  // the day after the same date three months back; on a month end that date is clamped to the shorter month (May 31 -> from Mar 1)
+  else s = new Date(t.getFullYear(), t.getMonth() - 3, Math.min(t.getDate(), new Date(t.getFullYear(), t.getMonth() - 2, 0).getDate()) + 1);
   return { from: rptIso(s), to: TODAY };
 }
 function rptDashRange() { return rptRange(REP.per, REP.from, REP.to); }
@@ -2551,13 +2556,13 @@ function motDownloadAll() {
   motLoad("2000-01-01", "2100-12-31").then(function () {
     var keys = Object.keys(MOT.rows).sort(function (a, b) { var x = a.split("|"), y = b.split("|"); return x[1] < y[1] ? -1 : x[1] > y[1] ? 1 : x[0].localeCompare(y[0]); });
     var when = function (iso) { if (!iso) return ""; var d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString("en-US", { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }); };
-    var out = [["Date", "Truck", "Drivers", "Start odometer", "End odometer", "Miles", "First on", "Last off", "Hours", "Bag order miles", "Internal freight miles", "External miles", "Typed miles over ELD total", "Saved from ELD at"]];
+    var out = [["Date", "Truck", "Drivers", "Start odometer", "End odometer", "Miles", "First on", "Last off", "Hours", "Bag order miles", "Internal freight miles", "External miles", "Order miles over ELD total", "Saved from ELD at"]];
     keys.forEach(function (k) {
       var r = MOT.rows[k], b = motBuckets(r.truck_number, String(r.day).slice(0, 10));
       out.push([String(r.day).slice(0, 10), r.truck_number, r.drivers || motTruckDriver(r.truck_number), r.start_odo, r.end_odo, r.miles, when(r.first_on), when(r.last_off), r.hours,
         Math.round(b.bag * 10) / 10, Math.round(b.intf * 10) / 10, b.ext == null ? "" : Math.round(b.ext * 10) / 10, b.over ? Math.round(b.over * 10) / 10 : "", when(r.pulled_at)]);
     });
-    var csv = out.map(function (row) { return row.map(function (c) { c = c == null ? "" : String(c); return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(","); }).join("\n") + "\n";
+    var csv = out.map(function (row) { return row.map(csvCell).join(","); }).join("\n") + "\n";
     saveBlob("eld-all-days-" + TODAY + ".csv", new TextEncoder().encode(csv), "text/csv");
     busyEnd(); toast("Downloaded " + keys.length + " truck-days from " + (keys.length ? String(MOT.rows[keys[0]].day).slice(0, 10) : "—") + " to " + (keys.length ? String(MOT.rows[keys[keys.length - 1]].day).slice(0, 10) : "—"));
   }).catch(function (e) { busyEnd(); toast("Couldn't read the saved days: " + e.message, true); });
@@ -2772,6 +2777,9 @@ function rdxFigure(r) {
   var tr = {};
   Object.keys(MOT.rows).forEach(function (k) { var p = k.split("|"); if (p[1] >= r.from && p[1] <= r.to) { o.eld += motNum(MOT.rows[k].miles) || 0; tr[p[0]] = 1; } });
   o.trucks = Object.keys(tr).length;
+  // finished days in the period whose ELD miles aren't saved yet: miles (and so RPM) are short until they are pulled
+  var last = motYesterday(), endE = r.to < last ? r.to : last;
+  o.unpulled = r.from > endE ? 0 : motDaysBetween(r.from, endE).filter(function (d) { return !MOT.pulled[d]; }).length;
   o.extMi = Math.max(0, o.eld - o.intMi);
   o.rpm = o.eld ? (o.intRev + o.extRev) / o.eld : null;
   o.intRpm = o.intMi ? o.intRev / o.intMi : null;
@@ -2818,9 +2826,15 @@ function rdxList(map, unit) {
     return '<span class="rdx-nm" title="' + esc(x[0]) + '">' + esc(x[0]) + '</span><span class="rdx-v">' + (unit === "$" ? rdxMoney(x[1]) : rdxNum(x[1]) + unit) + "</span>";
   }).join("") + "</div>" + (list.length > top.length ? '<div class="rdx-sub">' + (list.length - top.length) + " more</div>" : "");
 }
+// cards whose numbers use the ELD's miles
+var RDX_ELD = { miles: 1, rpm: 1, trucks: 1, ext_rpm: 1, ext_miles: 1 };
 function rdxCardHtml(g, id, o, b, days) {
   var c = rdxCard(id), body;
-  if (c.kind === "num") { var v = rdxValue(id, o); body = '<div class="rdx-big">' + v[0] + '</div><div class="rdx-sub">' + (v[2] != null ? v[2] : rdxCmp(v[1], rdxValue(id, b)[1], days) || "&nbsp;") + "</div>"; }
+  if (c.kind === "num") {
+    var v = rdxValue(id, o), sub = v[2] != null ? v[2] : rdxCmp(v[1], rdxValue(id, b)[1], days);
+    if (RDX_ELD[id] && o.unpulled) sub = '<span class="rdx-warn">' + o.unpulled + " day" + (o.unpulled === 1 ? "" : "s") + " not pulled from the ELD</span>";
+    body = '<div class="rdx-big">' + v[0] + '</div><div class="rdx-sub">' + (sub || "&nbsp;") + "</div>";
+  }
   else { var m = rdxListMap(id, o); body = rdxList(m[0], m[1]); }
   return '<section class="rdx-card' + (c.kind === "list" ? " list" : "") + '" data-rdx="' + g + "|" + id + '"><div class="rdx-hd"><h3>' + esc(c.title) + '</h3><span class="rdx-acts">' +
     (c.kind === "num" ? sbPinBtn("d:" + id) : "") + '<button type="button" class="rdx-x" data-rdxdel="' + id + '" title="Remove from the dashboard" aria-label="Remove ' + esc(c.title) + '">&times;</button></span></div>' + body + "</section>";
@@ -2946,7 +2960,9 @@ function trfYears() {
 function trfDue() {
   var thru = TRF.through || motYesterday(), last = TRF.batches[0], lastThru = last ? String(last.through_date).slice(0, 10) : "", yr = trfYear();
   var out = { lines: [], missing: [], late: [], changes: [], adjust: [], depts: {}, total: 0, miles: 0, from: "" };
-  var inRange = function (d) { return !!d && d.slice(0, 4) === yr && d <= thru && !(TRF.from && d < TRF.from); };
+  // the year shown, plus (no From date) last year's deliveries made after the last transfer, so late-December loads still come due in January
+  var carry = function (d) { return !TRF.from && lastThru && d > lastThru && d.slice(0, 4) === String(+yr - 1); };
+  var inRange = function (d) { return !!d && (d.slice(0, 4) === yr || carry(d)) && d <= thru && !(TRF.from && d < TRF.from); };
   var bump = function (dep, trk, amt, mi, adj) {
     var D = out.depts[dep] = out.depts[dep] || { orders: 0, adj: 0, miles: 0, amount: 0, trucks: {} };
     D.miles += mi; D.amount += amt; if (adj) D.adj++; else D.orders++;
@@ -3185,7 +3201,7 @@ function trfMarkModal() {
   if (inp) inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
 }
 function trfCsv() {
-  var due = trfDue(), q = function (v) { v = String(v == null ? "" : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  var due = trfDue(), q = csvCell;
   var rows = due.lines.map(function (l) { return { department: l.department, truck: l.truck_number, no: l.no, date: l.delivery_date, miles: l.miles, amount: l.amount, kind: "Order" }; })
     .concat(due.adjust.map(function (a) { return { department: a.department, truck: a.truck_number, no: a.no, date: a.delivery_date, miles: 0, amount: a.diff, kind: "Adjustment: was " + a.from_amount.toFixed(2) + ", now " + a.to_amount.toFixed(2) }; }));
   var lines = ["Department,Truck,Order # / IF #,Delivery date,Miles,Amount,Kind"].concat(rows.sort(function (a, b) { return (a.department + a.truck + a.date).localeCompare(b.department + b.truck + b.date, undefined, { numeric: true }); })
@@ -3217,7 +3233,11 @@ document.addEventListener("change", function (e) {
   if (el.id === "rpt-per") { REP.per = el.value; if (el.value !== "custom") { REP.from = ""; REP.to = ""; try { localStorage.setItem("dept12RepPer", el.value); } catch (e2) {} } render(); return; }
   if (el.matches && el.matches("[data-rptdfrom],[data-rptdto]")) {
     var f = $("[data-rptdfrom]"), t = $("[data-rptdto]");
-    if (f.dataset.lastIso && t.dataset.lastIso) { REP.per = "custom"; REP.from = f.dataset.lastIso; REP.to = t.dataset.lastIso; render(); }
+    if (f.dataset.lastIso && t.dataset.lastIso) {
+      REP.per = "custom"; REP.from = f.dataset.lastIso; REP.to = t.dataset.lastIso;
+      if (REP.to < REP.from) { var sw = REP.from; REP.from = REP.to; REP.to = sw; }
+      render();
+    }
     return;
   }
 });

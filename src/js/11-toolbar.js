@@ -416,15 +416,15 @@ function renderFmtBar() {
     "</select>" +
     '<span class="fb-sep"></span>' +
     '<button class="fb fb-clr"' + dis + ' data-fb="fill" title="Fill color">' + svgIcon("fill") +
-      '<span class="fb-bar" style="background:' + (fs.fill || LAST_FILL) + '"></span></button>' +
+      '<span class="fb-bar" style="background:' + (cssHex(fs.fill) || cssHex(LAST_FILL) || "transparent") + '"></span></button>' +
     '<button class="fb fb-clr"' + dis + ' data-fb="text" title="Text color">' + svgIcon("text") +
-      '<span class="fb-bar" style="background:' + (fs.text || LAST_TEXT) + '"></span></button>' +
+      '<span class="fb-bar" style="background:' + (cssHex(fs.text) || cssHex(LAST_TEXT) || "transparent") + '"></span></button>' +
     '<span class="fb-sep"></span>' +
     '<button class="fb' + (fs.bold ? " on" : "") + '"' + dis + ' data-fb="bold" title="Bold (Cmd/Ctrl-B)">' + svgIcon("bold") + "</button>" +
     '<button class="fb' + (fs.italic ? " on" : "") + '"' + dis + ' data-fb="italic" title="Italic (Cmd/Ctrl-I)">' + svgIcon("italic") + "</button>" +
     '<button class="fb"' + dis + ' data-fb="border" title="Borders">' + svgIcon("border") + "</button>" +
     '<span class="fb-sep"></span>' +
-    '<button class="fb-font"' + dis + ' data-fb="font" title="Font" style="font-family:' + (fs.font || "inherit") + '">' +
+    '<button class="fb-font"' + dis + ' data-fb="font" title="Font" style="font-family:' + (cssFont(fs.font) || "inherit") + '">' +
       '<span class="fb-font-lbl">' + esc(fontLabel(fs.font)) + "</span>" + svgIcon("expand") + "</button>" +
     '<span class="fb-fs"' + dis + '>' +
       '<button class="fb-fs-b" data-fb="fs-dec" title="Decrease font size" tabindex="-1">&minus;</button>' +

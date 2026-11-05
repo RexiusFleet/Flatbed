@@ -29,10 +29,24 @@ function emptyStateHtml(text) {
   return '<div class="empty-state">' + icon("empty") + "<span>" + esc(text) + "</span></div>";
 }
 function esc(s) {
-  return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
   });
 }
+/* Values that go into a style="" attribute come from the database, so they are checked before use: a color must be a real hex
+   color (#rgb to #rrggbbaa), a font list may only hold letters, digits, spaces, commas, quotes and hyphens, a border style is one of
+   four words. Anything else is dropped (the default look is used), so a stored value can never break out of the attribute. */
+function isHex(c) { return typeof c === "string" && /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(c); }
+function cssHex(c) { return isHex(c) ? c : ""; }
+function cssFont(f) { f = String(f == null ? "" : f); return f.length <= 160 && /^[A-Za-z0-9 ,'-]*$/.test(f) ? f : ""; }
+/* One CSV cell. A value that starts with = + - @ (or a tab / return) would run as a formula in Excel, so it gets a leading ' and
+   is shown as text; a plain number (negative ones too) is left alone. Commas, quotes and line breaks are quoted as usual. */
+function csvCell(v) {
+  var c = v == null ? "" : String(v);
+  if (/^[=+\-@\t\r]/.test(c) && !/^-?\d+(\.\d+)?$/.test(c)) c = "'" + c;
+  return /[",\n\r]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c;
+}
+function cssBorderStyle(s) { return /^(solid|dashed|dotted|double)$/.test(s) ? s : "solid"; }
 /* Database/sheet cell display (D123): a cell whose ENTIRE trimmed value is a
    URL renders as a real clickable link (new tab, so it never steals the
    cell-select/type-to-edit click) instead of plain text. Only a whole-value
@@ -117,8 +131,17 @@ var YEAR = (function () {
   var now = new Date().getUTCFullYear(), ys = availableYears();
   return ys.indexOf(now) >= 0 ? now : 2026;
 })();
-var TODAY = new Date().toISOString().slice(0, 10);
-if (TODAY.slice(0, 4) !== "2026") TODAY = "2026-08-04";  // demo data year
+/* Today is the date in Oregon (Pacific time), not UTC: in UTC the date turns over at 4 or 5 PM here, and an evening ELD pull
+   would then treat the day that is still running as finished. A tab left open overnight picks up the new date by itself. */
+function pacificToday() {
+  try { return new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" }); }
+  catch (e) { var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+}
+var TODAY = pacificToday();
+setInterval(function () {
+  var t = pacificToday();
+  if (t !== TODAY) { TODAY = t; if (typeof render === "function" && typeof DB !== "undefined" && DB) render(); }
+}, 60000);
 function addNextYear() {
   var ys = availableYears(), next = ys[ys.length - 1] + 1;
   EXTRA_YEARS.push(next);
@@ -718,7 +741,8 @@ function navArrowShortcutAvailable(e, axis, allowShift) {
   if (Object.keys(ROWSEL).some(function (grid) { return (ROWSEL[grid] || []).length; })) return false;
   var active = document.activeElement;
   if (active && (/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) || active.isContentEditable)) return false;
-  if (document.querySelector("#modal.on,#viewer.on,#profile-menu,#palette,#ctxmenu")) return false;
+  if (document.querySelector("#modal.on,#viewer.on,#profile-menu,#palette,#ctxmenu,#rdx-add,#mot-cal,#sgn-pop,.act-pop")) return false;
+  if (e.defaultPrevented || (typeof RDX !== "undefined" && RDX.drag)) return false;
   if (!NAV.some(function (section) { return section.k === SEC; }) && SEC !== "settings") return false;
   if (axis === "section-ext") return navVisibleSections().length + (subsOf("settings").length ? 1 : 0) >= 2;
   return axis === "section" ? navVisibleSections().length >= 2 : subsOf(SEC).length >= 2;

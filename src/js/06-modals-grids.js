@@ -268,8 +268,11 @@ document.addEventListener("keydown", function (e) {
   }
   if (!yes || yes.disabled) return;
   e.preventDefault(); e.stopPropagation();
-  modal.dataset.keyConfirming = "1"; yes.click();
+  modal.dataset.keyConfirming = "1"; yes.click(); keyConfirmRelease(modal);
 }, true);
+// Enter is ignored for a moment after it confirms (no double save). If the window is still open after that (the save failed and
+// its button is back), Enter works again.
+function keyConfirmRelease(modal) { setTimeout(function () { if (modal.classList.contains("on")) delete modal.dataset.keyConfirming; }, 1500); }
 /* Cmd/Ctrl+Enter submits from inside a textarea (D230 follow-up) — plain
    Enter is reserved there for a real newline (see above), but a popup's
    one obvious action should still be reachable without leaving the field.
@@ -280,7 +283,7 @@ document.addEventListener("keydown", function (e) {
   var modal = document.querySelector("#modal.on"); if (!modal || modal.dataset.keyConfirming) return;
   var yes = modal.querySelector(".modal-ft .btn.pri"); if (!yes || yes.disabled) return;
   e.preventDefault(); e.stopPropagation();
-  modal.dataset.keyConfirming = "1"; yes.click();
+  modal.dataset.keyConfirming = "1"; yes.click(); keyConfirmRelease(modal);
 }, true);
 /* Escape exits every popup (D230, Nate: "ensure all popup windows submit
    with enter or return, and exit with escape, thats app wide") — clicks
@@ -563,14 +566,14 @@ function gridCols(grid) {
    metadata fields in a single draggable spreadsheet order (D96). */
 function customThCol(c, grid) {
   return '<th draggable="true" data-colgrid="' + grid + '" data-colref="custom:' + c.id +
-    '" data-customcol="' + c.id + '" style="width:' + (c.width || 140) +
+    '" data-customcol="' + esc(c.id) + '" style="width:' + (parseInt(c.width, 10) || 140) +
     'px;white-space:nowrap"' + dbSortAttr(grid, "custom:" + c.id) +
     ' title="Click to sort · Right-click to select the column or for options · Drag to reorder">' + esc(c.label) +
     dbSortArrow(grid, "custom:" + c.id) + "</th>";
 }
 function customTdCol(c, table, id, custom) {
   custom = custom || {};
-  var v = custom[c.key], a = 'data-cust="' + table + "|" + id + "|" + c.key + '"';
+  var v = custom[c.key], a = 'data-cust="' + esc(table + "|" + id + "|" + c.key) + '"';
   if (c.type === "select") {
     return '<td><div class="cell"><select class="cell-i" ' + a + '><option value=""></option>' +
       (c.options || []).map(function (o) {

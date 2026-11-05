@@ -98,7 +98,7 @@ function rowArrFor(table) {
            departments: DB.departments }[table] || [];
 }
 function copyChipColor(hex) {
-  COLORCLIP = hex && hex.charAt(0) === "#" ? hex : null;
+  COLORCLIP = isHex(hex) ? hex : null;
   toast(COLORCLIP ? "Color copied" : "Nothing to copy here", !COLORCLIP);
 }
 function pasteChipColor(table, id, field) {

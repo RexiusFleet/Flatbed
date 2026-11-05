@@ -398,7 +398,9 @@ function csvOf(rep, labels) {
       : typeof v === "string" ? v.replace(/^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.)(\d{1,5})(?=[+-]\d\d:\d\d$)/,
           function (m, a, f) { return a + (f + "00000").slice(0, 6); })
       : String(v);
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    // a text value starting with = + - @ would run as a formula in Excel: show it as text instead
+    if (!numeric[c] && /^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = "'" + s;
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
   return [cols.map(function (c) { return labels[c] || c; }).join(",")]
     .concat(rows.map(function (r) { return cols.map(function (c) { return cell(r[c], c); }).join(","); }))
@@ -525,55 +527,43 @@ function pick(d, keys) {
   keys.forEach(function (k) { if (d[k] !== undefined) out[k] = d[k]; });
   return out;
 }
-// Safety net: if the app's main data load doesn't include the appointment columns
-// (it lists orders' columns on the server), fetch just the orders that have an
-// appointment and merge them in.
-// Same safety net for the external rate and backhaul columns: add them to the orders when the main load leaves them out.
+// Order columns the main load (which lists orders' columns on the server) may leave out: appointments, rate and backhaul.
 var RATE_FIELDS = ["backhaul", "external_rate", "external_rate_source", "external_rate_original"];
-function addRateColumns(d) {
-  var orders = d && d.orders;
-  if (!orders || !orders.length || RATE_FIELDS[0] in orders[0]) return d;
-  var q = "orders?select=id," + RATE_FIELDS.join(",") + "&or=(backhaul.eq.true,external_rate.not.is.null)";
-  return rest("GET", q).then(function (rows) {
-    var byId = {}; (rows || []).forEach(function (r) { byId[r.id] = r; });
-    orders.forEach(function (o) { var r = byId[o.id]; RATE_FIELDS.forEach(function (f) { o[f] = r ? r[f] : (f === "backhaul" ? false : null); }); });
-    return d;
-  }).catch(function () { return d; });
-}
-// ...and the autofill field, which now holds the shared Staging mark ({ _staged: <place in line> }). Read fresh on every load, because
-// a row someone else changed arrives without it and the Staging rail has to match what they did.
-function addAutofillColumn(d) {
-  var orders = d && d.orders;
-  if (!orders || !orders.length) return d;
-  return rest("GET", "orders?select=id,autofill&autofill=not.is.null").then(function (rows) {
-    var byId = {}; (rows || []).forEach(function (r) { byId[r.id] = r.autofill; });
-    orders.forEach(function (o) { o.autofill = byId[o.id] || null; });
-    return d;
-  }).catch(function () { return d; });
-}
-// ...and the "mileage confirmed" mark set by the mileage review window.
-function addMilesConfirmedColumn(d) {
-  var orders = d && d.orders;
-  if (!orders || !orders.length || "miles_confirmed_at" in orders[0]) return d;
-  return rest("GET", "orders?select=id,miles_confirmed_at&miles_confirmed_at=not.is.null").then(function (rows) {
-    var byId = {}; (rows || []).forEach(function (r) { byId[r.id] = r.miles_confirmed_at; });
-    orders.forEach(function (o) { o.miles_confirmed_at = byId[o.id] || null; });
-    return d;
-  }).catch(function () { return d; });
-}
 var APPT_FIELDS = ["pick_appt_text", "drop_appt_text"];
-function addApptColumns(d) {
-  var orders = d && d.orders;
-  if (!orders || !orders.length || APPT_FIELDS[0] in orders[0]) return d;
-  var q = "orders?select=id," + APPT_FIELDS.join(",") + "&or=(" + APPT_FIELDS.map(function (f) { return f + ".not.is.null"; }).join(",") + ")";
-  return rest("GET", q).then(function (rows) {
-    var byId = {}; (rows || []).forEach(function (r) { byId[r.id] = r; });
-    orders.forEach(function (o) { var r = byId[o.id]; APPT_FIELDS.forEach(function (f) { o[f] = r ? r[f] : null; }); });
-    return d;
-  }).catch(function () { return d; });
+// The columns the main load leaves out of orders, each fetched with one small query. On the first load they are all asked for at
+// the same time as the main load (nothing says yet which are missing); later loads ask only for the ones still missing, all at once.
+var EXTRA_COLS = [
+  { has: function (o) { return APPT_FIELDS[0] in o; },
+    q: "orders?select=id," + APPT_FIELDS.join(",") + "&or=(" + APPT_FIELDS.map(function (f) { return f + ".not.is.null"; }).join(",") + ")",
+    apply: function (orders, rows) { var byId = {}; rows.forEach(function (r) { byId[r.id] = r; });
+      orders.forEach(function (o) { var r = byId[o.id]; APPT_FIELDS.forEach(function (f) { o[f] = r ? r[f] : null; }); }); } },
+  { has: function (o) { return RATE_FIELDS[0] in o; },
+    q: "orders?select=id," + RATE_FIELDS.join(",") + "&or=(backhaul.eq.true,external_rate.not.is.null)",
+    apply: function (orders, rows) { var byId = {}; rows.forEach(function (r) { byId[r.id] = r; });
+      orders.forEach(function (o) { var r = byId[o.id]; RATE_FIELDS.forEach(function (f) { o[f] = r ? r[f] : (f === "backhaul" ? false : null); }); }); } },
+  // the Staging mark lives in autofill and someone else may have just changed it, so it is read on every load
+  { always: true, q: "orders?select=id,autofill&autofill=not.is.null",
+    apply: function (orders, rows) { var byId = {}; rows.forEach(function (r) { byId[r.id] = r.autofill; });
+      orders.forEach(function (o) { o.autofill = byId[o.id] || null; }); } },
+  { has: function (o) { return "miles_confirmed_at" in o; },
+    q: "orders?select=id,miles_confirmed_at&miles_confirmed_at=not.is.null",
+    apply: function (orders, rows) { var byId = {}; rows.forEach(function (r) { byId[r.id] = r.miles_confirmed_at; });
+      orders.forEach(function (o) { o.miles_confirmed_at = byId[o.id] || null; }); } }
+];
+function extraRows(q) { return rest("GET", q).catch(function () { return null; }); }
+function loadWithColumns() {
+  var early = !BOOT ? EXTRA_COLS.map(function (c) { return extraRows(c.q); }) : null;
+  return loadBootstrap().then(function (d) {
+    var orders = d && d.orders;
+    if (!orders || !orders.length) return d;
+    return Promise.all(EXTRA_COLS.map(function (c, i) {
+      if (!c.always && c.has(orders[0])) return null;
+      return early ? early[i] : extraRows(c.q);
+    })).then(function (res) { res.forEach(function (rows, i) { if (rows) EXTRA_COLS[i].apply(orders, rows); }); return d; });
+  });
 }
 var ROUTES = {
-  "bootstrap": function () { return loadBootstrap().then(addApptColumns).then(addRateColumns).then(addAutofillColumn).then(addMilesConfirmedColumn); },
+  "bootstrap": loadWithColumns,
   "order": viaRpc("api_order_create"),
   "order/ingest": viaRpc("api_order_ingest"),
   "internal-order": viaRpc("api_internal_order_add"),
@@ -680,8 +670,10 @@ var ROUTES = {
         if (k === "orders") { rows.forEach(function (r) { ids[r.id] = 1; }); gone.forEach(function (id) { ids[id] = 1; }); }
         mergeRows(k, rows, gone);
       });
+      // a small table that changed comes back in res.small. (The cursor is the server's clock, so it is new on every call and
+      // says nothing about changes: comparing it made every 4-second check look like a change and reloaded everything.)
+      if (res.small && typeof res.small === "object" && Object.keys(res.small).length) any = true;
       Object.assign(BOOT.data, res.small || {});
-      if (res.cursor !== before) any = true;      // something was logged (even if only a small table changed)
       BOOT.cursor = res.cursor;
       return { changed: any, orders: Object.keys(ids) };
     });

@@ -471,12 +471,18 @@ function motOrdersFor(truck, day) {
   });
 }
 function motIsInternal(o) { return o.kind === "internal" || o.is_transfer === true || o.is_transfer === "true"; }
+// An internal order's miles: what is typed on it, else (a bag order) its customer's standard miles. Reports counts them the same way.
+function motOrderMiles(o) {
+  var m = motNum(o.miles);
+  if (m == null && !(o.is_transfer === true || o.is_transfer === "true") && o.customer_party_id) { var l = locFor(o.customer_party_id); m = l ? motNum(l.standard_miles) : null; }
+  return m;
+}
 // Bag / internal / external miles for one truck-day. External is whatever Motive recorded beyond the miles on bag and internal orders.
 function motBuckets(truck, day) {
   var row = motRow(truck, day), T = row ? motNum(row.miles) : null, bag = 0, intf = 0, ext = [];
   motOrdersFor(truck, day).forEach(function (o) {
     if (!motIsInternal(o)) { ext.push(o); return; }
-    var m = motNum(o.miles) || 0;
+    var m = motOrderMiles(o) || 0;
     if (o.is_transfer === true || o.is_transfer === "true") intf += m; else bag += m;
   });
   var rest = T == null ? null : T - bag - intf;
@@ -697,7 +703,8 @@ function render() {
         if (el) el.scrollIntoView({ block: "center" });
       });
     } else {
-      requestAnimationFrame(function () { schedNode.scrollTop = schedScrollTop; });
+      // a live update can drop the cached grid before this frame runs; then there is nothing to restore
+      var keepNode = schedNode; requestAnimationFrame(function () { if (keepNode) keepNode.scrollTop = schedScrollTop; });
     }
   } else if (SUB === "cw" || SUB === "driver" || SUB === "int" || SUB === "xfer" || SUB === "ext" ||
              SUB === "bill" || SUB === "transfers" || SUB === "rep" || SUB === "motive" || SEC === "database") {

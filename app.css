@@ -1324,6 +1324,8 @@ body.nav-collapsed .nav-footer-btn>span:last-child{display:none}
   #history-panel{display:none!important}
   .body.history-on{grid-template-columns:minmax(0,1fr)!important}
   .toolbar{flex-wrap:wrap;row-gap:6px}
+  #main .toolbar{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}   /* page toolbars stay one line and scroll sideways (DESIGN: toolbar contract) */
+  #main .toolbar>*{flex-shrink:0}
   .pad{padding:12px}
   #drawer{width:100vw}
   .modal-card{max-width:none}
@@ -2059,6 +2061,7 @@ body.rdx-dragging,body.rdx-dragging *{cursor:grabbing!important;user-select:none
 .rdx-big{font:650 var(--fs-h1) var(--mono);line-height:1.15;color:var(--ink)}
 .rdx-sub{margin-top:4px;font-size:var(--fs-label);color:var(--ink-3)}
 .rdx-sub .rc-cmp{margin:0}
+.rdx-warn{color:var(--warn);font-weight:600}
 .rdx-g-ext .rdx-card.list{grid-column:1 / -1}
 .rdx-list{display:grid;grid-template-columns:minmax(0,1fr) auto;font-size:var(--fs-body-sm)}
 .rdx-list>span{padding:5px 0;border-top:1px solid var(--rule)}

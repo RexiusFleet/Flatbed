@@ -117,7 +117,7 @@ function designationColor(o) {
    A department with no color set yet shows no fill. */
 function transferChipColor(o) {
   var dept = o && o.transfer_department_id ? departmentById(o.transfer_department_id) : null;
-  return (dept && dept.color && dept.color.charAt(0) === "#") ? dept.color : "";
+  return (dept && isHex(dept.color)) ? dept.color : "";
 }
 function driver(id) { for (var i = 0; i < DB.drivers.length; i++) if (DB.drivers[i].id === id) return DB.drivers[i]; return null; }
 /* Names are kept in full; the app shows the first name. Two active drivers with the same first name get a last initial (Matt S.). */
@@ -135,7 +135,7 @@ function truckById(id) { for (var i = 0; i < DB.trucks.length; i++) if (DB.truck
 function pushColorFor(o, v) {
   if (!o || o.kind !== "external" || !v || !v.pushedAt || !v.truckId) return "";
   var t = truckById(v.truckId);
-  return (t && t.driver_id && t.driver_color && String(t.driver_color).charAt(0) === "#") ? t.driver_color : "";
+  return (t && t.driver_id && isHex(t.driver_color)) ? t.driver_color : "";
 }
 function docsFor(oid) {
   // Driver scans are in DB.documents too; they're shown through DRIVER scans below
@@ -508,9 +508,9 @@ function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
   var fill = (o && o.is_transfer) ? transferChipColor(o)
            : dsg ? dsg
            : (o && o.kind === "internal") ? ""   // internal, no designation set yet
-           : (pushColor && pushColor.charAt(0) === "#") ? pushColor
-           : (fmt.fill && fmt.fill.charAt(0) === "#") ? fmt.fill
-           : (catColor && catColor.charAt(0) === "#") ? catColor : "";
+           : (isHex(pushColor)) ? pushColor
+           : (isHex(fmt.fill)) ? fmt.fill
+           : (isHex(catColor)) ? catColor : "";
   /* External loads only (Nate): before a load is pushed to the drivers the
      chip is plain — white with a thick edge in its color. Once pushed, it
      takes a soft tint of the truck's driver color, edge unchanged. Text stays
@@ -520,7 +520,7 @@ function chipHtml(o, drag, extra, catColor, fmt, pushColor, pushed) {
   var filled = !plainExt && !!fill;
   var tinted = plainExt && !!fill && !!pushed;
   var edge = fill || w.c;
-  var textc = (fmt.text && fmt.text.charAt(0) === "#") ? fmt.text : (filled ? textOn(fill) : "");
+  var textc = (isHex(fmt.text)) ? fmt.text : (filled ? textOn(fill) : "");
   var ws = "";
   if (textc) ws += "color:" + textc + ";";
   if (fmt.bold) ws += "font-weight:800;";
