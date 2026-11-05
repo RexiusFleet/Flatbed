@@ -538,7 +538,7 @@ function navMenuHtml() {
       return;
     }
     if (s.k === "motive") {
-      html += '<button class="nm-dbentry' + (SEC === "motive" ? " on" : "") + '" data-navto="motive|motive">' + navSecIcon("motive") + "<span>Motive</span></button>";
+      html += '<button class="nm-dbentry' + (SEC === "motive" ? " on" : "") + '" data-navto="motive|motive">' + navSecIcon("motive") + "<span>ELD</span></button>";
       return;
     }
     var body = navSectionSubsHtml(s.k, false);
@@ -562,7 +562,7 @@ function navMenuCollapsedHtml() {
       return;
     }
     if (s.k === "motive") {
-      html += '<button class="nm-cicon nm-dbentry' + (SEC === "motive" ? " on" : "") + '" data-navto="motive|motive" title="Motive">' + navSecIcon("motive") + "</button>";
+      html += '<button class="nm-cicon nm-dbentry' + (SEC === "motive" ? " on" : "") + '" data-navto="motive|motive" title="ELD">' + navSecIcon("motive") + "</button>";
       return;
     }
     var orderCounts = s.k === "orders" ? navUnplacedCounts() : null;

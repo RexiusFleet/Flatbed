@@ -178,8 +178,8 @@ function settingsHelp() {
       "Edit a cell directly. Use the numbered gutter to select one or several rows, then use the table action for archive or delete. " +
       "The header <b>+</b> adds a field, and Manage Columns controls field order and visibility. Archived directory records remain on historical orders."],
     ["Mileage, delivery dates, and rates",
-      "<b>Sync Delivery Dates</b> copies completed schedule dates back to orders, saves Motive's miles for those days, and opens a window listing the delivered " +
-      "orders that still need mileage. Type the miles (and change the cost if you need to), Save, and the order leaves the list. <b>Motive</b> (below Database) shows every truck's miles and hours for any dates, and one day in detail. " +
+      "<b>Sync Delivery Dates</b> copies completed schedule dates back to orders, saves ELD miles for those days, and opens a window listing the delivered " +
+      "orders that still need mileage. Type the miles (and change the cost if you need to), Save, and the order leaves the list. <b>ELD</b> (below Database) shows every truck's miles and hours for any dates, and one day in detail. " +
       "<b>Billing → Internal Transfers</b> adds up those costs by department and marks each transfer done."],
     ["Settings and shortcuts",
       "General contains theme, accent, font, order numbering, and Scheduler sizing. Shortcuts can be " +
@@ -208,7 +208,7 @@ var NAV = [
   { k: "database", t: "Database", subs: [{ k: "bagger", t: "Bagger Customers" }, { k: "brokers", t: "External Customers" },
       { k: "pickdrop", t: "Pick/Drop List" }, { k: "fleet", t: "Fleet" }] },
   // One entry under Database, drawn the same way (navMenuHtml): Motive's truck-days, miles and hours.
-  { k: "motive", t: "Motive", subs: [{ k: "motive", t: "Motive" }] }
+  { k: "motive", t: "ELD", subs: [{ k: "motive", t: "ELD" }] }
 ];
 /* Settings (D54) is reached from the header gear, not the main nav, so it lives
    outside NAV — subsOf resolves its tabs specially. */
@@ -407,7 +407,7 @@ function motAssignShop(from, to) {
       return api("motive/unidentified", { start: from, end: end, trucks: fleet, apply: true, only_ids: ids }).then(function (r) {
         var res = (r && r.applied) || [], n = res.filter(function (x) { return x.ok; }).length;
         MOT.shopLast = (MOT.shopLast || 0) + n;
-        if (res.length > n) toast((res.length - n) + " shop trip" + (res.length - n === 1 ? "" : "s") + " couldn't be assigned in Motive", true);
+        if (res.length > n) toast((res.length - n) + " shop trip" + (res.length - n === 1 ? "" : "s") + " couldn't be assigned in the ELD", true);
         return n;
       });
     });
@@ -423,7 +423,7 @@ function motConfirmShop(rows) {
         '</td><td class="n">' + (p.distance != null ? esc(p.distance) : "") + "</td><td>" + esc(p.assign_to) + "</td></tr>";
     }).join("");
     openModal('<div class="modal-hd"><h2>Assign shop trips?</h2></div><div class="modal-body"><p style="margin:0 0 10px;color:var(--ink-2)">These trips on your trucks had no driver and are noted &ldquo;Yard Move in shop&rdquo;. ' +
-      "Untick any you don&rsquo;t want given to a shop driver. Nothing is changed in Motive until you click Assign.</p>" +
+      "Untick any you don&rsquo;t want given to a shop driver. Nothing is changed in the ELD until you click Assign.</p>" +
       '<table class="data" style="min-width:0"><thead><tr><th style="width:28px"></th><th>Truck</th><th>Started (Pacific)</th><th class="n">Miles</th><th>Assign to</th></tr></thead><tbody>' + body + "</tbody></table></div>" +
       '<div class="modal-ft"><button class="btn" id="mshop-skip">Skip These</button><span style="flex:1"></span><button class="btn pri" id="mshop-go"></button></div>');
     var go = $("#mshop-go"), count = function () {
@@ -542,7 +542,7 @@ function mrvCardsHtml() {
   return MRV.groups.map(function (g, gi) {
     var c = mrvCalc(g), row = g.truck ? motRow(g.truck, g.day) : null, drv = (row && row.drivers) || motTruckDriver(g.truck);
     var h = '<div class="mrv-card"><div class="mrv-hd"><b>' + esc(g.truck || "No truck") + "</b>" + (drv ? " · " + esc(drv) : "") + " · " + esc(fmtLongDay(g.day)) +
-      '<span class="mrv-tot">' + (c.total != null ? "Motive says <b>" + c.total + "</b> mi" : (g.truck ? "No Motive data for this day" : "No truck on these orders")) + "</span></div>" +
+      '<span class="mrv-tot">' + (c.total != null ? "ELD says <b>" + c.total + "</b> mi" : (g.truck ? "No ELD data for this day" : "No truck on these orders")) + "</span></div>" +
       '<div class="mrv-cols"><span>Type</span><span>Order</span><span>Miles</span><span>Cost</span><span>RPM</span></div>';
     g.rows.forEach(function (r, ri) {
       var o = r.o, type = r.ext ? "External" : o.is_transfer ? "Internal freight" : "Bag order", cls = r.ext ? "x" : o.is_transfer ? "i" : "b";
@@ -565,7 +565,7 @@ function mrvCardsHtml() {
         '<input class="mrv-in' + (r.cost == null ? " sug" : "") + '" data-mrv="' + gi + "|" + ri + '|c" value="' + (r.cost != null ? r.cost : "") + '" placeholder="' + (auto != null ? "$" + auto.toFixed(2) : "") + '" inputmode="decimal" aria-label="Cost">' +
         "<span></span></div>";
     });
-    if (c.over) h += '<div class="mrv-flag bad">Over by ' + Math.round(c.over * 10) / 10 + " miles. Motive recorded " + c.total + ".</div>";
+    if (c.over) h += '<div class="mrv-flag bad">Over by ' + Math.round(c.over * 10) / 10 + " miles. ELD recorded " + c.total + ".</div>";
     else if (c.total != null && g.rows.some(function (r) { return r.ext; })) h += '<div class="mrv-flag">External gets whatever is left: ' + c.extMiles + " miles so far.</div>";
     return h + "</div>";
   }).join("");
@@ -625,10 +625,10 @@ function runSyncAll(btn) {
   api("sync-delivery-dates", {}).catch(function (err) { notes.push("Delivery dates: " + esc(err.message)); })
     .then(reload)
     .then(function () {
-      busyStart("Reading Motive…");
+      busyStart("Reading ELD…");
       // every finished day of the last 31, not just the days with orders, so fleet and external miles are complete
       var days = motDaysBetween(motAddDays(TODAY, -31), motYesterday()), dayMap = days;
-      return motEnsure(dayMap).catch(function (err) { notes.push("Motive: " + esc(err.message) + ". You can still type the miles by hand."); });
+      return motEnsure(dayMap).catch(function (err) { notes.push("ELD: " + esc(err.message) + ". You can still type the miles by hand."); });
     })
     .then(function () { btn.disabled = false; busyEnd(); mrvOpen(notes.join(" · ")); })
     .catch(function (err) { btn.disabled = false; busyEnd(); toast(err.message, true); });
