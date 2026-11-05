@@ -365,8 +365,9 @@ function ordersToolbarExtras() {
    One pull saves each truck-day to Supabase (motive_daily) and records the day as pulled, so a day is asked
    from Motive once. Today is never pulled (it is not finished). Sync Delivery Dates syncs the dates, makes sure
    Motive's days are saved, then opens the review window for delivered orders whose mileage is not confirmed. */
-var MOT = { rows: {}, pulled: {}, from: "", to: "", loading: false, err: "", view: "range", per: "lastwk", open: {}, day: "", pick: null, week: "" };
+var MOT = { rows: {}, pulled: {}, from: "", to: "", loading: false, err: "", view: "range", per: "lastwk", mode: "sum", open: {}, day: "", pick: null, week: "" };
 try { var _mp = localStorage.getItem("dept12MotPer"); if (/^(yday|thiswk|lastwk|month|lastmonth)$/.test(_mp || "")) MOT.per = _mp; } catch (e) { /* not saved on this device */ }
+try { if (localStorage.getItem("dept12MotMode") === "daily") MOT.mode = "daily"; } catch (e) { /* not saved on this device */ }
 function motAddDays(iso, n) { var d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n); return rptIso(d); }
 function motYesterday() { return motAddDays(TODAY, -1); }
 function motMonday(iso) { var d = new Date(iso + "T12:00:00"), k = (d.getDay() + 6) % 7; d.setDate(d.getDate() - k); return rptIso(d); }

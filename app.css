@@ -1654,6 +1654,14 @@ button.mot-ord:hover{background:var(--brand-soft)}
 .mot-per{min-width:118px}
 .mot-nos{margin-left:10px;font-family:var(--mono);font-size:var(--fs-label);color:var(--ink-3)}
 .mot-toolbar .rpt-date{width:104px}
+.mot-toolbar .rpt-seg{margin-left:8px;flex:none}.mot-toolbar .rpt-seg button{white-space:nowrap}
+.mot-dayh{display:flex;align-items:center;gap:10px;margin-top:10px;padding:10px 14px 4px;border-top:1px solid var(--rule-2);font-size:var(--fs-body-sm)}
+.mot-page>.mot-dayh:first-child,.mot-page>.note-bar+.mot-dayh{border-top:0}
+.mot-dayh b{font-weight:650;color:var(--ink)}.mot-dayh span{flex:1;min-width:0;font-family:var(--mono);font-size:var(--fs-label);color:var(--ink-3)}.mot-dayh .btn{flex:none}
+.mot-daily tfoot td{font-family:var(--mono);background:var(--panel-2);height:32px}
+.mot-daily td.n{font-family:var(--mono)}
+.mot-idlel{padding:6px 14px 0;font-size:var(--fs-label);color:var(--ink-3)}
+@media(max-width:980px){.mot-dayh{padding:10px 0 4px}.mot-idlel{padding:6px 0 0}}
 /* Billing → Internal Transfers: the tally above the department table */
 .trf-tiles{padding:4px 0 12px}
 .trf-depts th:not(:first-child),.trf-depts td:not(:first-child){text-align:right}

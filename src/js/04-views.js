@@ -2867,26 +2867,62 @@ function motOrdersHtml(t, d, withDay) {
   return h + "</div>";
 }
 function motCellOpen(where, t, d) { return MOT.cell === where + "|" + t + "|" + d; }
+/* --- Day By Day: every finished day in the dates, newest first, each one the whole fleet: odometer in and out, miles, time in (first on),
+   time out (last off), hours and orders per truck, with a Fleet line under it. Click a truck for its orders that day. --- */
+function motDayTotals(day) {
+  var x = { miles: 0, hours: 0, ran: 0, first: null, last: null, ords: 0, idle: [] };
+  motTrucks().forEach(function (t) {
+    var r = motRow(t, day);
+    if (!r) { x.idle.push(t); return; }
+    x.ran++; x.miles += motNum(r.miles) || 0; x.hours += motNum(r.hours) || 0; x.ords += motOrdersFor(t, day).length;
+    if (r.first_on && (!x.first || r.first_on < x.first)) x.first = r.first_on;
+    if (r.last_off && (!x.last || r.last_off > x.last)) x.last = r.last_off;
+  });
+  return x;
+}
+function motDailyTable(day, where) {
+  var x = motDayTotals(day), ran = motTrucks().filter(function (t) { return motRow(t, day); });
+  ran.sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); });
+  var odo = function (v) { return v != null ? Number(v).toLocaleString() : "—"; };
+  var h = '<div class="grid-wrap mot-wrap"><table class="data mot-table mot-daily"><thead><tr><th style="width:80px">Truck</th><th style="width:150px">Driver</th>' +
+    '<th class="n" style="width:100px">Odometer In</th><th class="n" style="width:100px">Odometer Out</th><th class="n" style="width:80px">Miles</th>' +
+    '<th class="n" style="width:80px">Time In</th><th class="n" style="width:80px">Time Out</th><th class="n" style="width:70px">Hours</th><th class="n" style="width:70px">Orders</th><th>Bag / Internal / External</th></tr></thead><tbody>';
+  ran.forEach(function (t) {
+    var r = motRow(t, day), b = motBuckets(t, day), n = motOrdersFor(t, day).length, on = motCellOpen(where, t, day);
+    h += '<tr data-motcell="' + where + "|" + esc(t) + "|" + day + '" class="' + (on ? "sel" : "") + '" title="Show this truck\'s orders"><td><b>' + esc(t) + "</b></td><td>" + esc(r.drivers || motTruckDriver(t)) + "</td>" +
+      '<td class="n">' + odo(r.start_odo) + '</td><td class="n">' + odo(r.end_odo) + '</td><td class="n"><b>' + Math.round(Number(r.miles) * 10) / 10 + "</b></td>" +
+      '<td class="n">' + motFmtTime(r.first_on) + '</td><td class="n">' + motFmtTime(r.last_off) + '</td><td class="n">' + (r.hours != null ? r.hours : "—") + '</td><td class="n">' + (n || '<span class="mute">0</span>') + "</td>" +
+      "<td>" + motBarHtml(b) + (b.over ? '<span class="mot-over">Over by ' + Math.round(b.over * 10) / 10 + "</span>" : "") + "</td></tr>";
+    if (on) h += '<tr class="mot-cellrow"><td colspan="10">' + motOrdersHtml(t, day, where !== "day") + "</td></tr>";
+  });
+  h += '</tbody><tfoot><tr><td><b>Fleet</b></td><td class="mute">' + x.ran + " truck" + (x.ran === 1 ? "" : "s") + ' ran</td><td></td><td></td><td class="n"><b>' + Math.round(x.miles).toLocaleString() + "</b></td>" +
+    '<td class="n">' + motFmtTime(x.first) + '</td><td class="n">' + motFmtTime(x.last) + '</td><td class="n"><b>' + Math.round(x.hours * 10) / 10 + '</b></td><td class="n">' + x.ords + "</td><td></td></tr></tfoot></table></div>";
+  if (x.idle.length) h += '<div class="mot-idlel">Did not run: ' + x.idle.map(function (t) { return esc(t); }).join(", ") + "</div>";
+  return h;
+}
+function motDailyHtml(r) {
+  var last = motYesterday(), done = motDaysBetween(r.from, r.to > last ? last : r.to).reverse(), h = "";
+  if (!done.length) return '<div class="mot-wkempty mot-pad">Today isn\'t finished yet. Motive\'s days can be pulled from tomorrow.</div>';
+  var missing = done.filter(function (d) { return !MOT.pulled[d]; });
+  if (missing.length) h += '<div class="note-bar mot-miss">' + missing.length + " finished day" + (missing.length === 1 ? " isn't" : "s aren't") + " pulled from Motive yet. Pull From Motive gets " + (missing.length === 1 ? "it" : "them") + ".</div>";
+  done.forEach(function (d) {
+    var x = motDayTotals(d);
+    h += '<div class="mot-dayh"><b>' + esc(fmtLongDay(d)) + "</b><span>" + (MOT.pulled[d] ? Math.round(x.miles).toLocaleString() + " mi · " + Math.round(x.hours * 10) / 10 + " hrs · " + x.ran + " truck" + (x.ran === 1 ? "" : "s") +
+      (x.first ? " · " + motFmtTime(x.first) + "–" + motFmtTime(x.last) : "") : "Not pulled yet") + '</span><button class="btn sm" data-motday="' + d + '">Open The Day</button></div>';
+    h += MOT.pulled[d] && x.ran ? motDailyTable(d, "daily") : '<div class="mot-wkempty">' + (MOT.pulled[d] ? "No truck ran this day." : "Not pulled from Motive yet.") + "</div>";
+  });
+  return h;
+}
 /* --- one day: every truck's odometers, first on / last off, hours, and where the miles went; click a truck for its orders --- */
 function motDayHtml(day) {
   var h = "", trucks = motTrucks(), tot = 0, bag = 0, intf = 0, ext = 0, hours = 0, ran = 0;
   trucks.forEach(function (t) { var b = motBuckets(t, day), row = motRow(t, day); if (b.total != null) { ran++; tot += b.total; bag += b.bag; intf += b.intf; ext += b.ext || 0; hours += motNum(row && row.hours) || 0; } });
   var state = motDayStateText(day);
   h += motTilesHtml({ tot: tot, bag: bag, intf: intf, ext: ext, hours: hours, ran: ran, note: state || fmtLongDay(day) });
-  h += '<div class="grid-wrap mot-wrap"><table class="data mot-table"><thead><tr><th style="width:80px">Truck</th><th style="width:150px">Driver</th><th class="n" style="width:100px">Start odo</th><th class="n" style="width:100px">End odo</th>' +
-    '<th class="n" style="width:80px">Miles</th><th style="width:96px">First on</th><th style="width:96px">Last off</th><th class="n" style="width:70px">Hours</th><th>Bag / Internal / External</th></tr></thead><tbody>';
-  trucks.forEach(function (t) {
-    var r = motRow(t, day), b = motBuckets(t, day);
-    if (!r) { h += '<tr data-motpick="' + esc(t) + '"><td><b>' + esc(t) + "</b></td><td>" + esc(motTruckDriver(t)) + '</td><td colspan="7" class="mute">' + esc(state || "Did not run") + "</td></tr>"; return; }
-    h += '<tr data-motpick="' + esc(t) + '" class="' + (MOT.pick === t ? "sel" : "") + '"><td><b>' + esc(t) + "</b></td><td>" + esc(r.drivers || motTruckDriver(t)) + '</td>' +
-      '<td class="n">' + (r.start_odo != null ? Number(r.start_odo).toLocaleString() : "—") + '</td><td class="n">' + (r.end_odo != null ? Number(r.end_odo).toLocaleString() : "—") + '</td>' +
-      '<td class="n"><b>' + Math.round(Number(r.miles) * 10) / 10 + "</b></td><td>" + motFmtTime(r.first_on) + "</td><td>" + motFmtTime(r.last_off) + '</td><td class="n">' + (r.hours != null ? r.hours : "—") + "</td>" +
-      "<td>" + motBarHtml(b) + (b.over ? '<span class="mot-over">Over by ' + Math.round(b.over * 10) / 10 + "</span>" : "") + "</td></tr>";
-  });
-  h += '</tbody></table></div><div class="mot-legend"><span class="b">Bag orders</span><span class="i">Internal freight</span><span class="x">External (the rest of the truck\'s miles)</span></div>';
-  if (MOT.pick) {
-    h += '<div class="mot-pad">' + motOrdersHtml(MOT.pick, day, false) + "</div>";
-  } else h += '<div class="rpt-foot mot-foot">Click a truck to see its orders for the day; click an order to open it.</div>';
+  if (!ran) return h + '<div class="mot-wkempty mot-pad">' + esc(state || "No truck ran this day.") + "</div>";
+  h += motDailyTable(day, "day");
+  h += '<div class="mot-legend"><span class="b">Bag orders</span><span class="i">Internal freight</span><span class="x">External (the rest of the truck\'s miles)</span></div>' +
+    '<div class="rpt-foot mot-foot">Click a truck to see its orders for the day; click an order to open it.</div>';
   return h;
 }
 function vMotive() {
@@ -2895,7 +2931,9 @@ function vMotive() {
   var ctx = day ? '<button class="btn sm" data-mot="back">&larr; All Dates</button>' + motTabContext() :
     '<select class="mot-per" data-motper aria-label="Dates">' + MOT_PER.map(function (p) { return '<option value="' + p[0] + '"' + (MOT.per === p[0] ? " selected" : "") + ">" + p[1] + "</option>"; }).join("") + "</select>" +
     '<input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-motfrom class="rpt-date" data-last-iso="' + r.from + '" value="' + esc(isoToMdy(r.from)) + '">' +
-    '<span class="lbl">to</span><input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-motto class="rpt-date" data-last-iso="' + r.to + '" value="' + esc(isoToMdy(r.to)) + '">';
+    '<span class="lbl">to</span><input type="text" inputmode="numeric" placeholder="MM/DD/YYYY" data-smartdate data-motto class="rpt-date" data-last-iso="' + r.to + '" value="' + esc(isoToMdy(r.to)) + '">' +
+    '<span class="rpt-seg" role="group" aria-label="Show">' + [["sum", "Summary"], ["daily", "Day By Day"]].map(function (x) {
+      return '<button type="button" class="' + (MOT.mode === x[0] ? "on" : "") + '" data-motmode="' + x[0] + '" aria-pressed="' + (MOT.mode === x[0]) + '">' + x[1] + "</button>"; }).join("") + "</span>";
   var h = toolbarHtml("Motive", {
     className: "orders-toolbar rpt-toolbar mot-toolbar", context: ctx,
     secondary: '<button class="btn sm" data-mot="all" title="Every truck-day saved from Motive, all the data, as one CSV">Download All Motive</button>',
@@ -2903,7 +2941,7 @@ function vMotive() {
   });
   h += '<div class="grid-wrap rpt-page mot-page">' + (MOT.err ? '<div class="note-bar">' + esc(MOT.err) + "</div>" : "");
   if (MOT.loading && MOT.loadedKey !== r.from + "|" + r.to) return h + '<div class="empty">Reading the saved Motive days…</div></div>';
-  return h + (day ? motDayHtml(MOT.day) : motRangeHtml(r)) + "</div>";
+  return h + (day ? motDayHtml(MOT.day) : MOT.mode === "daily" ? motDailyHtml(r) : motRangeHtml(r)) + "</div>";
 }
 function motTabContext() {
   if (!MOT.day) MOT.day = motYesterday();
@@ -2946,6 +2984,8 @@ document.addEventListener("click", function (e) {
   if (mo) { openOrder(mo.dataset.motorder); return; }
   var op = e.target.closest && e.target.closest("[data-motopen]");
   if (op) { MOT.open[op.dataset.motopen] = !MOT.open[op.dataset.motopen]; render(); return; }
+  var mm = e.target.closest && e.target.closest("[data-motmode]");
+  if (mm) { MOT.mode = mm.dataset.motmode; MOT.cell = ""; try { localStorage.setItem("dept12MotMode", MOT.mode); } catch (x) { /* not saved on this device */ } render(); return; }
   if (e.target.closest && e.target.closest('[data-mot="back"]')) { MOT.view = "range"; MOT.pick = null; motCalClose(); render(); }
 });
 document.addEventListener("change", function (e) {
