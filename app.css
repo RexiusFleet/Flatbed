@@ -7,7 +7,7 @@
   --early:#3F7D3A;--anytime:#C6931A;--early-e:#9A6A15;--anytime-e:#7A4A22;--ext:#2F5D8C;
   --good:#3F7D3A;--warn:#C6931A;--bad:#B03A2E;
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
-  --mono:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif; /* TEST: was ui-monospace,"SF Mono","Cascadia Mono","Roboto Mono",Consolas,monospace */
+  --mono:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif; /* the label and number font: the same family as the interface; digits are equal width (tabular-nums on body) so columns line up */
   /* Type scale (D172) — collapses 17 ad hoc sizes (8px–23px, half-pixel steps
      included) down to 8 named steps. Each step's value is the size that
      already had the most call sites in its cluster, so this is a rename +
@@ -33,6 +33,7 @@
   --e1:0 1px 2px rgba(0,0,0,.08);--e2:0 8px 28px rgba(0,0,0,.28);
 }
 @media(prefers-color-scheme:dark){:root{
+  color-scheme:dark;
   --paper:#16181A;--panel:#1D2022;--panel-2:#25282B;--sunk:#111314;
   --ink:#E8E6E0;--ink-2:#9BA09A;--ink-3:#6B706A;
   --rule:rgba(232,230,224,.13);--rule-2:rgba(232,230,224,.24);
@@ -41,6 +42,7 @@
   --early:#5FA758;--anytime:#DCA92C;--early-e:#B98A2A;--anytime-e:#A9714A;--ext:#5A92C9;
   --good:#5FA758;--warn:#DCA92C;--bad:#D9635A;}}
 :root[data-theme="dark"]{
+  color-scheme:dark;
   --paper:#16181A;--panel:#1D2022;--panel-2:#25282B;--sunk:#111314;
   --ink:#E8E6E0;--ink-2:#9BA09A;--ink-3:#6B706A;
   --rule:rgba(232,230,224,.13);--rule-2:rgba(232,230,224,.24);
@@ -49,6 +51,7 @@
   --early:#5FA758;--anytime:#DCA92C;--early-e:#B98A2A;--anytime-e:#A9714A;--ext:#5A92C9;
   --good:#5FA758;--warn:#DCA92C;--bad:#D9635A;}
 :root[data-theme="light"]{
+  color-scheme:light;
   --paper:#F0EDE6;--panel:#FAF8F4;--panel-2:#E7E3DA;--sunk:#E2DED4;
   --ink:#1A1C19;--ink-2:#5C6058;--ink-3:#8A8D83;
   --rule:rgba(26,28,25,.14);--rule-2:rgba(26,28,25,.26);
@@ -59,7 +62,7 @@
 
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
-body{font-family:var(--font);background:var(--paper);color:var(--ink);font-size:var(--fs-body);line-height:1.45;
+body{font-family:var(--font);background:var(--paper);color:var(--ink);font-size:var(--fs-body);line-height:1.45;font-variant-numeric:tabular-nums;
      -webkit-font-smoothing:antialiased;display:flex;flex-direction:column;overflow:hidden}
 :focus-visible{outline:2px solid var(--focus);outline-offset:1px}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -238,8 +241,6 @@ main{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden
    the signaling; Go/Today/the primary button stay exactly as styled
    everywhere else in the app. */
 .toolbar.home-base-bar{position:relative;padding-left:22px}
-.toolbar.home-base-bar::before{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;background:var(--brand)}
-.toolbar.home-base-bar h2{color:var(--brand);font-weight:900}
 .pad{padding:10px 14px;overflow:auto;flex:1;animation:content-in var(--motion-ui) var(--ease-ui) both}
 @keyframes content-in{from{opacity:.35;transform:translateY(3px)}to{opacity:1;transform:none}}
 /* Database tables scroll inside the available app viewport. Previously the
@@ -296,10 +297,6 @@ main{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden
    absolute positioning doesn't participate in wrapping, so pinning it
    at a narrow width where siblings reflow to a second line would strand
    it disconnected from its own row's content. */
-@media (min-width: 1200px) {
-  .fmtbar .fb-fs{position:absolute;left:600px;top:50%;transform:translateY(-50%)}
-  .cw-daysshown .fb-fs{position:absolute;left:600px;top:50%;transform:translateY(-50%)}
-}
 
 aside{border-left:1px solid var(--rule-2);background:var(--panel);display:flex;flex-direction:column;min-height:0}
 .rail-hd{padding:8px 11px;border-bottom:1px solid var(--rule);display:flex;align-items:center;gap:7px}
@@ -321,18 +318,18 @@ aside{border-left:1px solid var(--rule-2);background:var(--panel);display:flex;f
 .chip.filled{border-color:transparent}
 /* External loads only: plain = white with a thick colored edge; pushed = soft tint of the driver color (set inline). */
 .chip.xchip{border-left-width:6px}
-.chip.tinted:hover{box-shadow:inset 0 0 0 100px rgba(0,0,0,.03)}
+.chip.tinted:hover{box-shadow:inset 0 0 0 100px color-mix(in srgb,var(--ink) 4%,transparent)}
 .chip .meta .numln{display:flex;flex-wrap:wrap;column-gap:4px;align-items:baseline;min-width:0;width:100%;line-height:1.2}
 .chip .meta .numln{flex-wrap:nowrap;column-gap:3px}
 .chip .meta .numln i{font-family:var(--font);font-style:normal;font-size:8.5px;font-weight:600;color:var(--ink-2);white-space:nowrap}
 .chip .meta .numln b{font-weight:500;font-size:9px;letter-spacing:-.03em}
 .chip.xchip{padding:3px 5px 3px 6px}
-.chip.xchip .who{font-size:11px;line-height:1.25}
+.chip.xchip .who{font-size:var(--fs-label);line-height:1.25}
 .chip.xchip .meta.meta-route .route-line{font-size:var(--fs-caption);line-height:1.2}
 .chip.xchip .note{font-size:9.5px;line-height:1.2;margin-top:1px}
 .chip.xchip .note{color:var(--ink)}
 .chip .note .notepad{vertical-align:-1px}
-.chip.filled:hover{box-shadow:inset 0 0 0 100px rgba(0,0,0,.05)}
+.chip.filled:hover{box-shadow:inset 0 0 0 100px color-mix(in srgb,var(--ink) 6%,transparent)}
 .chip.filled .who,.chip.filled .meta,.chip.filled .note,.chip.filled .dnote{color:inherit}
 .chip.filled .meta{opacity:.85}
 .chip.filled .note,.chip.filled .dnote{opacity:.9}
@@ -819,7 +816,7 @@ table.order-tracker .tracker-collapse-row td{padding:0;background:var(--panel-2)
   padding:0 12px;border:0;background:none;font-size:var(--fs-body-sm);font-weight:700;color:var(--ink);cursor:pointer}
 .tracker-collapse-hd:hover{background:var(--panel)}
 .tracker-collapse-arrow{display:inline-block;margin-right:7px;font-size:var(--fs-caption);color:var(--ink-3);transition:transform .12s}
-.tracker-collapse-hd[aria-expanded="true"] .tracker-collapse-arrow{transform:rotate(90deg)}
+.tracker-collapse-hd[aria-expanded="true"] .tracker-collapse-arrow{transform:rotate(180deg)}
 .tracker-collapse-ct{font-family:var(--mono);font-size:var(--fs-caption);color:var(--ink-3);font-weight:600}
 /* "Show more" paging inside an expanded collapse group (D235) — deliberately
    quieter than the toggle header above it; it's a secondary action, not
@@ -857,8 +854,8 @@ table.order-tracker .stage-actions{display:inline-flex;align-items:stretch;heigh
 .tracker-state.billed{background:var(--billed);color:var(--paper)}
 .tracker-action{width:62px;min-width:62px;max-width:62px;padding:0 6px;gap:4px;border:0;
   border-left:1px solid var(--rule-2);background:var(--panel);color:var(--ink-2);
-  font-size:var(--fs-caption);transition:width .16s ease-out,min-width .16s ease-out,max-width .16s ease-out,
-  padding .16s ease-out,opacity .12s ease-out,background-color .15s ease-out,color .15s ease-out}
+  font-size:var(--fs-caption);transition:width var(--motion-ui) var(--ease-ui),min-width var(--motion-ui) var(--ease-ui),max-width var(--motion-ui) var(--ease-ui),
+  padding var(--motion-ui) var(--ease-ui),opacity var(--motion-fast) var(--ease-ui),background-color var(--motion-fast) var(--ease-ui),color var(--motion-fast) var(--ease-ui)}
 .tracker-action:hover{background:var(--brand-soft);color:var(--ink)}
 .tracker-action.folding{width:0;min-width:0;max-width:0;padding:0;opacity:0;border-left-color:transparent}
 .freight-cell{display:flex;gap:4px;align-items:center;height:100%;cursor:text!important}
@@ -951,11 +948,11 @@ body.pre-auth #nav-scrim{display:none!important}
 body.pre-auth #bodywrap{grid-template-columns:minmax(0,1fr)}
 .login-err{color:var(--bad);font-size:var(--fs-body-sm);margin-top:8px;min-height:14px}
 #toast{position:fixed;bottom:16px;left:50%;transform:translate(-50%,7px) scale(.98);background:var(--ink);color:var(--paper);
-     padding:8px 14px;border-radius:var(--r-md);font-size:var(--fs-body-sm);z-index:400;opacity:0;
+     padding:8px 14px;border-radius:var(--r-md);font-size:var(--fs-body-sm);z-index:700;opacity:0;
      transition:opacity var(--motion-ui) var(--ease-ui),transform var(--motion-ui) var(--ease-ui);
      pointer-events:none;max-width:70vw;text-align:center}
 #toast.show{opacity:1;transform:translate(-50%,0) scale(1)}
-#toast.bad{background:var(--bad);color:#fff}
+#toast.bad{background:var(--bad);color:var(--paper)}
 .kbd{font-family:var(--mono);font-size:var(--fs-caption);border:1px solid var(--rule-2);border-bottom-width:2px;
      border-radius:var(--r-sm);padding:0 4px;background:var(--panel);color:var(--ink-2)}
 
@@ -990,7 +987,7 @@ body.pre-auth #bodywrap{grid-template-columns:minmax(0,1fr)}
 .history-head .hbtn{border:0;background:none;border-radius:0;font-size:var(--fs-h2)}
 .history-head .hbtn:hover{background:none;color:var(--ink)}
 @keyframes histFlash{0%,60%{box-shadow:0 0 0 3px var(--focus);}100%{box-shadow:0 0 0 0 rgba(0,0,0,0);}}
-.hist-flash{animation:histFlash 1.4s ease-out;position:relative;z-index:2}
+.hist-flash{animation:histFlash 1.6s ease-out;position:relative;z-index:2}
 .history-body{overflow:auto;min-height:0;flex:1;padding:10px;display:flex;flex-direction:column;gap:8px}
 .history-loading,.history-empty{padding:28px 16px;text-align:center;color:var(--ink-3);font-size:var(--fs-body-sm)}
 /* Collapsed by day (D135) — one header per day with reversible edits,
@@ -999,7 +996,7 @@ body.pre-auth #bodywrap{grid-template-columns:minmax(0,1fr)}
   border:1px solid var(--rule);border-radius:var(--r-lg);background:var(--panel);font-size:var(--fs-body-sm);font-weight:700;color:var(--ink)}
 .history-day-hd:hover{background:var(--panel-2)}
 .history-day-arrow{display:inline-block;margin-right:7px;font-size:var(--fs-caption);color:var(--ink-3);transition:transform .12s}
-.history-day-hd[aria-expanded="true"] .history-day-arrow{transform:rotate(90deg)}
+.history-day-hd[aria-expanded="true"] .history-day-arrow{transform:rotate(180deg)}
 .history-day-ct{font-family:var(--mono);font-size:var(--fs-caption);color:var(--ink-3);font-weight:600}
 .history-day-body{display:flex;flex-direction:column;gap:8px;margin-top:8px}
 /* Each event is a compact "chip" (Nate's ask): timestamp, actor, and the
@@ -1102,9 +1099,6 @@ details[open]>summary.sec-h::before{content:"\25BE"}
 .card{border:1px solid var(--rule-2);border-radius:var(--r-sm);background:var(--panel);padding:11px}
 .card h3{font-size:var(--fs-body-sm);font-weight:700;margin-bottom:3px}
 .card p{font-size:var(--fs-label);color:var(--ink-3);margin-bottom:8px;line-height:1.5}
-.spin{width:12px;height:12px;border:2px solid var(--rule-2);border-top-color:var(--brand);border-radius:50%;
-      display:inline-block;animation:sp .7s linear infinite;vertical-align:-2px}
-@keyframes sp{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 
 /* Keyboard shortcuts table (D59) */
@@ -1254,7 +1248,8 @@ body.nav-collapsed .nav-footer-btn>span:last-child{display:none}
 .nm-section-div,body.nav-collapsed .fmtbar-navspacer::after{height:1px;background:var(--rule-2)}
 .nm-section-div{margin:12px 8px 8px}
 .nm-dbentry{display:flex;align-items:center;gap:8px;width:100%;padding:11px 12px;border:0;border-radius:var(--r-lg);
-  background:none;color:var(--ink);font:inherit;font-size:var(--fs-body-sm);font-weight:700;text-align:left;cursor:pointer}
+  background:none;color:var(--ink);font:inherit;font-size:var(--fs-body-sm);font-weight:inherit;text-align:left;cursor:pointer}
+.nm-dbentry.on{font-weight:700}
 .nm-dbentry:hover{background:var(--panel-2)}
 .nm-dbentry.on{background:var(--brand-soft);color:var(--brand)}
 .nm-dbentry .ico{display:inline-flex;flex:none}
@@ -1307,7 +1302,7 @@ body.nav-collapsed .nav-footer-btn>span:last-child{display:none}
   #sidenav-resize{display:none}
   .sidenav-body{padding:10px 8px 24px;-webkit-overflow-scrolling:touch}
   #nav-scrim{display:block;position:fixed;left:0;right:0;top:52px;bottom:0;z-index:280;
-    border:0;background:rgba(0,0,0,.32);opacity:0;pointer-events:none;transition:opacity var(--motion-ui) var(--ease-ui)}
+    border:0;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity var(--motion-ui) var(--ease-ui)}
   body.mobile-nav-open #nav-scrim{opacity:1;pointer-events:auto}
   main{height:100%}
   input,select,textarea{font-size:var(--fs-h3)}
@@ -1475,11 +1470,11 @@ th.tsortable:hover{color:var(--ink);background:var(--panel)}
 
 /* Busy indicator in the header (busyStart in app.js) */
 .busy{display:inline-flex;align-items:center;gap:8px;margin-right:12px;font-size:var(--fs-label);color:var(--ink-2)}
-.spin{width:14px;height:14px;border:2px solid var(--rule-2);border-top-color:var(--brand);border-radius:50%;animation:spin .8s linear infinite;flex:none}
+.spin{width:14px;height:14px;border:2px solid var(--rule-2);border-top-color:var(--brand);border-radius:50%;display:inline-block;vertical-align:-2px;animation:spin .8s linear infinite;flex:none}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* Billing page (vBilling): drop strip, To Match list on the left, Billing Queue table on the right */
-.bill-page{padding-right:12px}
+.bill-page{padding:8px 14px 24px}
 .bill-drops{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
 .bill-drops .drop{margin:0;padding:12px}
 .bill-progress{display:flex;align-items:center;gap:8px;margin:0 0 12px;font-size:var(--fs-label);color:var(--ink-2)}
@@ -1704,7 +1699,7 @@ button.trf-past{width:100%;border:0;background:none;padding:0;font:inherit;color
 /* Motion polish — every hover, press, open and close eases the same way.
    Selection-ring cells (td.sel, td.over, marquee, fill handle) stay instant on purpose. */
 :root{interpolate-size:allow-keywords}
-.act-row,.af,.bill-x,.bord-b,.bord-pencil,.bord-sty,.bord-stybtn,.cell-link,.col-plus-h,.custom-accent-toggle,.drop,.dv-embed,.fb,.fb-font,.fb-fs-b,.font-opt,.gs-opt,.history-day-hd,.history-event,.history-head,.loc-opt,.mot-cal-grid button,.mot-cal-nav,.pm-item,.route-cell,.saved-accent-remove,.sw-cell,.sw-none,.tracker-action,.tracker-collapse-hd,.tracker-collapse-more,.tracker-open,.ctxmenu button,.navtoggle,.rail-toggle-icon,.nm-carrow,.nm-cicon,.toolbar input,.toolbar select,#drawer input,#drawer select,#drawer textarea,.modal-card input,.modal-card select,.modal-card textarea{
+.act-row,.af,.bill-x,.bord-b,.bord-pencil,.bord-sty,.bord-stybtn,.cell-link,.col-plus-h,.custom-accent-toggle,.drop,.dv-embed,.fb,.fb-font,.fb-fs-b,.font-opt,.gs-opt,.history-day-hd,.history-event,.history-head,.loc-opt,.mot-cal-grid button,.mot-cal-nav,.pm-item,.route-cell,.saved-accent-remove,.sw-cell,.sw-none,.tracker-collapse-hd,.tracker-collapse-more,.tracker-open,.ctxmenu button,.navtoggle,.rail-toggle-icon,.nm-carrow,.nm-cicon,.toolbar input,.toolbar select,#drawer input,#drawer select,#drawer textarea,.modal-card input,.modal-card select,.modal-card textarea{
   transition:background-color var(--motion-fast) var(--ease-ui),border-color var(--motion-fast) var(--ease-ui),color var(--motion-fast) var(--ease-ui),
   box-shadow var(--motion-fast) var(--ease-ui),opacity var(--motion-fast) var(--ease-ui),transform var(--motion-fast) var(--ease-ui)}
 .btn:active:not(:disabled),.hbtn:active,.pill:active,.sub-tab:active,.chip:active,.fb-fs-b:active,.mot-cal-nav:active{transform:scale(.97)}
@@ -1712,7 +1707,8 @@ button.trf-past{width:100%;border:0;background:none;padding:0;font:inherit;color
 .btn:disabled{transition:opacity var(--motion-ui) var(--ease-ui)}
 /* Popups: grow from their button, shrink back on close */
 #mot-cal{transform-origin:top left;animation:menu-in var(--motion-ui) var(--ease-ui) both}
-#mot-cal.closing,.act-pop.closing{animation:menu-out var(--motion-fast) var(--ease-ui) both;pointer-events:none}
+#mot-cal.closing,.act-pop.closing,.ctxmenu.closing,.swpick.closing,.bordmenu.closing,.font-menu.closing{animation:menu-out var(--motion-fast) var(--ease-ui) both;pointer-events:none}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
 .act-pop.pop-in{transform-origin:top right;animation:menu-in var(--motion-ui) var(--ease-ui) both}
 /* Collapse groups in trackers: rows fade in under their header, fade out before they go */
 @keyframes row-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
@@ -1726,7 +1722,7 @@ details[open]::details-content{block-size:auto}
 .grid-wrap.page-in,.rpt-page.page-in{animation:content-in var(--motion-ui) var(--ease-ui) both}
 
 /* Scheduler bar: running $/mi (collapsible) beside the date controls, Internal Rate at the right edge */
-.toolbar.sched-bar{--bar-h:46px;flex-wrap:nowrap;container-type:inline-size}
+.toolbar.sched-bar{flex-wrap:nowrap;container-type:inline-size}
 .sched-stats{display:flex;align-items:center;min-width:0;align-self:stretch}
 .sched-statwrap{display:flex;align-items:center;gap:6px;min-width:0}
 .ss-rates{display:flex;justify-content:flex-end;overflow:hidden;max-width:560px;opacity:1;transition:max-width var(--motion-panel) var(--ease-ui),opacity var(--motion-ui) var(--ease-ui)}
@@ -1795,7 +1791,7 @@ details[open]::details-content{block-size:auto}
 .trf-tbl td{text-align:right;padding:8px 14px;border-bottom:1px solid var(--rule);font-variant-numeric:tabular-nums}
 .trf-dep td{background:var(--panel-2);font-weight:650;cursor:pointer}
 .trf-dep i,.trf-b i{display:inline-block;font-style:normal;margin-right:7px;color:var(--ink-3);transition:transform var(--motion-ui) var(--ease-ui)}
-.trf-dep.open i,.trf-b.open i{transform:rotate(90deg)}
+.trf-dep.open i,.trf-b.open i{transform:rotate(180deg)}
 .trf-trk td:first-child{padding-left:34px}
 .trf-tot td{font-weight:650;border-top:1px solid var(--rule-2);border-bottom:0}
 .trf-none{text-align:center!important;color:var(--ink-3);padding:20px!important}
@@ -1936,7 +1932,7 @@ body.bill-dragging{user-select:none;-webkit-user-select:none;cursor:ns-resize}
 .fleet-spare .row.hdr{font-size:var(--fs-caption);text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
 
 /* ── Sign window (rate con review and signing) ── */
-.sgn{position:fixed;inset:0;z-index:330;background:rgba(0,0,0,.42);display:grid;place-items:center;padding:3vh 3vw;outline:none}
+.sgn{position:fixed;inset:0;z-index:330;background:rgba(0,0,0,.35);animation:fade-in var(--motion-ui) var(--ease-ui) both;display:grid;place-items:center;padding:3vh 3vw;outline:none}
 .sgn-win{position:relative;width:min(1240px,100%);height:min(900px,100%);display:flex;flex-direction:column;background:var(--paper);border:1px solid var(--rule-2);border-radius:var(--r-lg);box-shadow:0 24px 70px rgba(0,0,0,.4);overflow:hidden}
 .sgn-hd{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--rule-2);background:var(--panel)}
 .sgn-hd h2{margin:0;font-size:var(--fs-body-lg);font-weight:760;letter-spacing:-.01em}
@@ -1958,7 +1954,7 @@ body.bill-dragging{user-select:none;-webkit-user-select:none;cursor:ns-resize}
 .sgn-st.sel{outline:1.5px dashed var(--brand);outline-offset:3px}
 .sgn-st .x{position:absolute;right:-12px;top:-14px;width:18px;height:18px;border-radius:50%;background:var(--bad);color:#fff;font:700 12px/18px var(--font);text-align:center;cursor:pointer;display:none}
 .sgn-st.sel .x{display:block}
-.sgn-hit{position:absolute;background:rgba(255,214,0,.38);outline:2px solid rgba(230,160,0,.9);border-radius:2px;pointer-events:none;animation:sgnflash 2.4s ease-out forwards}
+.sgn-hit{position:absolute;background:rgba(255,214,0,.38);outline:2px solid rgba(230,160,0,.9);border-radius:2px;pointer-events:none;animation:sgnflash 1.6s ease-out forwards}
 @keyframes sgnflash{0%,60%{opacity:1}100%{opacity:0}}
 .sgn-side{display:flex;flex-direction:column;min-height:0;background:var(--panel)}
 .sgn-side .scroll{flex:1;overflow:auto;padding:12px 14px}
@@ -1979,7 +1975,7 @@ body.bill-dragging{user-select:none;-webkit-user-select:none;cursor:ns-resize}
 .sgn-pop{position:absolute;z-index:5;right:16px;top:52px;background:var(--panel);border:1px solid var(--rule-2);border-radius:var(--r-md);box-shadow:var(--e2);padding:12px;width:330px}
 .sgn-pop h4{margin:0 0 8px;font-size:var(--fs-body)}
 .sgn-pop .tabs{display:flex;gap:4px;margin-bottom:8px}
-.sgn-pop canvas.pad{width:100%;height:110px;background:#fff;border:1px solid var(--rule-2);border-radius:var(--r-sm);touch-action:none;cursor:crosshair}
+.sgn-pop canvas.pad{padding:0;animation:none;flex:none;overflow:visible;width:100%;height:110px;background:#fff;border:1px solid var(--rule-2);border-radius:var(--r-sm);touch-action:none;cursor:crosshair}
 .sgn-pop .prev{height:56px;background:#fff;border:1px solid var(--rule-2);border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;margin-top:8px}
 .sgn-pop .prev img{max-height:48px;max-width:90%}
 .sgn-pop input{width:100%;box-sizing:border-box;background:var(--paper);border:1px solid var(--rule-2);border-radius:var(--r-sm);padding:6px 8px;font-size:var(--fs-body)}
@@ -2006,7 +2002,7 @@ body.bill-dragging{user-select:none;-webkit-user-select:none;cursor:ns-resize}
 .tgl-ui{position:relative;width:28px;height:16px;border-radius:999px;background:var(--rule-2);flex:none;transition:background-color var(--motion-fast) var(--ease-ui)}
 .tgl-ui::after{content:"";position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:transform var(--motion-fast) var(--ease-ui)}
 .tgl input:checked+.tgl-ui{background:var(--brand)}
-.tgl input:checked+.tgl-ui::after{transform:translateX(12px)}
+.tgl input:checked+.tgl-ui::after{transform:translateX(12px);background:var(--brand-ink)}
 .tgl input:focus-visible+.tgl-ui{outline:2px solid var(--focus);outline-offset:2px}
 .tgl input:disabled+.tgl-ui{opacity:.55}
 .tgl:hover .tgl-t{color:var(--ink)}

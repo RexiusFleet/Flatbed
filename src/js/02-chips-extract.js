@@ -198,15 +198,17 @@ function loadDriverActivity() {
     });
     try { repaintSeen(); } catch (e) { /* header not drawn yet */ }
     if (sig === DRIVER_SIG) return;
+    // In a text box: leave it for the next check (the signature is only kept once the screen shows it), so nothing is dropped.
+    var a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA)$/.test(a.tagName) && a.type !== "checkbox" && a.type !== "radio") return;
     var first = DRIVER_SIG === "";
     DRIVER_SIG = sig;
-    var typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
-    if (DRAWER_OID && !typing) {
+    if (DRAWER_OID) {
       var nEl = $("#dw-drvnotes"), sEl = $("#dw-drvscans");
       if (nEl) nEl.outerHTML = driverNotesHtml(DRAWER_OID);
       if (sEl) sEl.outerHTML = driverScansHtml(DRAWER_OID);
     }
-    if (!first && !typing) { try { render(); } catch (e) { /* mid-load */ } }
+    if (!first) { try { render(); } catch (e) { /* mid-load */ } }
   }).catch(function () { /* offline or not signed in yet: try again next minute */ });
 }
 // Every 15 seconds while the dashboard is in front, and right away when you come back to it.
@@ -284,7 +286,7 @@ function driverScansHtml(oid) {
     var status = !bill ? "Not used for billing" : bill === oid ? (here ? "Billing with this load" : "Moved here from " + (src ? orderLabel(src) : "another load"))
       : "Billing with " + (order(bill) ? orderLabel(order(bill)) : "another load");
     return '<div class="drvnote dscan"><div class="drvnote-hd"><b>' + esc(r.driver || "Driver") + "</b><span>" +
-      esc(d.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" }) + " " +
+      esc(fmtDate(d) + " " +
         d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + " · " + r.pages + " page" + (r.pages > 1 ? "s" : "")) + "</span></div>" +
       '<div class="dscan-row"><span class="dscan-st' + (bill ? "" : " off") + '">' + esc(status) + "</span>" +
       '<button class="btn sm" data-viewpath="' + esc(r.storage_path) + '" data-viewname="POD scan">View</button></div>' +

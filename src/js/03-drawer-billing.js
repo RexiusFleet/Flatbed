@@ -140,7 +140,7 @@ function delOrderModal(oid) {
   openModal('<div class="modal-hd"><h2>Delete this order?</h2></div><div class="modal-body">' +
     '<p style="line-height:1.5;margin:0 0 10px">Deleting <b>' + esc(name) + "</b> permanently removes it, its place on the Scheduler, and its documents. This cannot be undone.</p>" +
     (canCx ? '<p style="line-height:1.5;margin:0;color:var(--ink-2)">Want to keep the data? <b>Cancel the order</b> instead: it stays on file, comes off the Scheduler and Staging, is not counted in any report, and can be restored later.</p>' : "") +
-    '</div><div class="modal-ft"><button class="btn" id="modal-cancel">Never Mind</button><span style="flex:1"></span>' +
+    '</div><div class="modal-ft"><button class="btn" id="modal-cancel">Never Mind</button>' +
     (canCx ? '<button class="btn bad" id="del-order-cx" data-oid="' + oid + '">Cancel Order</button>' : "") +
     '<button class="btn del" id="del-order-go" data-oid="' + oid + '">Delete Order</button></div>');
 }
@@ -218,7 +218,7 @@ function openInternalOrder(o) {
       dcellRow(fieldLabel("bagger", "notes", "Customer notes"), "locations", loc && loc.id, "notes", loc && loc.notes) +
       "</tbody></table>";
     var last = lastOrderDate(cust.id, o.id);
-    h += '<div class="note-bar" style="margin-top:8px">Last order: ' + (last ? esc(last) : "none found") + "</div>";
+    h += '<div class="note-bar" style="margin-top:8px">Last order: ' + (last ? esc(isoToMdy(String(last).slice(0, 10)) || last) : "none found") + "</div>";
   }
   h += "</details>";
 
@@ -543,8 +543,8 @@ function openTransferOrder(o) {
   docPrefetchAll();
 }
 function openOrder(oid) {
-  DRAWER_OID = oid;
   var o = order(oid); if (!o) return;
+  DRAWER_OID = oid;
   if (o.is_transfer) return openTransferOrder(o);
   if (!isExt(o)) return openInternalOrder(o);
   var ch = buildChip(o), ds = docsFor(oid);
@@ -657,7 +657,7 @@ function pnTargets(o) {
   return out;
 }
 function pnLine(o, kind, text) {
-  var d = new Date(), ds = (d.getMonth() + 1) + "/" + d.getDate() + "/" + String(d.getFullYear()).slice(2);
+  var ds = isoToMdy(pacificToday());
   return ds + " · from " + (o.rexius_order_no || o.broker_load_no || "an order with no number") + " · " + pnKindLabel(kind) + ": " + String(text).replace(/\s*\n+\s*/g, " ").trim();
 }
 var PN_OPEN = null;
@@ -721,7 +721,8 @@ document.addEventListener("click", function (e) {
   if (e.target.closest("[data-pn-cancel]")) { pnClose(); return; }
   if (PN_OPEN && !e.target.closest("#pn-pop")) pnClose();
 });
-document.addEventListener("keydown", function (e) { if (e.key === "Escape" && PN_OPEN) pnClose(); });
+// Escape closes one layer at a time: the add-note popover first, the side window on the next press.
+document.addEventListener("keydown", function (e) { if (e.key === "Escape" && PN_OPEN) { pnClose(); e.stopImmediatePropagation(); } });
 document.addEventListener("input", function (e) {
   var t = e.target; if (!t.matches || !t.matches('[data-of="notes"],[data-of="driver_note"]')) return;
   var b = t.parentNode && t.parentNode.querySelector(".pn-plus"); if (b) b.disabled = !t.value.trim();
@@ -738,7 +739,7 @@ function driverNotesHtml(oid) {
     var po = order(oid), plus = po && !po.is_transfer ? '<button type="button" class="pn-plus" data-pndn="' + esc(n.id) +
       '" title="Add this note to a customer or location" aria-label="Add this note to a customer or location">+</button>' : "";
     return '<div class="drvnote"><div class="drvnote-hd"><b>' + esc(n.driver || "Driver") + "</b><span>" +
-      esc((n.truck ? n.truck + " · " : "") + d.toLocaleDateString([], { month: "numeric", day: "numeric" }) + " " +
+      esc((n.truck ? n.truck + " · " : "") + fmtDate(d) + " " +
       d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) + "</span>" + plus + "</div>" + esc(n.text) + "</div>";
   }).join("") + "</div></div>";
 }
@@ -746,7 +747,7 @@ function driverNotesHtml(oid) {
    (source "typed"). The rate con's own number, when it has been read, stays in external_rate_original. */
 function rateText(v) {
   var n = v === null || v === undefined || v === "" ? null : Number(v);
-  return n === null || isNaN(n) ? "" : "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n === null || isNaN(n) ? "" : fmtMoney(n);
 }
 function rateInputHtml(o, cls) {
   var orig = o.external_rate_original != null && o.external_rate_original !== "" && Number(o.external_rate_original) !== Number(o.external_rate);
@@ -804,6 +805,7 @@ function setDrawerHtml(h) {
 function closeDrawer() {
   $("#drawer").classList.remove("on"); $("#scrim").classList.remove("on");
   $("#drawer").setAttribute("aria-hidden", "true"); DRAWER_OID = null; DRAWER_SHOWN = null; ROUTE_SEL = null;
+  var sug = document.getElementById("loc-suggest-portal"); if (sug) sug.style.display = "none";
 }
 function packageDocs(oid) {
   var o = order(oid), ds = docsFor(oid);
@@ -821,15 +823,13 @@ function fetchDocB64(d) {
 }
 function doPackage(oid, mode) {
   var o = order(oid), ds = packageDocs(oid);
-  if (!ds.length) { toast("No documents attached to package.", true); return Promise.reject(new Error("no docs")); }
+  if (!ds.length) { toast("No documents attached to package", true); var none = new Error("no docs"); none.shown = true; return Promise.reject(none); }
   var base = (buildChip(o).title || "package").replace(/[^A-Za-z0-9]+/g, "") + "_" +
              (o.rexius_order_no || o.broker_load_no || "pkg");
   if (mode === "individual") {
-    ds.forEach(function (d) {
-      fetchDocB64(d).then(function (b) { saveBlob(d.original_filename || (base + ".pdf"), bytesFromB64(b)); });
-    });
-    toast("Downloading " + ds.length + " file(s) individually");
-    return Promise.resolve();
+    return Promise.all(ds.map(function (d) {
+      return fetchDocB64(d).then(function (b) { saveBlob(d.original_filename || (base + ".pdf"), bytesFromB64(b)); });
+    })).then(function () { toast("Downloaded " + ds.length + " file" + (ds.length === 1 ? "" : "s")); });
   }
   return Promise.all(ds.map(fetchDocB64)).then(mergePdfs).then(function (merged) {
     // Outlook billing drafts were removed in the Supabase port (out of
@@ -838,6 +838,8 @@ function doPackage(oid, mode) {
     saveBlob(base + ".pdf", bytesFromB64(merged)); toast("Merged package downloaded");
   });
 }
+// A failed package download says so (the "no documents" case has already shown its own message).
+function pkgFailed(err) { if (!err || !err.shown) toast((err && err.message) || "Download failed", true); }
 /* Billing completion (D62) — mark an external order billed (out of the queue)
    or reopen it. */
 function billOrder(oid, billed) {
@@ -897,7 +899,7 @@ function askMarkBilled(ids) {
     '<div class="modal-body"><p style="line-height:1.5;margin:0">' +
     (one ? esc(orderLabel(o1)) + " downloaded." : ids.length + " packages downloaded.") +
     " Mark " + (one ? "it" : "them") + " billed to take " + (one ? "it" : "them") + " out of the queue?</p></div>" +
-    '<div class="modal-ft"><button class="btn" id="modal-cancel">Not Yet</button>' +
+    '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
     '<button class="btn pri" id="modal-confirm">Mark Billed</button></div>');
   $("#modal-confirm").addEventListener("click", function () {
     closeModal();
@@ -918,5 +920,5 @@ function billBatch() {
   var chain = Promise.resolve();
   ids.forEach(function (id) { chain = chain.then(function () { return doPackage(id, "merged"); }); });
   chain.then(function () { toast(ids.length + " package" + (ids.length > 1 ? "s" : "") + " downloaded"); askMarkBilled(ids); })
-    .catch(function (e) { toast(e.message || "Download failed", true); });
+    .catch(pkgFailed);
 }

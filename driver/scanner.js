@@ -563,10 +563,10 @@ function onFile(e) {
   ST.queue = files; nextPhoto();
 }
 function finish() {
-  var pages = ST.pages.slice(), done = ST.onDone;
+  var pages = ST.pages.slice(), done = ST.onDone, mine = ST;
   ST.step = "busy"; ST.busyText = "Saving PDF…"; paint();
-  loadPdfLib().then(function () { later(build); },
-    function () { if (!ST) return; ST.step = "review"; paint(); alertIn("The PDF tool didn't load. Check the connection and try again."); });
+  loadPdfLib().then(function () { if (ST === mine) later(build); },
+    function () { if (ST !== mine) return; ST.step = "review"; paint(); alertIn("The PDF tool didn't load. Check the connection and try again."); });
   function build() {
     var P = window.PDFLib;
     P.PDFDocument.create().then(function (doc) {
@@ -582,9 +582,10 @@ function finish() {
         });
       }, Promise.resolve()).then(function () { return doc.save(); });
     }).then(function (bytes) {
+      if (ST !== mine) return;      // cancelled while the PDF was being made: nothing is sent
       close();
       if (done) done(new Blob([bytes], { type: "application/pdf" }), pages.length);
-    }, function (err) { ST.step = "review"; paint(); alertIn("Couldn't make the PDF: " + (err && err.message || err)); });
+    }, function (err) { if (ST !== mine) return; ST.step = "review"; paint(); alertIn("Couldn't make the PDF: " + (err && err.message || err)); });
   }
 }
 function onClick(e) {

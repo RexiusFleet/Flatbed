@@ -66,6 +66,18 @@ document.addEventListener("touchend", function (e) {
   }
   TOUCHDRAG = null;
 }, { passive: false });
+// The system took the touch away (a call, a gesture, a notification): clear the dragged copy without dropping anything.
+document.addEventListener("touchcancel", function () {
+  if (!TOUCHDRAG) return;
+  clearTimeout(TOUCHDRAG.timer);
+  if (TOUCHDRAG.started) {
+    if (TOUCHDRAG.clone) TOUCHDRAG.clone.remove();
+    TOUCHDRAG.chip.classList.remove("dragging");
+    $$(".over").forEach(function (n) { n.classList.remove("over"); });
+    DRAG = null;
+  }
+  TOUCHDRAG = null;
+});
 /* D208: Escape closes the mobile navigation drawer without affecting the
    desktop rail's persisted collapsed/expanded preference. */
 document.addEventListener("keydown", function (e) {

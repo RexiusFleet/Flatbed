@@ -2,7 +2,7 @@
 /* ── Settings (D54) ──────────────────────────────────────────────────────── */
 var CUSTOM_ACCENT_OPEN = false;
 function vSettings(sub) {
-  var h = '<div class="settings-head"><div><h2>Settings</h2><p>Personalize this workspace.</p></div></div>';
+  var h = "";
   if (sub === "shortcuts") return '<div class="settings-shell">' + h + settingsShortcuts() + "</div>";
   return '<div class="settings-shell">' + h + settingsAppearance() + "</div>";
 }
@@ -41,7 +41,7 @@ function schedulerSizingHtml() {
     "</div>";
   return '<section class="set-card set-wide"><div class="set-title"><div><div class="set-h">Scheduler sizing</div>' +
     '<p>Set the working size directly. Comfortable spacing is now the permanent baseline.</p></div>' +
-    '<button class="btn sm" data-schedsize-reset="1">Reset size</button></div>' +
+    '<button class="btn sm" data-schedsize-reset="1">Reset Size</button></div>' +
     '<div class="set-row">' +
     '<label class="setting-field"><span>Row height</span><span class="fb-fs" aria-label="Row height">' +
       '<button class="fb-fs-b" data-schedsize-step="rowHeight|-4" title="Shorter rows">&minus;</button>' +
@@ -64,7 +64,7 @@ function settingsAppearance() {
     '<p>Light, dark, or match this device.</p></div></div>' +
     '<div class="setting-choices" role="group" aria-label="Theme">' + prefBtn("theme", "system", "System") +
     prefBtn("theme", "light", "Light") + prefBtn("theme", "dark", "Dark") + "</div>" +
-    '<div class="theme-note">Additional themes can include their own texture and motion.</div></section>';
+    '</section>';
   h += '<section class="set-card accent-card set-accent"><div class="set-title"><div><div class="set-h">Accent</div>' +
     '<p>Choose a color.</p></div></div>' +
     '<div class="accent-palette" role="group" aria-label="Accent colors">' + accentPresetButtons(ACCENT_PRESETS) + '</div>' +
@@ -72,12 +72,12 @@ function settingsAppearance() {
     '<div class="accent-preview" id="accent-preview"><span class="accent-dot"></span><b>Selected accent</b>' +
       '<span id="accent-value">' + PREFS.accent + '</span></div>' +
     '<div class="custom-accent"><button class="custom-accent-toggle" data-custom-accent-toggle="1" aria-expanded="' + CUSTOM_ACCENT_OPEN +
-      '"><span aria-hidden="true">' + (CUSTOM_ACCENT_OPEN ? '&#9662;' : '&#9656;') + '</span>Custom color</button>' +
+      '"><span aria-hidden="true">' + (CUSTOM_ACCENT_OPEN ? '&uarr;' : '&darr;') + '</span>Custom color</button>' +
       (CUSTOM_ACCENT_OPEN ? '<div class="custom-accent-body">' +
       '<div class="accent-editor"><input type="color" id="pref-accent-wheel" value="' + PREFS.accent +
         '" aria-label="Choose custom accent color"><div class="accent-values"><label for="pref-accent-hex">Hex color</label>' +
         '<input id="pref-accent-hex" class="accent-hex" value="' + PREFS.accent + '" maxlength="7" spellcheck="false"></div>' +
-        '<button class="btn sm pri" data-accent-save="1">Save color</button></div>' +
+        '<button class="btn sm pri" data-accent-save="1">Save Color</button></div>' +
       '<div class="setting-help" id="accent-status">Hard-to-read colors are blocked automatically.</div></div>' : '') + '</div></section>';
   h += '<section class="set-card set-type"><div class="set-title"><div><div class="set-h">Typography</div>' +
     '<p>Interface font, and the font for labels and numbers.</p></div></div>' +
@@ -102,7 +102,7 @@ function orderNumberingHtml() {
   var cfg = orderNumberSettings();
   return '<section class="set-card set-wide numbering-card"><div class="set-title"><div><div class="set-h">Order numbering</div>' +
     '<p>Controls new numbers only. Existing orders are never renamed.</p></div>' +
-    '<button class="btn pri" data-numbering-save="1">Save numbering</button></div>' +
+    '<button class="btn pri" data-numbering-save="1">Save Numbering</button></div>' +
     '<div class="numbering-grid">' +
       '<div class="numbering-group"><h3>Bag Orders</h3>' +
         '<label class="setting-field"><span>Format</span><input id="numbering-internal-pattern" value="' + esc(cfg.internal_pattern) + '"></label>' +
@@ -165,8 +165,8 @@ function settingsHelp() {
       "work, routes, documents, and billing. Bare reserved Bag Order rows and cancelled orders are not included in the active count."],
     ["Order numbers",
       "Use <b>Add Orders</b> in Bag Orders to reserve a sequential block for a month, year, starting number, and quantity. " +
-      "<b>+ Add one</b> reserves the next number in the selected month. Administrators can change both order-number formats " +
-      "and reporting department codes under <b>Settings → General</b>. A format change applies only to new numbers; historical numbers stay unchanged."],
+      "<b>Add One Order</b> reserves the next number for this month. Both order-number formats " +
+      "and reporting department codes are set under <b>Settings → General</b>. A format change applies only to new numbers; historical numbers stay unchanged."],
     ["External routes and rate confirmations",
       "Create a blank External Order or drop a rate confirmation into the drop area. A normal order has one pickup and one " +
       "delivery; open the route editor when an order needs additional stops. External order numbers remain editable and can be entered when available."],
@@ -183,12 +183,12 @@ function settingsHelp() {
       "<b>Billing → Internal Transfers</b> adds up those costs by department and marks each transfer done."],
     ["Settings and shortcuts",
       "General contains theme, accent, font, order numbering, and Scheduler sizing. Shortcuts can be " +
-      "re-recorded, and <b>Add shortcut</b> gives an action an additional key combination."],
+      "re-recorded under <b>Settings → Shortcuts</b>."],
     ["Undo and history",
       "Undo and Redo cover changes made in the current session. Open History for the shared audit trail and " +
       "review a reversible change before restoring it. External actions such as sending data to another service remain recorded but are not reversed remotely."],
     ["Reports",
-      "The Reports dashboard holds the cards you build; Export Everything downloads every order for Excel. " +
+      "The Reports dashboard holds the cards you add; <b>Export CSV</b> downloads every order for Excel. " +
       "Exports use stored order fields and department codes; they do not depend on the visible order-number pattern."]
   ];
   return faqs.map(function (f) {
@@ -411,7 +411,7 @@ function motAssignShop(from, to) {
         return n;
       });
     });
-  }, function () { return 0; });
+  }).catch(function () { return 0; });
 }
 // The window: one line per trip the function would assign. Resolves with the Motive ids left ticked ([] = skip). Closing the
 // window any other way counts as skipping, so a pull never hangs on it.
@@ -485,8 +485,11 @@ function motBuckets(truck, day) {
     var m = motOrderMiles(o) || 0;
     if (o.is_transfer === true || o.is_transfer === "true") intf += m; else bag += m;
   });
-  var rest = T == null ? null : T - bag - intf;
-  return { total: T, bag: bag, intf: intf, ext: rest == null ? null : Math.max(0, rest), over: rest != null && rest < 0 ? -rest : 0, extOrders: ext };
+  var rest = T == null ? null : T - bag - intf, over = rest != null && rest < 0 ? -rest : 0;
+  // The ELD's total is what the truck drove. When the miles typed on its bag and internal orders come to more than that, both are
+  // scaled down to fit (and "over" says by how much), so Bag + Internal + External always equals the ELD total on every tile and bar.
+  if (over && bag + intf > 0) { var k = T / (bag + intf); bag *= k; intf *= k; }
+  return { total: T, bag: bag, intf: intf, ext: rest == null ? null : Math.max(0, rest), over: over, extOrders: ext };
 }
 function motFmtTime(iso) { if (!iso) return "—"; var d = new Date(iso); return isNaN(d) ? "—" : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }); }   // 24-hour, e.g. 06:45 and 17:30
 function motTruckDriver(truck) { var t = (DB.trucks || []).filter(function (x) { return String(x.number) === String(truck); })[0]; return t && t.driver_name || ""; }
@@ -555,20 +558,20 @@ function mrvCardsHtml() {
       if (r.ext) {
         var rate = motNum(o.external_rate);
         h += '<div class="mrv-r ext"><span class="mrv-tag ' + cls + '">' + type + "</span><span>" + esc(mrvLabel(o)) + '</span><span class="mrv-n">' +
-          (c.extMiles != null ? c.extMiles : "") + '</span><span class="mrv-n mute">' + (rate != null ? "$" + rate.toLocaleString() + " rate" : "no rate") +
-          '</span><span class="mrv-n">' + (c.extRpm ? "$" + c.extRpm.toFixed(2) : "") + "</span></div>";
+          (c.extMiles != null ? c.extMiles : "") + '</span><span class="mrv-n mute">' + (rate != null ? fmtMoney(rate) + " rate" : "no rate") +
+          '</span><span class="mrv-n">' + (c.extRpm ? fmtMoney(c.extRpm) : "") + "</span></div>";
         return;
       }
       if (r.done) {
         h += '<div class="mrv-r done"><span class="mrv-tag ' + cls + '">' + type + "</span><span>" + esc(mrvLabel(o)) + ' <small>(done)</small></span><span class="mrv-n">' +
-          (motNum(o.miles) != null ? o.miles : "") + '</span><span class="mrv-n">' + (r.costShown != null ? "$" + r.costShown : "") + '</span><span></span></div>';
+          (motNum(o.miles) != null ? o.miles : "") + '</span><span class="mrv-n">' + (r.costShown != null ? fmtMoney(r.costShown) : "") + '</span><span></span></div>';
         return;
       }
       var sug = c.sug[r.id], mShown = r.m != null ? r.m : null, mm = mShown != null ? mShown : sug;
       var auto = mm != null ? motFreightCost(mm) : null;
       h += '<div class="mrv-r"><span class="mrv-tag ' + cls + '">' + type + "</span><span>" + esc(mrvLabel(o)) + '</span>' +
         '<input class="mrv-in' + (r.m == null ? " sug" : "") + '" data-mrv="' + gi + "|" + ri + '|m" value="' + (r.m != null ? r.m : "") + '" placeholder="' + (sug != null ? sug : "") + '" inputmode="decimal" aria-label="Miles">' +
-        '<input class="mrv-in' + (r.cost == null ? " sug" : "") + '" data-mrv="' + gi + "|" + ri + '|c" value="' + (r.cost != null ? r.cost : "") + '" placeholder="' + (auto != null ? "$" + auto.toFixed(2) : "") + '" inputmode="decimal" aria-label="Cost">' +
+        '<input class="mrv-in' + (r.cost == null ? " sug" : "") + '" data-mrv="' + gi + "|" + ri + '|c" value="' + (r.cost != null ? r.cost : "") + '" placeholder="' + (auto != null ? fmtMoney(auto) : "") + '" inputmode="decimal" aria-label="Cost">' +
         "<span></span></div>";
     });
     if (c.over) h += '<div class="mrv-flag bad">Over by ' + Math.round(c.over * 10) / 10 + " miles. ELD recorded " + c.total + ".</div>";
@@ -576,7 +579,7 @@ function mrvCardsHtml() {
     return h + "</div>";
   }).join("");
 }
-function fmtLongDay(iso) { var d = new Date(iso + "T12:00:00"); return d.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" }); }
+function fmtLongDay(iso) { var d = new Date(iso + "T12:00:00"); return d.toLocaleDateString("en-US", { weekday: "short" }) + " " + isoToMdy(iso); }
 function mrvOpen(note) {
   mrvBuild(); MRV.note = note || "";
   openModal('<div class="modal-hd"><h2>Sync Delivery Dates</h2></div><div class="modal-body mrv-body">' +
@@ -589,10 +592,13 @@ function mrvOpen(note) {
 document.addEventListener("input", function (e) {
   var el = e.target.closest && e.target.closest("[data-mrv]"); if (!el) return;
   var p = el.dataset.mrv.split("|"), g = MRV.groups[+p[0]], r = g && g.rows[+p[1]]; if (!r) return;
-  var v = el.value.replace(/[^0-9.]/g, ""), n = v === "" || v === "." ? null : Number(v), pos = el.selectionStart;
+  var v = el.value.replace(/[^0-9.]/g, ""), dot = v.indexOf("."), pos = el.selectionStart;
+  if (dot >= 0) v = v.slice(0, dot + 1) + v.slice(dot + 1).replace(/\./g, "");      // one decimal point only
+  var n = v === "" || v === "." ? null : Number(v);
   if (p[2] === "m") r.m = n; else r.cost = n;
   $("#mrv-cards").innerHTML = mrvCardsHtml();
-  var back = document.querySelector('[data-mrv="' + el.dataset.mrv + '"]'); if (back) { back.focus(); try { back.setSelectionRange(pos, pos); } catch (x) { /* not a text box */ } }
+  // The cards are redrawn from the numbers; put back exactly what was typed ("12." or "45.50") so a decimal can be entered.
+  var back = document.querySelector('[data-mrv="' + el.dataset.mrv + '"]'); if (back) { back.value = v; back.focus(); try { back.setSelectionRange(pos, pos); } catch (x) { /* not a text box */ } }
 });
 function mrvSave() {
   var jobs = [];
@@ -614,7 +620,7 @@ function mrvSave() {
       busyEnd();
       return reload().then(function () {
         closeModal(); toast("Saved " + (jobs.length - failed) + " order" + (jobs.length - failed === 1 ? "" : "s") + (failed ? " · " + failed + " failed" : ""), failed > 0); render();
-      });
+      }).catch(function (err) { if (btn) btn.disabled = false; toast(err.message || "Could not reload", true); });
     }
     var j = jobs[i++], body = { order_id: j.r.id, miles: String(j.m) };
     if (j.r.cost != null) body.freight_amount = String(j.r.cost);        // a typed cost wins; otherwise the server works it out from the miles
@@ -764,7 +770,6 @@ function reload() { RELOADING++; return api("bootstrap").then(function (d) {
     var pmNew = placement();
     (d.orders || []).forEach(function (o) { if (!seenIds[o.id] && canStageOrder(o, pmNew[o.id])) STAGED.push(o.id); });
   }
-  AUTOSTAGE_OFF = false;
   schedNode = null; render();
   if (typeof rptOnReload === "function") rptOnReload();
   if (!DRIVER_BOOTED) { DRIVER_BOOTED = true; loadDriverActivity(); }   // first load: bring in notes, scans, views
@@ -773,7 +778,7 @@ function reload() { RELOADING++; return api("bootstrap").then(function (d) {
   // reload() already runs after essentially every mutation in the app, so
   // this is "live" without any polling/websocket infrastructure (D134).
   if (typeof historyPanelOpen === "function" && historyPanelOpen()) loadHistoryPanel();
-}).finally(function () { RELOADING--; }); }
+}).finally(function () { RELOADING--; AUTOSTAGE_OFF = false; }); }
 
 /* ── Global search (D44) — type anything, it scrapes the already-loaded DB and
    jumps you to the match: an order opens its drawer, everything else navigates
@@ -810,8 +815,7 @@ function parseDateQuery(q) {
 }
 function monthLabel(dq) { var n = MON[dq.mo]; return n.charAt(0) + n.slice(1).toLowerCase() + " " + dq.y; }
 function prettyDate(ds) {
-  return new Date(ds + "T00:00:00Z").toLocaleDateString(undefined,
-    { weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  return new Date(ds + "T00:00:00Z").toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" }) + " " + isoToMdy(ds);
 }
 /* Orders sitting on a given date on the board (any truck, any slot). */
 function loadsOnDate(ds) {

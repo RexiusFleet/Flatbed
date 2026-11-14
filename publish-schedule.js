@@ -130,6 +130,15 @@ function buildPayload(dates, data) {
     if (!days.has(l.scheduled_date)) days.set(l.scheduled_date, /* @__PURE__ */ new Map());
     days.get(l.scheduled_date).set(l.slot, l);
   }
+  // Rows per day: 3, or more on a day with a load or a typed cell in a 4th row or lower (the Scheduler's added rows). Every day is
+  // stored with the same number of rows (slots_per_day), so a page still running an older copy lines up; day_slots says how many
+  // rows each day really shows, so the extra row appears only on the day that has one.
+  const dayMax = /* @__PURE__ */ new Map();
+  const bumpDay = (dt, slot) => { if (inRange.has(dt) && slot > (dayMax.get(dt) || 3) && slot <= 24) dayMax.set(dt, slot); };
+  for (const l of data.loads) bumpDay(l.scheduled_date, l.slot);
+  for (const n of data.notes) if (n.body) bumpDay(n.scheduled_date, n.slot);
+  const daySlots = dates.map((dt) => dayMax.get(dt) || 3);
+  const perDay = Math.max(3, ...daySlots);
   const truckRows = (t, compact = false) => {
     var _a;
     const truckLoads = byTruck.get(t.truck_id) || /* @__PURE__ */ new Map();
@@ -137,7 +146,7 @@ function buildPayload(dates, data) {
     for (const dt of dates) {
       if (!inRange.has(dt)) continue;
       const dayLoads = truckLoads.get(dt) || /* @__PURE__ */ new Map();
-      for (let slot = 1; slot <= 3; slot++) {
+      for (let slot = 1; slot <= perDay; slot++) {
         const ld = dayLoads.get(slot);
         const row = {
           date: dt,
@@ -210,7 +219,8 @@ function buildPayload(dates, data) {
     week_start: dates[0],
     week_end: dates[dates.length - 1],
     days: dates.length,
-    slots_per_day: 3,
+    slots_per_day: perDay,
+    day_slots: daySlots,
     dates,
     drivers,
     current_week: currentWeek,

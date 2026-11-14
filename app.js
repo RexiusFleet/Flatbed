@@ -123,18 +123,18 @@ function bytesFromB64(b64) {
    need a server round trip (this only widens what the picker offers; the
    underlying order data was never restricted by it). */
 var EXTRA_YEARS = (function () {
-  try { return JSON.parse(localStorage.getItem("extraYears") || "[]"); }
+  try { var ys = JSON.parse(localStorage.getItem("extraYears") || "[]"); return Array.isArray(ys) ? ys : []; }
   catch (e) { return []; }
 })();
 function availableYears() {
-  var now = new Date().getUTCFullYear(), max = Math.max(now + 1, 2026);
+  var now = +pacificToday().slice(0, 4), max = Math.max(now + 1, 2026);
   EXTRA_YEARS.forEach(function (y) { if (y > max) max = y; });
   var ys = [];
   for (var y = 2024; y <= max; y++) ys.push(y);
   return ys;
 }
 var YEAR = (function () {
-  var now = new Date().getUTCFullYear(), ys = availableYears();
+  var now = +pacificToday().slice(0, 4), ys = availableYears();
   return ys.indexOf(now) >= 0 ? now : 2026;
 })();
 /* Today is the date in Oregon (Pacific time), not UTC: in UTC the date turns over at 4 or 5 PM here, and an evening ELD pull
@@ -144,6 +144,13 @@ function pacificToday() {
   catch (e) { var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
 }
 var TODAY = pacificToday();
+/* One money format and one date format for the whole dashboard (DESIGN: Formats): $1,234.50 (always two decimals, -$ for a
+   negative) and MM/DD/YYYY. isoToMdy() does the same for a stored YYYY-MM-DD date. */
+function fmtMoney(n) {
+  n = Number(n); if (!isFinite(n)) return "\u2014";
+  return (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtDate(d) { return String(d.getMonth() + 1).padStart(2, "0") + "/" + String(d.getDate()).padStart(2, "0") + "/" + d.getFullYear(); }
 setInterval(function () {
   var t = pacificToday();
   if (t !== TODAY) { TODAY = t; if (typeof render === "function" && typeof DB !== "undefined" && DB) render(); }
@@ -163,7 +170,7 @@ function addNextYear() {
 function yearPicker() {
   return '<select id="year-pick" class="btn" title="Year">' + availableYears().map(function (y) {
     return '<option value="' + y + '"' + (y === YEAR ? " selected" : "") + ">" + y + "</option>";
-  }).join("") + '<option value="__add__">+ Add year…</option></select>';
+  }).join("") + '<option value="__add__">+ Add Year…</option></select>';
 }
 function orderYearCode(o) {
   if (o.order_period) return String(o.order_period).slice(2, 4);
@@ -429,7 +436,7 @@ function openProfileMenu() {
   m.innerHTML = '<div class="pm-hd"><span class="avatar lg">' + esc(initials(profileName)) + "</span>" +
     '<div class="pm-who"><b>' + esc(profileName) + "</b><span>" + esc(accountLine) + "</span></div></div>" +
     '<div class="pm-actions"><button class="pm-item" data-profile="help"><b>Help &amp; FAQ</b><span>Guides and keyboard help</span></button>' +
-    '<button class="pm-item danger" data-profile="signout"><b>Sign out</b></button></div>';
+    '<button class="pm-item danger" data-profile="signout"><b>Sign Out</b></button></div>';
   document.body.appendChild(m);
   var r = document.querySelector("#profile-btn").getBoundingClientRect();
   m.classList.add("from-nav");
@@ -1200,15 +1207,17 @@ function loadDriverActivity() {
     });
     try { repaintSeen(); } catch (e) { /* header not drawn yet */ }
     if (sig === DRIVER_SIG) return;
+    // In a text box: leave it for the next check (the signature is only kept once the screen shows it), so nothing is dropped.
+    var a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA)$/.test(a.tagName) && a.type !== "checkbox" && a.type !== "radio") return;
     var first = DRIVER_SIG === "";
     DRIVER_SIG = sig;
-    var typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
-    if (DRAWER_OID && !typing) {
+    if (DRAWER_OID) {
       var nEl = $("#dw-drvnotes"), sEl = $("#dw-drvscans");
       if (nEl) nEl.outerHTML = driverNotesHtml(DRAWER_OID);
       if (sEl) sEl.outerHTML = driverScansHtml(DRAWER_OID);
     }
-    if (!first && !typing) { try { render(); } catch (e) { /* mid-load */ } }
+    if (!first) { try { render(); } catch (e) { /* mid-load */ } }
   }).catch(function () { /* offline or not signed in yet: try again next minute */ });
 }
 // Every 15 seconds while the dashboard is in front, and right away when you come back to it.
@@ -1286,7 +1295,7 @@ function driverScansHtml(oid) {
     var status = !bill ? "Not used for billing" : bill === oid ? (here ? "Billing with this load" : "Moved here from " + (src ? orderLabel(src) : "another load"))
       : "Billing with " + (order(bill) ? orderLabel(order(bill)) : "another load");
     return '<div class="drvnote dscan"><div class="drvnote-hd"><b>' + esc(r.driver || "Driver") + "</b><span>" +
-      esc(d.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" }) + " " +
+      esc(fmtDate(d) + " " +
         d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + " · " + r.pages + " page" + (r.pages > 1 ? "s" : "")) + "</span></div>" +
       '<div class="dscan-row"><span class="dscan-st' + (bill ? "" : " off") + '">' + esc(status) + "</span>" +
       '<button class="btn sm" data-viewpath="' + esc(r.storage_path) + '" data-viewname="POD scan">View</button></div>' +
@@ -2061,7 +2070,7 @@ function delOrderModal(oid) {
   openModal('<div class="modal-hd"><h2>Delete this order?</h2></div><div class="modal-body">' +
     '<p style="line-height:1.5;margin:0 0 10px">Deleting <b>' + esc(name) + "</b> permanently removes it, its place on the Scheduler, and its documents. This cannot be undone.</p>" +
     (canCx ? '<p style="line-height:1.5;margin:0;color:var(--ink-2)">Want to keep the data? <b>Cancel the order</b> instead: it stays on file, comes off the Scheduler and Staging, is not counted in any report, and can be restored later.</p>' : "") +
-    '</div><div class="modal-ft"><button class="btn" id="modal-cancel">Never Mind</button><span style="flex:1"></span>' +
+    '</div><div class="modal-ft"><button class="btn" id="modal-cancel">Never Mind</button>' +
     (canCx ? '<button class="btn bad" id="del-order-cx" data-oid="' + oid + '">Cancel Order</button>' : "") +
     '<button class="btn del" id="del-order-go" data-oid="' + oid + '">Delete Order</button></div>');
 }
@@ -2139,7 +2148,7 @@ function openInternalOrder(o) {
       dcellRow(fieldLabel("bagger", "notes", "Customer notes"), "locations", loc && loc.id, "notes", loc && loc.notes) +
       "</tbody></table>";
     var last = lastOrderDate(cust.id, o.id);
-    h += '<div class="note-bar" style="margin-top:8px">Last order: ' + (last ? esc(last) : "none found") + "</div>";
+    h += '<div class="note-bar" style="margin-top:8px">Last order: ' + (last ? esc(isoToMdy(String(last).slice(0, 10)) || last) : "none found") + "</div>";
   }
   h += "</details>";
 
@@ -2464,8 +2473,8 @@ function openTransferOrder(o) {
   docPrefetchAll();
 }
 function openOrder(oid) {
-  DRAWER_OID = oid;
   var o = order(oid); if (!o) return;
+  DRAWER_OID = oid;
   if (o.is_transfer) return openTransferOrder(o);
   if (!isExt(o)) return openInternalOrder(o);
   var ch = buildChip(o), ds = docsFor(oid);
@@ -2578,7 +2587,7 @@ function pnTargets(o) {
   return out;
 }
 function pnLine(o, kind, text) {
-  var d = new Date(), ds = (d.getMonth() + 1) + "/" + d.getDate() + "/" + String(d.getFullYear()).slice(2);
+  var ds = isoToMdy(pacificToday());
   return ds + " · from " + (o.rexius_order_no || o.broker_load_no || "an order with no number") + " · " + pnKindLabel(kind) + ": " + String(text).replace(/\s*\n+\s*/g, " ").trim();
 }
 var PN_OPEN = null;
@@ -2642,7 +2651,8 @@ document.addEventListener("click", function (e) {
   if (e.target.closest("[data-pn-cancel]")) { pnClose(); return; }
   if (PN_OPEN && !e.target.closest("#pn-pop")) pnClose();
 });
-document.addEventListener("keydown", function (e) { if (e.key === "Escape" && PN_OPEN) pnClose(); });
+// Escape closes one layer at a time: the add-note popover first, the side window on the next press.
+document.addEventListener("keydown", function (e) { if (e.key === "Escape" && PN_OPEN) { pnClose(); e.stopImmediatePropagation(); } });
 document.addEventListener("input", function (e) {
   var t = e.target; if (!t.matches || !t.matches('[data-of="notes"],[data-of="driver_note"]')) return;
   var b = t.parentNode && t.parentNode.querySelector(".pn-plus"); if (b) b.disabled = !t.value.trim();
@@ -2659,7 +2669,7 @@ function driverNotesHtml(oid) {
     var po = order(oid), plus = po && !po.is_transfer ? '<button type="button" class="pn-plus" data-pndn="' + esc(n.id) +
       '" title="Add this note to a customer or location" aria-label="Add this note to a customer or location">+</button>' : "";
     return '<div class="drvnote"><div class="drvnote-hd"><b>' + esc(n.driver || "Driver") + "</b><span>" +
-      esc((n.truck ? n.truck + " · " : "") + d.toLocaleDateString([], { month: "numeric", day: "numeric" }) + " " +
+      esc((n.truck ? n.truck + " · " : "") + fmtDate(d) + " " +
       d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) + "</span>" + plus + "</div>" + esc(n.text) + "</div>";
   }).join("") + "</div></div>";
 }
@@ -2667,7 +2677,7 @@ function driverNotesHtml(oid) {
    (source "typed"). The rate con's own number, when it has been read, stays in external_rate_original. */
 function rateText(v) {
   var n = v === null || v === undefined || v === "" ? null : Number(v);
-  return n === null || isNaN(n) ? "" : "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n === null || isNaN(n) ? "" : fmtMoney(n);
 }
 function rateInputHtml(o, cls) {
   var orig = o.external_rate_original != null && o.external_rate_original !== "" && Number(o.external_rate_original) !== Number(o.external_rate);
@@ -2725,6 +2735,7 @@ function setDrawerHtml(h) {
 function closeDrawer() {
   $("#drawer").classList.remove("on"); $("#scrim").classList.remove("on");
   $("#drawer").setAttribute("aria-hidden", "true"); DRAWER_OID = null; DRAWER_SHOWN = null; ROUTE_SEL = null;
+  var sug = document.getElementById("loc-suggest-portal"); if (sug) sug.style.display = "none";
 }
 function packageDocs(oid) {
   var o = order(oid), ds = docsFor(oid);
@@ -2742,15 +2753,13 @@ function fetchDocB64(d) {
 }
 function doPackage(oid, mode) {
   var o = order(oid), ds = packageDocs(oid);
-  if (!ds.length) { toast("No documents attached to package.", true); return Promise.reject(new Error("no docs")); }
+  if (!ds.length) { toast("No documents attached to package", true); var none = new Error("no docs"); none.shown = true; return Promise.reject(none); }
   var base = (buildChip(o).title || "package").replace(/[^A-Za-z0-9]+/g, "") + "_" +
              (o.rexius_order_no || o.broker_load_no || "pkg");
   if (mode === "individual") {
-    ds.forEach(function (d) {
-      fetchDocB64(d).then(function (b) { saveBlob(d.original_filename || (base + ".pdf"), bytesFromB64(b)); });
-    });
-    toast("Downloading " + ds.length + " file(s) individually");
-    return Promise.resolve();
+    return Promise.all(ds.map(function (d) {
+      return fetchDocB64(d).then(function (b) { saveBlob(d.original_filename || (base + ".pdf"), bytesFromB64(b)); });
+    })).then(function () { toast("Downloaded " + ds.length + " file" + (ds.length === 1 ? "" : "s")); });
   }
   return Promise.all(ds.map(fetchDocB64)).then(mergePdfs).then(function (merged) {
     // Outlook billing drafts were removed in the Supabase port (out of
@@ -2759,6 +2768,8 @@ function doPackage(oid, mode) {
     saveBlob(base + ".pdf", bytesFromB64(merged)); toast("Merged package downloaded");
   });
 }
+// A failed package download says so (the "no documents" case has already shown its own message).
+function pkgFailed(err) { if (!err || !err.shown) toast((err && err.message) || "Download failed", true); }
 /* Billing completion (D62) — mark an external order billed (out of the queue)
    or reopen it. */
 function billOrder(oid, billed) {
@@ -2818,7 +2829,7 @@ function askMarkBilled(ids) {
     '<div class="modal-body"><p style="line-height:1.5;margin:0">' +
     (one ? esc(orderLabel(o1)) + " downloaded." : ids.length + " packages downloaded.") +
     " Mark " + (one ? "it" : "them") + " billed to take " + (one ? "it" : "them") + " out of the queue?</p></div>" +
-    '<div class="modal-ft"><button class="btn" id="modal-cancel">Not Yet</button>' +
+    '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
     '<button class="btn pri" id="modal-confirm">Mark Billed</button></div>');
   $("#modal-confirm").addEventListener("click", function () {
     closeModal();
@@ -2839,7 +2850,7 @@ function billBatch() {
   var chain = Promise.resolve();
   ids.forEach(function (id) { chain = chain.then(function () { return doPackage(id, "merged"); }); });
   chain.then(function () { toast(ids.length + " package" + (ids.length > 1 ? "s" : "") + " downloaded"); askMarkBilled(ids); })
-    .catch(function (e) { toast(e.message || "Download failed", true); });
+    .catch(pkgFailed);
 }
 /* ═══ 04-views ═══ */
 /* ── Views ───────────────────────────────────────────────────────────────── */
@@ -2852,7 +2863,7 @@ function dcClass(t) { return isHex(t.driver_color) ? " has-dc" : ""; }
 function dcStyle(t) { return isHex(t.driver_color) ? "--dc:" + dcSolid(t.driver_color) + ";" : ""; }
 function truckColHeader(t) {
   var dc = isHex(t.driver_color) ? ' style="--dc:' + t.driver_color + '"' : "";
-  return '<span class="drv"' + dc + '>' + esc(dFirst(t.driver_name) || "— unassigned —") + "</span>" +
+  return '<span class="drv"' + dc + '>' + esc(dFirst(t.driver_name) || "Unassigned") + "</span>" +
     '<span class="trk">' + esc(t.number) + " " + esc(t.eq || "") + "</span>";
 }
 /* Outside-carrier lane header (D115) — pinned to the far right of the main
@@ -3019,7 +3030,7 @@ function schedMonthHtml(mStart) {
       if (s === 1) { var dn = dayNote(ds); h += '<td class="rowhd' + (dn ? " has-daynote" : "") +
         '" rowspan="' + slots + '" id="row-' + ds + '"' + (dn ? ' title="' + esc(dn.text) + '"' : "") +
         '><span class="dwk">' + DOW[dow] + '</span><br><span class="dnum">' + ds.slice(8) +
-        '</span><br><span class="trk">' + ds.slice(5, 7) + "/" + ds.slice(8) + "/" + ds.slice(2, 4) + "</span>" +
+        '</span><br><span class="trk">' + isoToMdy(ds) + "</span>" +
         (dn ? '<div class="daynote-txt">' + esc(dn.text) + '</div>' : "") + "</td>"; }
       DB.trucks.forEach(function (t) {
         var key = cellKey(t.id, ds, s), off = OFFDAYS[t.id + "|" + ds];
@@ -3232,7 +3243,7 @@ function lastPushMs() {
 }
 function seenWhen(ms) {
   var d = new Date(ms), t = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  return d.toDateString() === new Date().toDateString() ? t : d.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" }) + " " + t;
+  return d.toDateString() === new Date().toDateString() ? t : fmtDate(d) + " " + t;
 }
 // {cls, txt} for one driver + one view ("cw" or "own"): seen since the last
 // push, only before it, or never.
@@ -3530,7 +3541,7 @@ function tickerLoadBoxes() {
   api("ticker/get", {}).then(function (t) {
     TICKER = { drivers: (t && t.drivers) || "", bagger: (t && t.bagger) || "" };
     [].forEach.call(document.querySelectorAll("[data-tick]"), function (i) { if (document.activeElement !== i) i.value = TICKER[i.dataset.tick] || ""; });
-  }, function () { /* the banner SQL has not been run yet: the boxes stay empty */ });
+  }, function () { TICKER = { drivers: "", bagger: "" }; /* the banner SQL has not been run yet: the boxes stay empty, and it is not asked for again on every redraw */ });
 }
 document.addEventListener("change", function (e) {
   var i = e.target.closest && e.target.closest("[data-tick]"); if (!i) return;
@@ -3558,7 +3569,7 @@ function vCurrentWeek() {
   h += "</tr></thead><tbody>";
   for (var i = 0; i < dates.length; i++) {
     var day = dates[i], ds = iso(day), dow = day.getUTCDay(), isWeekend = dow === 0 || dow === 6;
-    var slots = Math.max(3, DAYSLOT[ds] || 0);
+    var slots = Math.max(3, DAYSLOT[ds] || 0, DAYADD[ds] || 0);      // same count as the Scheduler, so OFF lands on a row that is drawn
     for (var s = 1; s <= slots; s++) {
       h += '<tr class="' + (ds === TODAY ? "today " : "") + (isWeekend ? "weekend-active " : "") + 'slotrow">';
       if (s === 1) h += '<td class="rowhd" rowspan="' + slots + '"><span class="dwk">' + DOW[dow] +
@@ -3628,7 +3639,7 @@ function dvChip(o, v, truck, day) {
   }
   if (isExt(o)) {
     var tag = function (t) { return t ? ' <span class="appt">APPT ' + esc(t) + "</span>" : ""; };
-    var lines = ["<b>Broker/Customer:</b> " + esc(o.broker_name || "—")];
+    var lines = ["<b>Broker / Customer:</b> " + esc(o.broker_name || "—")];
     var cs = o.route_mode === "custom" ? orderStops(o.id) : null;
     if (cs && cs.length) {
       var nPick = cs.filter(function (s) { return s.stop_type === "pickup"; }).length, nDrop = cs.length - nPick, cp = 0, cd = 0;
@@ -3818,9 +3829,10 @@ function vDriverView() {
   for (var i = 0; i < dates.length; i++) {
     var day = dates[i], ds = iso(day);
     h += '<div class="day-bar' + (ds === TODAY ? " today" : "") + '" id="d-' + ds + '"><span class="dwk">' + DOW[day.getUTCDay()] +
-      '</span><span class="dnum">' + (+ds.slice(5, 7)) + "/" + (+ds.slice(8, 10)) + "</span>" + (ds === TODAY ? '<span class="today-tag">Today</span>' : "") + "</div>";
+      '</span><span class="dnum">' + isoToMdy(ds) + "</span>" + (ds === TODAY ? '<span class="today-tag">Today</span>' : "") + "</div>";
     if (OFFDAYS[dvTruck.id + "|" + ds]) { h += '<div class="off-cell off-hatch"><div class="off-label">OFF</div></div>'; continue; }
-    for (var s = 1; s <= 3; s++) h += dvSlotCellsHtml(cellKey(dvTruck.id, ds, s));
+    // 3 rows, or as many as the day has on the Scheduler (a 4th row shows here and on the driver's own page).
+    for (var s = 1, nS = Math.max(3, DAYSLOT[ds] || 0); s <= nS; s++) h += dvSlotCellsHtml(cellKey(dvTruck.id, ds, s));
   }
   h += "</div></div></div>";
   return h;
@@ -3932,7 +3944,7 @@ function tsortTh(grid, key, label, width, cls) {
   return '<th class="tsortable' + (cls ? " " + cls : "") + '" style="width:' + width + 'px" data-tsort="' + grid + "|" + key +
     '" title="Sort the ' + (grid === "ext" ? "Billed" : "Delivered") + ' list by this column"' +
     (on ? ' aria-sort="' + (s.dir > 0 ? "ascending" : "descending") + '"' : "") + ">" + label +
-    (on ? '<span class="tsort-arrow">' + (s.dir > 0 ? "&#9650;" : "&#9660;") + "</span>" : "") + "</th>";
+    (on ? '<span class="tsort-arrow">' + (s.dir > 0 ? "&uarr;" : "&darr;") + "</span>" : "") + "</th>";
 }
 function tsortValue(o, key) {
   var loc = function (id) { var l = id ? locById(id) : null; return l ? l.name || "" : ""; };
@@ -3998,7 +4010,7 @@ function trackerCollapseToggleRow(key, label, count, colspan) {
   var open = !!TRACKER_COLLAPSED_OPEN[key];
   return '<tr class="tracker-collapse-row"><td colspan="' + colspan + '">' +
     '<button class="tracker-collapse-hd" data-tracker-collapse="' + esc(key) + '" aria-expanded="' + open + '">' +
-    '<span><span class="tracker-collapse-arrow">&#9656;</span>' + esc(label) + '</span>' +
+    '<span><span class="tracker-collapse-arrow">&darr;</span>' + esc(label) + '</span>' +
     '<span class="tracker-collapse-ct">' + count + '</span></button></td></tr>';
 }
 /* Paged rendering inside an expanded collapse group (D235) — Nate: "it lags
@@ -4087,18 +4099,18 @@ function vOrders(kind) {
   var h = toolbarHtml("External Orders", {
     className: "orders-toolbar", context: yearPicker(),
     secondary: ordersToolbarExtras() + trackerBulkButtonsHtml("ext"),
-    primary: '<button class="btn pri sm orders-primary-btn" id="new-order">+ New Order</button>'
+    primary: '<button class="btn pri sm orders-primary-btn" id="new-order">New Order</button>'
   });
-  h += '<div class="drop" id="rc-drop" style="margin-bottom:10px"><b>Drop a rate con here</b> or click to upload or paste</div>';
+  h += '<div class="drop" id="rc-drop" style="margin:8px 14px 10px"><b>Drop a rate con here</b> or click to upload or paste</div>';
   h += '<div class="grid-wrap tracker-scroll"><table class="data order-tracker external-tracker" style="width:2132px"><thead><tr>' +
     trackerSelTh("ext") +
     trackerOpenTh() +
     '<th class="order-actions-col" style="width:220px">Status / Stage</th>' +
     tsortTh("ext", "order", "Order #", 120) + tsortTh("ext", "load", "Load #", 96) +
-    tsortTh("ext", "broker", "Broker/Customer", 190) + tsortTh("ext", "po", "PU/PO", 100) +
+    tsortTh("ext", "broker", "Broker / Customer", 190) + tsortTh("ext", "po", "PO / PU #", 100) +
     tsortTh("ext", "delnum", "Delivery #", 100) + tsortTh("ext", "rate", "Rate", 100) + tsortTh("ext", "notes", "Private notes", 200) +
     tsortTh("ext", "tarp", "Tarp", 56) + tsortTh("ext", "backhaul", "Backhaul", 84) +
-    tsortTh("ext", "pickup", "Pickup Address", 180) + tsortTh("ext", "drop", "Drop Address", 180) +
+    tsortTh("ext", "pickup", "Pickup", 180) + tsortTh("ext", "drop", "Drop", 180) +
     tsortTh("ext", "ordered", "Ordered", 112) + tsortTh("ext", "delivered", "Delivered", 112) +
     tsortTh("ext", "docs", "Docs", 64) +
     "</tr></thead><tbody>";
@@ -4272,7 +4284,7 @@ function vInternal() {
 
   var h = toolbarHtml("Bag Orders", {
     className: "orders-toolbar", context: yearPicker(),
-    secondary: ordersToolbarExtras() + '<button class="btn sm" id="int-add" title="Reserve the next order number in the selected month">Add One Order</button>' + trackerBulkButtonsHtml("int"),
+    secondary: ordersToolbarExtras() + '<button class="btn sm" id="int-add" title="Reserve the next order number for this month">Add One Order</button>' + trackerBulkButtonsHtml("int"),
     primary: '<button class="btn pri sm orders-primary-btn" id="int-bulk">Add Orders</button>'
   });
 
@@ -4308,8 +4320,8 @@ function vInternal() {
    since transfers are never Solomon-numbered (never invoiced). */
 /* One Internal Freight row (D232, split out of vInternalFreight the same
    way extOrderRowHtml was — see that comment for `i`). */
-function xferOrderRowHtml(o, i) {
-  var on = placement()[o.id];
+function xferOrderRowHtml(o, i, pm) {
+  var on = (pm || placement())[o.id];
   return '<tr data-roworder="' + o.id + '">' +
     trackerSelTd("xfer", o.id, i + 1) +
     trackerOpenTd(o) +
@@ -4348,7 +4360,7 @@ function vInternalFreight() {
   var depts = departmentsForPicker(null);
   var h = toolbarHtml("Internal Freight", {
     className: "orders-toolbar", context: yearPicker(),
-    secondary: ordersToolbarExtras() + trackerBulkButtonsHtml("xfer"),
+    secondary: ordersToolbarExtras() + '<button class="btn sm" id="xfer-add" title="Add one internal freight load">Add One Order</button>' + trackerBulkButtonsHtml("xfer"),
     primary: '<button class="btn pri sm orders-primary-btn" id="xfer-bulk">Add Orders</button>'
   });
   h += '<div class="grid-wrap tracker-scroll"><table class="data order-tracker" style="width:1916px"><thead><tr>' +
@@ -4360,15 +4372,15 @@ function vInternalFreight() {
     tsortTh("xfer", "ordered", "Ordered", 112) + tsortTh("xfer", "delivered", "Delivered", 112) +
     tsortTh("xfer", "truck", "Truck", 80) + tsortTh("xfer", "miles", "Miles", 150) +
     tsortTh("xfer", "freight", "Transfer $", 100) + '</tr></thead><tbody>';
-  liveRows.forEach(function (o, i) { h += xferOrderRowHtml(o, i); });
+  var pm = placement();          // worked out once for the whole table, not once per row
+  liveRows.forEach(function (o, i) { h += xferOrderRowHtml(o, i, pm); });
   if (deliveredRows.length) {
     h += trackerCollapseToggleRow("xfer-delivered", "Delivered", deliveredRows.length, XFER_TRACKER_COLS);
     if (TRACKER_COLLAPSED_OPEN["xfer-delivered"])
       h += trackerCollapsedRowsHtml("xfer-delivered", tsortRows("xfer-delivered", deliveredRows), liveRows.length,
-        function (o, i) { return xferOrderRowHtml(o, i); }, XFER_TRACKER_COLS);
+        function (o, i) { return xferOrderRowHtml(o, i, pm); }, XFER_TRACKER_COLS);
   }
   h += "</tbody></table></div>";
-  h += '<button class="btn sm" id="xfer-add" style="margin-top:8px">+ Add one</button>';
   if (!depts.length)
     h += '<div class="note-bar" style="margin-top:8px">No departments yet — add one from Database → Departments.</div>';
   return h;
@@ -4382,7 +4394,7 @@ function billDocCardHtml(d, exts) {
   var h = '<div class="bill-doc" draggable="true" data-dragdoc="' + d.id + '" title="Drag onto a load in the Billing Queue">' +
     '<div class="bill-doc-hd"><span class="pill">' + esc(type) + "</span><b>" + esc(title) + "</b>" +
     '<span class="bill-doc-acts"><a class="btn sm" href="#" data-filepath="' + esc(d.storage_path) + '" data-filename="' + esc(d.original_filename || "") + '" data-filemode="open">Open</a>' +
-    '<button class="btn sm bad" data-delete-doc="' + d.id + '">Delete</button></span></div>';
+    '<button class="btn sm del" data-delete-doc="' + d.id + '">Delete</button></span></div>';
   if (sug.length) {
     var top = sug[0], o = order(top.order_id), strong = top.score >= 9;
     h += '<div class="bill-sug"><span class="af ' + (strong ? "af-ok" : "af-check") + '">' + (strong ? "Likely" : "Possible") + "</span>" +
@@ -4434,7 +4446,7 @@ function vBilling() {
     (readyN ? '<span class="bill-ready">' + readyN + " ready</span>" : "") + "</div>";
   h += '<div class="grid-wrap"><table class="data order-tracker billing-tracker"><thead><tr>' +
     '<th style="width:36px"></th>' + trackerOpenTh() +
-    '<th style="width:128px">Order #</th><th style="width:210px">Customer / Broker</th><th style="width:138px">Paperwork</th>' +
+    '<th style="width:128px">Order #</th><th style="width:210px">Broker / Customer</th><th style="width:138px">Paperwork</th>' +
     '<th style="width:170px">Invoice #</th><th style="width:196px"></th></tr></thead><tbody>';
   shown.forEach(function (o) {
     var have = haveOf(o), ready = have.pod && have.invoice;
@@ -4570,7 +4582,7 @@ function dbSortFieldId(colref) {
 function dbSortArrow(grid, colref) {
   var s = GRIDSORT[grid];
   return s && s.fieldId === dbSortFieldId(colref)
-    ? '<span class="tsort-arrow">' + (s.dir === "asc" ? "&#9650;" : "&#9660;") + "</span>" : "";
+    ? '<span class="tsort-arrow">' + (s.dir === "asc" ? "&uarr;" : "&darr;") + "</span>" : "";
 }
 function dbSortAttr(grid, colref) {
   var s = GRIDSORT[grid];
@@ -4930,12 +4942,12 @@ function vBuiltin(ent) {
   var cols = databaseColumns(ent, gk);
   var baseRows = custom ? recordRows(ent.id) : builtinRows(slug);
   var rows = sortRows(storedOrderRows(baseRows, gk, ent), sortFlds, gk);
-  var addBtn = custom ? '<button class="btn pri" data-addrow="' + gk + '">+ Row</button>' :
-    { bagger: '<button class="btn pri" data-addcust="bagger">+ Add Customer</button>',
-      brokers: '<button class="btn pri" data-addcust="external">+ Add Customer</button>',
-      pickdrop: '<button class="btn pri" id="add-pickdrop">+ Add Location</button>',
-      fleet: '<button class="btn" id="add-driver">+ Add Driver</button><button class="btn pri" id="add-truck">+ Add Truck</button>',
-      departments: '<button class="btn pri" id="add-department">+ Add Department</button>' }[slug];
+  var addBtn = custom ? '<button class="btn pri sm" data-addrow="' + gk + '">Add Row</button>' :
+    { bagger: '<button class="btn pri sm" data-addcust="bagger">Add Customer</button>',
+      brokers: '<button class="btn pri sm" data-addcust="external">Add Customer</button>',
+      pickdrop: '<button class="btn pri sm" id="add-pickdrop">Add Location</button>',
+      fleet: '<button class="btn sm" id="add-driver">Add Driver</button><button class="btn pri sm" id="add-truck">Add Truck</button>',
+      departments: '<button class="btn pri sm" id="add-department">Add Department</button>' }[slug];
   // Fixed layout (via .gridfixed) so column drag-resize is pixel-precise; table
   // width is the exact sum of column widths so a column grows the table, not its
   // neighbours (D85). Custom-column widths default to 140. Custom entities
@@ -4952,26 +4964,26 @@ function vBuiltin(ent) {
     });
     var archiveCount = backing.filter(function (row) { return !!row[archiveCfg.field]; }).length;
     var activeCount = backing.length - archiveCount;
-    archiveViewButton = '<button class="btn" data-archiveview="' + gk + '|' +
+    archiveViewButton = '<button class="btn sm" data-archiveview="' + gk + '|' +
       (archivedView ? "active" : "archived") + '">' +
       (archivedView ? "Show Active (" + activeCount + ")" : "Show Archived (" + archiveCount + ")") +
       "</button>";
-    rowAction = '<button class="btn" data-archiverows="' + gk + '" data-archive-mode="' +
+    rowAction = '<button class="btn sm" data-archiverows="' + gk + '" data-archive-mode="' +
       (archivedView ? "restore" : "archive") + '"' + (selectedRows ? "" : " disabled") + ">" +
       (archivedView ? "Restore Selected" : "Archive Selected") +
       (selectedRows ? " (" + selectedRows + ")" : "") + "</button>" +
-      (archivedView ? '<button class="btn del" data-delarchived="' + gk + '"' + (selectedRows ? "" : " disabled") + ">" +
+      (archivedView ? '<button class="btn sm del" data-delarchived="' + gk + '"' + (selectedRows ? "" : " disabled") + ">" +
         (selectedRows ? "Delete Selected (" + selectedRows + ")" : "Delete Selected") + "</button>" : "");
   } else {
-    rowAction = '<button class="btn del" data-delrows="' + gk + '"' + (selectedRows ? "" : " disabled") + ">" +
+    rowAction = '<button class="btn sm del" data-delrows="' + gk + '"' + (selectedRows ? "" : " disabled") + ">" +
       (selectedRows ? "Delete Selected (" + selectedRows + ")" : "Delete Selected") + "</button>";
   }
   // Sort's highlight when a custom sort is active is a status indicator, not
   // a call to action — .active (outline, not fill) so it never competes with
   // the one real primary button (D172's "exactly one .btn.pri" contract).
   var h = toolbarHtml(ent.name, {
-    secondary: (srtFld ? '<button class="btn active" data-sortsave="' + gk + '" title="Make this the saved row order for everyone">Save Order</button>' +
-        '<button class="btn" data-sortclear="' + gk + '" title="Back to the normal order">Clear Sort</button>' : "") +
+    secondary: (srtFld ? '<button class="btn sm active" data-sortsave="' + gk + '" title="Make this the saved row order for everyone">Save Order</button>' +
+        '<button class="btn sm" data-sortclear="' + gk + '" title="Back to the normal order">Clear Sort</button>' : "") +
       archiveViewButton + rowAction,
     primary: addBtn
   });
@@ -5154,7 +5166,7 @@ function rptRange(per, from, to) {
 }
 function rptDashRange() { return rptRange(REP.per, REP.from, REP.to); }
 function rptNum(v) { if (v === null || v === undefined || v === "") return null; var n = Number(v); return isNaN(n) ? null : n; }
-function rptMoney(n) { return (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString(); }
+function rptMoney(n) { return fmtMoney(n); }
 function rptEnrich(r) {
   var internal = r.kind === "internal" || r.is_transfer === true || r.is_transfer === "true";
   var xfer = r.is_transfer === true || r.is_transfer === "true";
@@ -5254,11 +5266,11 @@ function motRangeHtml(r) {
   var order = trucks.slice().sort(function (a, b) { return per[b].miles - per[a].miles || a.localeCompare(b, undefined, { numeric: true }); });
   h += '<div class="mot-h">Trucks</div>' +
     '<div class="grid-wrap mot-wrap"><table class="data mot-table"><thead><tr><th style="width:110px">Truck</th><th class="n" style="width:110px">Days</th>' +
-    '<th class="n" style="width:90px">Miles</th><th class="n" style="width:90px">Per day</th><th class="n" style="width:80px">Hours</th><th>Bag / Internal / External</th></tr></thead><tbody>';
+    '<th class="n" style="width:90px">Miles</th><th class="n" style="width:90px">Per Day</th><th class="n" style="width:80px">Hours</th><th>Bag / Internal / External</th></tr></thead><tbody>';
   order.forEach(function (t) {
     var x = per[t], open = !!MOT.open[t];
     if (!x.days) { h += '<tr class="mot-idle"><td><b>' + esc(t) + '</b></td><td colspan="5" class="mute">' + (done.length ? "Did not run" : "") + "</td></tr>"; return; }
-    h += '<tr data-motopen="' + esc(t) + '" class="' + (open ? "sel" : "") + '"><td><b><span class="mot-car">' + (open ? "&#9662;" : "&#9656;") + "</span>" + esc(t) + '</b></td><td class="n">' + x.days +
+    h += '<tr data-motopen="' + esc(t) + '" class="' + (open ? "sel" : "") + '"><td><b><span class="mot-car">' + (open ? "&uarr;" : "&darr;") + "</span>" + esc(t) + '</b></td><td class="n">' + x.days +
       '</td><td class="n"><b>' + Math.round(x.miles).toLocaleString() + '</b></td><td class="n">' + Math.round(x.miles / x.days).toLocaleString() + '</td><td class="n">' + (Math.round(x.hours * 10) / 10) + "</td><td>" +
       motBarHtml({ total: x.miles, bag: x.bag, intf: x.intf, ext: x.ext }) + (x.over ? '<span class="mot-over">Over by ' + Math.round(x.over * 10) / 10 + "</span>" : "") + "</td></tr>";
     if (open) done.slice().reverse().forEach(function (d) {
@@ -5304,7 +5316,7 @@ function motWeekGrid(mon, r, order) {
   var head = '<div class="mot-wkh"><b>Week of ' + esc(fmtLongDay(mon)) + "</b><span>" + (fleet ? Math.round(fleet).toLocaleString() + " fleet miles" : "No miles saved") + "</span></div>";
   if (!body) return head + '<div class="mot-wkempty">No truck ran or had orders this week.</div>';
   return head + '<div class="grid-wrap mot-wrap"><table class="data mot-grid"><colgroup><col class="c-t">' + wd.map(function () { return "<col>"; }).join("") + '<col class="c-tot"></colgroup><thead><tr><th>Truck</th>' +
-    wd.map(function (d) { var lab = "<span>" + esc(new Date(d + "T12:00:00").toLocaleDateString([], { weekday: "short" })) + "</span>" + esc(isoToMdy(d).slice(0, 5));
+    wd.map(function (d) { var lab = "<span>" + esc(new Date(d + "T12:00:00").toLocaleDateString([], { weekday: "short" })) + "</span>" + esc(isoToMdy(d));
       return '<th class="n mot-dh' + (inR(d) ? "" : " out") + '">' + lab + "</th>"; }).join("") +
     '<th class="n">Week</th></tr></thead><tbody>' + body + '</tbody><tfoot><tr><td><b>Fleet</b></td>' +
     wd.map(function (d) { return '<td class="n' + (inR(d) ? "" : " out") + '">' + (fleetDay[d] ? Math.round(fleetDay[d]).toLocaleString() : "") + "</td>"; }).join("") +
@@ -5323,7 +5335,7 @@ function motOrdersHtml(t, d, withDay) {
       internal ? (o.customer_name || (o.customer_party_id && party(o.customer_party_id) ? party(o.customer_party_id).name : "")) : (o.broker_name || o.customer_name || "");
     h += '<button type="button" class="mot-ev mot-ord" data-motorder="' + o.id + '" title="Open this order"><span class="mot-tag ' + cls + '">' + tag + '</span><span class="mot-no">' + esc(o.rexius_order_no || o.transfer_no || "No order #") +
       (!internal && o.broker_load_no ? " <small>Load " + esc(o.broker_load_no) + "</small>" : "") + "</span><span>" + esc(who) + '</span><span class="n">' +
-      (internal ? (motNum(o.miles) != null ? motNum(o.miles) + " mi" : "no miles yet") : (motNum(o.external_rate) != null ? "$" + motNum(o.external_rate).toLocaleString() : "no rate")) + "</span></button>";
+      (internal ? (motNum(o.miles) != null ? motNum(o.miles) + " mi" : "no miles yet") : (motNum(o.external_rate) != null ? fmtMoney(motNum(o.external_rate)) : "no rate")) + "</span></button>";
   });
   if (b.total != null) h += '<div class="mot-ev mot-ord tot"><span class="mot-tag x">External</span><span></span><span>The rest of the truck\'s miles (deadhead, fuel, shop)</span><span class="n">' + Math.round(b.ext * 10) / 10 + " mi</span></div>";
   return h + "</div>";
@@ -5391,7 +5403,7 @@ function vMotive() {
 }
 function motTabContext() {
   if (!MOT.day) MOT.day = motYesterday();
-  return '<button class="btn sm mot-dt" data-mot="cal" aria-haspopup="dialog" aria-expanded="' + !!MOT.calOpen + '">' + esc(fmtLongDay(MOT.day)) + ' <span class="mot-caret">&#9662;</span></button>';
+  return '<button class="btn sm mot-dt" data-mot="cal" aria-haspopup="dialog" aria-expanded="' + !!MOT.calOpen + '">' + esc(fmtLongDay(MOT.day)) + ' <span class="mot-caret">&darr;</span></button>';
 }
 // Every truck-day ever saved, with all the data we hold and where the miles went, as one CSV.
 function motDownloadAll() {
@@ -5530,8 +5542,8 @@ function motRollup(range) {
 function motBrokerTable(r) {
   var list = Object.keys(r.brokers).map(function (k) { var x = r.brokers[k]; return { who: k, loads: x.loads, rev: x.rev, miles: x.miles, rpm: x.miles ? x.rev / x.miles : null }; }).sort(function (a, b) { return b.rev - a.rev; });
   if (!list.length) return "";
-  return '<div class="rpt-card rpt-months"><div class="lbl">External RPM by customer</div><table><thead><tr><th></th><th>Loads</th><th>Revenue</th><th>External miles</th><th>RPM</th></tr></thead><tbody>' +
-    list.map(function (x) { return "<tr><td>" + esc(x.who) + "</td><td>" + x.loads + "</td><td>" + rptMoney(x.rev) + "</td><td>" + Math.round(x.miles).toLocaleString() + "</td><td>" + (x.rpm ? "$" + x.rpm.toFixed(2) : "—") + "</td></tr>"; }).join("") +
+  return '<div class="rpt-card rpt-months"><div class="lbl">External RPM By Customer</div><table><thead><tr><th></th><th>Loads</th><th>Revenue</th><th>External Miles</th><th>RPM</th></tr></thead><tbody>' +
+    list.map(function (x) { return "<tr><td>" + esc(x.who) + "</td><td>" + x.loads + "</td><td>" + rptMoney(x.rev) + "</td><td>" + Math.round(x.miles).toLocaleString() + "</td><td>" + (x.rpm ? fmtMoney(x.rpm) : "—") + "</td></tr>"; }).join("") +
     '</tbody></table><div class="rpt-foot">Each day\'s external miles are shared evenly between that day\'s external loads. ' +
     (r.noLoadMiles ? Math.round(r.noLoadMiles).toLocaleString() + " external miles were on days with no external load (shop, fuel, empty miles) and count in the total above." : "") + "</div></div>";
 }
@@ -5542,7 +5554,7 @@ function vReports() {
   var h = toolbarHtml("Reports", {
     className: "orders-toolbar rpt-toolbar", context: rdxPeriodHtml(),
     secondary: '<button class="btn sm" data-report="dump" title="Every table in the database, as CSV files">Export CSV</button>',
-    primary: '<button class="btn pri sm" id="rdx-addbtn" aria-haspopup="menu" aria-expanded="false">+ Add Card</button>'
+    primary: '<button class="btn pri sm" id="rdx-addbtn" aria-haspopup="menu" aria-expanded="false">Add Card</button>'
   });
   h += '<div class="grid-wrap rpt-page">';
   if (REP.noSql) h += '<div class="note-bar">Saved reports are not set up in the database yet, so nothing can be saved yet. Run the saved reports SQL first.</div>';
@@ -5631,7 +5643,7 @@ function rdxFigure(r) {
   return o;
 }
 function rdxNum(n, d) { return n == null || !isFinite(n) ? "—" : n.toLocaleString(undefined, { minimumFractionDigits: d || 0, maximumFractionDigits: d || 0 }); }
-function rdxMoney(n, d) { return n == null || !isFinite(n) ? "—" : (n < 0 ? "-$" : "$") + rdxNum(Math.abs(n), d); }
+function rdxMoney(n) { return n == null ? "—" : fmtMoney(n); }
 // A number card's value, and what to compare it with: [shown value, raw value for the change, line under it (null = the change)]
 function rdxValue(id, o) {
   switch (id) {
@@ -5659,7 +5671,7 @@ function rdxListMap(id, o) { return { bag_n: [o.bagN, ""], bag_mi: [o.bagMi, " m
 function rdxCmp(cur, old, days) {
   if (cur == null || old == null || !old) return "";
   var p = Math.round((cur - old) / Math.abs(old) * 100);
-  return '<span class="rc-cmp ' + (p === 0 ? "flat" : p > 0 ? "up" : "down") + '"><b>' + (p === 0 ? "= no change" : (p > 0 ? "&#9650; " : "&#9660; ") + Math.abs(p) + "%") + "</b> vs the " + days + " days before</span>";
+  return '<span class="rc-cmp ' + (p === 0 ? "flat" : p > 0 ? "up" : "down") + '"><b>' + (p === 0 ? "= no change" : (p > 0 ? "&uarr; " : "&darr; ") + Math.abs(p) + "%") + "</b> vs the " + (days === 1 ? "day" : days + " days") + " before</span>";
 }
 // A ranked list: the name and its count (or miles, or dollars), most first.
 function rdxList(map, unit) {
@@ -5787,7 +5799,7 @@ function trfLoad() {
 }
 function trfDay(ts) { return rptIso(new Date(ts)); }   // the local calendar day a timestamp falls on
 function trfDept(v) { v = String(v == null ? "" : v).trim(); return !v ? "(no department)" : /^\d+$/.test(v) ? "Dept " + v : v; }
-function trfMoney(n) { return "$" + (Math.round(n * 100) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function trfMoney(n) { return fmtMoney(n); }
 /* What is due: delivered, not cancelled, bag or internal freight, not in a batch yet, delivered inside the From and Through dates (no From = everything not transferred yet).
    Also, for orders ALREADY transferred: if the cost has changed since (or the order was cancelled), the difference is flagged, and it goes out as an adjustment (plus or
    minus) in the next transfer when the order's delivery date is inside the same dates. "late" lists orders that were delivered on or before the last transfer's last day but
@@ -5895,7 +5907,7 @@ function ncPaint() {
       '<td class="nc-ord"><b>' + esc(o.is_transfer ? (o.transfer_no || "") : (o.rexius_order_no || "No order #")) + "</b> <span>" + esc(o.is_transfer ? (o.notes || "Internal freight") : (lab[1] || "")) + "</span></td>" +
       "<td>" + esc(o.is_transfer ? (o.transfer_department_name || "") : trfDept(o.department)) + "</td>" +
       '<td><input class="mrv-in nc-in" data-nc="' + o.id + '|m" inputmode="decimal" aria-label="Miles" value="' + (e.m != null ? e.m : (motNum(o.miles) != null ? o.miles : "")) + '"></td>' +
-      '<td><input class="mrv-in nc-in" data-nc="' + o.id + '|c" inputmode="decimal" aria-label="Cost" value="' + (e.c != null ? e.c : "") + '" placeholder="' + (auto != null ? "$" + auto.toFixed(2) : "") + '"></td></tr>';
+      '<td><input class="mrv-in nc-in" data-nc="' + o.id + '|c" inputmode="decimal" aria-label="Cost" value="' + (e.c != null ? e.c : "") + '" placeholder="' + (auto != null ? fmtMoney(auto) : "") + '"></td></tr>';
   });
   if (list.length > 600) h += '<tr><td colspan="7" class="rpt-none">The first 600 of ' + list.length + " are shown. Pick a month to see the rest.</td></tr>";
   $("#nc-list").innerHTML = h + "</tbody></table>";
@@ -5908,7 +5920,7 @@ function ncCount() {
 document.addEventListener("input", function (e) {
   var el = e.target.closest && e.target.closest("[data-nc]"); if (!el) return;
   var p = el.dataset.nc.split("|"), v = el.value.replace(/[^0-9.]/g, ""), n = v === "" || v === "." ? null : Number(v), ed = NC.edit[p[0]] = NC.edit[p[0]] || {};
-  if (p[1] === "m") { ed.m = n; var c = document.querySelector('[data-nc="' + p[0] + '|c"]'), auto = n != null ? motFreightCost(n) : null; if (c) c.placeholder = auto != null ? "$" + auto.toFixed(2) : ""; }
+  if (p[1] === "m") { ed.m = n; var c = document.querySelector('[data-nc="' + p[0] + '|c"]'), auto = n != null ? motFreightCost(n) : null; if (c) c.placeholder = auto != null ? fmtMoney(auto) : ""; }
   else ed.c = n;
   ncCount();
 });
@@ -5972,7 +5984,7 @@ function vTransfers() {
   h += '<div class="mot-tiles trf-tiles">' +
     '<div class="mot-tile' + (late ? " bad" : "") + '"><i>Due now</i><b>' + trfMoney(due.total) + "</b><small>" + (any ? nOrd + " order" + (nOrd === 1 ? "" : "s") + (nAdj ? " + " + nAdj + " adj" : "") + (due.from ? " since " + esc(isoToMdy(due.from)) : "") : "Nothing due") + "</small></div>" +
     '<div class="mot-tile"><i>Transferred in ' + yr + "</i><b>" + trfMoney(yrSent) + "</b><small>" + yrBatches.length + " transfer" + (yrBatches.length === 1 ? "" : "s") + "</small></div>" +
-    '<div class="mot-tile' + (late ? " bad" : "") + '"><i>Last transfer</i><b>' + (last ? esc(isoToMdy(trfDay(last.done_at)).slice(0, 5)) : "—") + "</b><small>" + (last ? trfAgo(trfDay(last.done_at)) + (last.batch_no ? " · batch " + esc(last.batch_no) : "") : "None yet") + "</small></div>" +
+    '<div class="mot-tile' + (late ? " bad" : "") + '"><i>Last transfer</i><b>' + (last ? esc(isoToMdy(trfDay(last.done_at))) : "—") + "</b><small>" + (last ? trfAgo(trfDay(last.done_at)) + (last.batch_no ? " · batch " + esc(last.batch_no) : "") : "None yet") + "</small></div>" +
     (noCost ? '<button type="button" class="mot-tile warn trf-nc" data-trf-nocost="1" title="See them and add the costs"><i>Missing a cost</i><b>' + noCost.toLocaleString() + "</b><small>Not in any transfer. Click to add the costs</small></button>" :
       '<div class="mot-tile"><i>Missing a cost</i><b>0</b><small>Every delivered order has one</small></div>') + "</div>";
   // the dates "due now" covers
@@ -6003,14 +6015,14 @@ function vTransfers() {
   h += "</tbody></table></div>";
   // past transfers
   var lastB = yrBatches[0];
-  h += '<button type="button" class="trf-h trf-past" data-trfpast="1" aria-expanded="' + !!TRF.past + '"><i>' + (TRF.past ? "&#9662;" : "&#9656;") + '</i><span class="lbl">Past transfers in ' + yr + " (" + yrBatches.length + ")</span>" +
-    '<span class="trf-flag-sub">' + (lastB ? "Last: " + esc(isoToMdy(trfDay(lastB.done_at))) + (lastB.batch_no ? " · batch " + esc(lastB.batch_no) : "") + " · " + trfMoney(lastB.total) + " · " + lastB.order_count + " orders" : "None yet") + "</span></button>";
+  h += '<button type="button" class="trf-h trf-past" data-trfpast="1" aria-expanded="' + !!TRF.past + '"><i>' + (TRF.past ? "&uarr;" : "&darr;") + '</i><span class="lbl">Past transfers in ' + yr + " (" + yrBatches.length + ")</span>" +
+    '<span class="trf-flag-sub">' + (lastB ? "Last: " + esc(isoToMdy(trfDay(lastB.done_at))) + (lastB.batch_no ? " · batch " + esc(lastB.batch_no) : "") + " · " + trfMoney(lastB.total) + " · " + lastB.order_count + " order" + (+lastB.order_count === 1 ? "" : "s") : "None yet") + "</span></button>";
   if (!TRF.past) return h + "</div>";
   h += '<div class="rpt-card trf-card"><table class="trf-tbl trf-hist"><thead><tr><th>Done</th><th>Batch</th><th>Covers</th><th>Orders</th><th>Amount</th><th></th></tr></thead><tbody>';
   if (!yrBatches.length) h += '<tr><td colspan="6" class="trf-none">No transfers in ' + yr + ".</td></tr>";
   yrBatches.forEach(function (b) {
     var open = !!TRF.open[b.id];
-    h += '<tr class="trf-b' + (open ? " open" : "") + '" data-trfopen="' + b.id + '"><td><i>&#9656;</i>' + esc(isoToMdy(trfDay(b.done_at))) + "</td><td>" + esc(b.batch_no || "—") + "</td><td>" +
+    h += '<tr class="trf-b' + (open ? " open" : "") + '" data-trfopen="' + b.id + '"><td><i>&darr;</i>' + esc(isoToMdy(trfDay(b.done_at))) + "</td><td>" + esc(b.batch_no || "—") + "</td><td>" +
       esc((b.from_date ? isoToMdy(String(b.from_date).slice(0, 10)) + " – " : "through ") + isoToMdy(String(b.through_date).slice(0, 10))) + "</td><td>" + b.order_count + "</td><td>" + trfMoney(b.total) +
       '</td><td class="act"><button class="btn sm" data-trfundo="' + b.id + '">Undo</button></td></tr>';
     if (open) h += '<tr class="trf-detail"><td colspan="6">' + (!TRF.lines[b.id] ? "Loading…" : trfBatchDetail(TRF.lines[b.id])) + "</td></tr>";
@@ -6073,7 +6085,11 @@ document.addEventListener("change", function (e) {
 });
 document.addEventListener("change", function (e) {
   var el = e.target;
-  if (el.id === "rpt-per") { REP.per = el.value; if (el.value !== "custom") { REP.from = ""; REP.to = ""; try { localStorage.setItem("dept12RepPer", el.value); } catch (e2) {} } render(); return; }
+  if (el.id === "rpt-per") {
+    var curRange = rptDashRange(); REP.per = el.value;
+    // Custom starts from the dates on screen instead of jumping to the last three months.
+    if (el.value === "custom") { REP.from = REP.from || curRange.from; REP.to = REP.to || curRange.to; }
+    if (el.value !== "custom") { REP.from = ""; REP.to = ""; try { localStorage.setItem("dept12RepPer", el.value); } catch (e2) {} } render(); return; }
   if (el.matches && el.matches("[data-rptdfrom],[data-rptdto]")) {
     var f = $("[data-rptdfrom]"), t = $("[data-rptdto]");
     if (f.dataset.lastIso && t.dataset.lastIso) {
@@ -6088,7 +6104,7 @@ document.addEventListener("change", function (e) {
 /* ── Settings (D54) ──────────────────────────────────────────────────────── */
 var CUSTOM_ACCENT_OPEN = false;
 function vSettings(sub) {
-  var h = '<div class="settings-head"><div><h2>Settings</h2><p>Personalize this workspace.</p></div></div>';
+  var h = "";
   if (sub === "shortcuts") return '<div class="settings-shell">' + h + settingsShortcuts() + "</div>";
   return '<div class="settings-shell">' + h + settingsAppearance() + "</div>";
 }
@@ -6127,7 +6143,7 @@ function schedulerSizingHtml() {
     "</div>";
   return '<section class="set-card set-wide"><div class="set-title"><div><div class="set-h">Scheduler sizing</div>' +
     '<p>Set the working size directly. Comfortable spacing is now the permanent baseline.</p></div>' +
-    '<button class="btn sm" data-schedsize-reset="1">Reset size</button></div>' +
+    '<button class="btn sm" data-schedsize-reset="1">Reset Size</button></div>' +
     '<div class="set-row">' +
     '<label class="setting-field"><span>Row height</span><span class="fb-fs" aria-label="Row height">' +
       '<button class="fb-fs-b" data-schedsize-step="rowHeight|-4" title="Shorter rows">&minus;</button>' +
@@ -6150,7 +6166,7 @@ function settingsAppearance() {
     '<p>Light, dark, or match this device.</p></div></div>' +
     '<div class="setting-choices" role="group" aria-label="Theme">' + prefBtn("theme", "system", "System") +
     prefBtn("theme", "light", "Light") + prefBtn("theme", "dark", "Dark") + "</div>" +
-    '<div class="theme-note">Additional themes can include their own texture and motion.</div></section>';
+    '</section>';
   h += '<section class="set-card accent-card set-accent"><div class="set-title"><div><div class="set-h">Accent</div>' +
     '<p>Choose a color.</p></div></div>' +
     '<div class="accent-palette" role="group" aria-label="Accent colors">' + accentPresetButtons(ACCENT_PRESETS) + '</div>' +
@@ -6158,12 +6174,12 @@ function settingsAppearance() {
     '<div class="accent-preview" id="accent-preview"><span class="accent-dot"></span><b>Selected accent</b>' +
       '<span id="accent-value">' + PREFS.accent + '</span></div>' +
     '<div class="custom-accent"><button class="custom-accent-toggle" data-custom-accent-toggle="1" aria-expanded="' + CUSTOM_ACCENT_OPEN +
-      '"><span aria-hidden="true">' + (CUSTOM_ACCENT_OPEN ? '&#9662;' : '&#9656;') + '</span>Custom color</button>' +
+      '"><span aria-hidden="true">' + (CUSTOM_ACCENT_OPEN ? '&uarr;' : '&darr;') + '</span>Custom color</button>' +
       (CUSTOM_ACCENT_OPEN ? '<div class="custom-accent-body">' +
       '<div class="accent-editor"><input type="color" id="pref-accent-wheel" value="' + PREFS.accent +
         '" aria-label="Choose custom accent color"><div class="accent-values"><label for="pref-accent-hex">Hex color</label>' +
         '<input id="pref-accent-hex" class="accent-hex" value="' + PREFS.accent + '" maxlength="7" spellcheck="false"></div>' +
-        '<button class="btn sm pri" data-accent-save="1">Save color</button></div>' +
+        '<button class="btn sm pri" data-accent-save="1">Save Color</button></div>' +
       '<div class="setting-help" id="accent-status">Hard-to-read colors are blocked automatically.</div></div>' : '') + '</div></section>';
   h += '<section class="set-card set-type"><div class="set-title"><div><div class="set-h">Typography</div>' +
     '<p>Interface font, and the font for labels and numbers.</p></div></div>' +
@@ -6188,7 +6204,7 @@ function orderNumberingHtml() {
   var cfg = orderNumberSettings();
   return '<section class="set-card set-wide numbering-card"><div class="set-title"><div><div class="set-h">Order numbering</div>' +
     '<p>Controls new numbers only. Existing orders are never renamed.</p></div>' +
-    '<button class="btn pri" data-numbering-save="1">Save numbering</button></div>' +
+    '<button class="btn pri" data-numbering-save="1">Save Numbering</button></div>' +
     '<div class="numbering-grid">' +
       '<div class="numbering-group"><h3>Bag Orders</h3>' +
         '<label class="setting-field"><span>Format</span><input id="numbering-internal-pattern" value="' + esc(cfg.internal_pattern) + '"></label>' +
@@ -6251,8 +6267,8 @@ function settingsHelp() {
       "work, routes, documents, and billing. Bare reserved Bag Order rows and cancelled orders are not included in the active count."],
     ["Order numbers",
       "Use <b>Add Orders</b> in Bag Orders to reserve a sequential block for a month, year, starting number, and quantity. " +
-      "<b>+ Add one</b> reserves the next number in the selected month. Administrators can change both order-number formats " +
-      "and reporting department codes under <b>Settings → General</b>. A format change applies only to new numbers; historical numbers stay unchanged."],
+      "<b>Add One Order</b> reserves the next number for this month. Both order-number formats " +
+      "and reporting department codes are set under <b>Settings → General</b>. A format change applies only to new numbers; historical numbers stay unchanged."],
     ["External routes and rate confirmations",
       "Create a blank External Order or drop a rate confirmation into the drop area. A normal order has one pickup and one " +
       "delivery; open the route editor when an order needs additional stops. External order numbers remain editable and can be entered when available."],
@@ -6269,12 +6285,12 @@ function settingsHelp() {
       "<b>Billing → Internal Transfers</b> adds up those costs by department and marks each transfer done."],
     ["Settings and shortcuts",
       "General contains theme, accent, font, order numbering, and Scheduler sizing. Shortcuts can be " +
-      "re-recorded, and <b>Add shortcut</b> gives an action an additional key combination."],
+      "re-recorded under <b>Settings → Shortcuts</b>."],
     ["Undo and history",
       "Undo and Redo cover changes made in the current session. Open History for the shared audit trail and " +
       "review a reversible change before restoring it. External actions such as sending data to another service remain recorded but are not reversed remotely."],
     ["Reports",
-      "The Reports dashboard holds the cards you build; Export Everything downloads every order for Excel. " +
+      "The Reports dashboard holds the cards you add; <b>Export CSV</b> downloads every order for Excel. " +
       "Exports use stored order fields and department codes; they do not depend on the visible order-number pattern."]
   ];
   return faqs.map(function (f) {
@@ -6497,7 +6513,7 @@ function motAssignShop(from, to) {
         return n;
       });
     });
-  }, function () { return 0; });
+  }).catch(function () { return 0; });
 }
 // The window: one line per trip the function would assign. Resolves with the Motive ids left ticked ([] = skip). Closing the
 // window any other way counts as skipping, so a pull never hangs on it.
@@ -6571,8 +6587,11 @@ function motBuckets(truck, day) {
     var m = motOrderMiles(o) || 0;
     if (o.is_transfer === true || o.is_transfer === "true") intf += m; else bag += m;
   });
-  var rest = T == null ? null : T - bag - intf;
-  return { total: T, bag: bag, intf: intf, ext: rest == null ? null : Math.max(0, rest), over: rest != null && rest < 0 ? -rest : 0, extOrders: ext };
+  var rest = T == null ? null : T - bag - intf, over = rest != null && rest < 0 ? -rest : 0;
+  // The ELD's total is what the truck drove. When the miles typed on its bag and internal orders come to more than that, both are
+  // scaled down to fit (and "over" says by how much), so Bag + Internal + External always equals the ELD total on every tile and bar.
+  if (over && bag + intf > 0) { var k = T / (bag + intf); bag *= k; intf *= k; }
+  return { total: T, bag: bag, intf: intf, ext: rest == null ? null : Math.max(0, rest), over: over, extOrders: ext };
 }
 function motFmtTime(iso) { if (!iso) return "—"; var d = new Date(iso); return isNaN(d) ? "—" : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }); }   // 24-hour, e.g. 06:45 and 17:30
 function motTruckDriver(truck) { var t = (DB.trucks || []).filter(function (x) { return String(x.number) === String(truck); })[0]; return t && t.driver_name || ""; }
@@ -6641,20 +6660,20 @@ function mrvCardsHtml() {
       if (r.ext) {
         var rate = motNum(o.external_rate);
         h += '<div class="mrv-r ext"><span class="mrv-tag ' + cls + '">' + type + "</span><span>" + esc(mrvLabel(o)) + '</span><span class="mrv-n">' +
-          (c.extMiles != null ? c.extMiles : "") + '</span><span class="mrv-n mute">' + (rate != null ? "$" + rate.toLocaleString() + " rate" : "no rate") +
-          '</span><span class="mrv-n">' + (c.extRpm ? "$" + c.extRpm.toFixed(2) : "") + "</span></div>";
+          (c.extMiles != null ? c.extMiles : "") + '</span><span class="mrv-n mute">' + (rate != null ? fmtMoney(rate) + " rate" : "no rate") +
+          '</span><span class="mrv-n">' + (c.extRpm ? fmtMoney(c.extRpm) : "") + "</span></div>";
         return;
       }
       if (r.done) {
         h += '<div class="mrv-r done"><span class="mrv-tag ' + cls + '">' + type + "</span><span>" + esc(mrvLabel(o)) + ' <small>(done)</small></span><span class="mrv-n">' +
-          (motNum(o.miles) != null ? o.miles : "") + '</span><span class="mrv-n">' + (r.costShown != null ? "$" + r.costShown : "") + '</span><span></span></div>';
+          (motNum(o.miles) != null ? o.miles : "") + '</span><span class="mrv-n">' + (r.costShown != null ? fmtMoney(r.costShown) : "") + '</span><span></span></div>';
         return;
       }
       var sug = c.sug[r.id], mShown = r.m != null ? r.m : null, mm = mShown != null ? mShown : sug;
       var auto = mm != null ? motFreightCost(mm) : null;
       h += '<div class="mrv-r"><span class="mrv-tag ' + cls + '">' + type + "</span><span>" + esc(mrvLabel(o)) + '</span>' +
         '<input class="mrv-in' + (r.m == null ? " sug" : "") + '" data-mrv="' + gi + "|" + ri + '|m" value="' + (r.m != null ? r.m : "") + '" placeholder="' + (sug != null ? sug : "") + '" inputmode="decimal" aria-label="Miles">' +
-        '<input class="mrv-in' + (r.cost == null ? " sug" : "") + '" data-mrv="' + gi + "|" + ri + '|c" value="' + (r.cost != null ? r.cost : "") + '" placeholder="' + (auto != null ? "$" + auto.toFixed(2) : "") + '" inputmode="decimal" aria-label="Cost">' +
+        '<input class="mrv-in' + (r.cost == null ? " sug" : "") + '" data-mrv="' + gi + "|" + ri + '|c" value="' + (r.cost != null ? r.cost : "") + '" placeholder="' + (auto != null ? fmtMoney(auto) : "") + '" inputmode="decimal" aria-label="Cost">' +
         "<span></span></div>";
     });
     if (c.over) h += '<div class="mrv-flag bad">Over by ' + Math.round(c.over * 10) / 10 + " miles. ELD recorded " + c.total + ".</div>";
@@ -6662,7 +6681,7 @@ function mrvCardsHtml() {
     return h + "</div>";
   }).join("");
 }
-function fmtLongDay(iso) { var d = new Date(iso + "T12:00:00"); return d.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" }); }
+function fmtLongDay(iso) { var d = new Date(iso + "T12:00:00"); return d.toLocaleDateString("en-US", { weekday: "short" }) + " " + isoToMdy(iso); }
 function mrvOpen(note) {
   mrvBuild(); MRV.note = note || "";
   openModal('<div class="modal-hd"><h2>Sync Delivery Dates</h2></div><div class="modal-body mrv-body">' +
@@ -6675,10 +6694,13 @@ function mrvOpen(note) {
 document.addEventListener("input", function (e) {
   var el = e.target.closest && e.target.closest("[data-mrv]"); if (!el) return;
   var p = el.dataset.mrv.split("|"), g = MRV.groups[+p[0]], r = g && g.rows[+p[1]]; if (!r) return;
-  var v = el.value.replace(/[^0-9.]/g, ""), n = v === "" || v === "." ? null : Number(v), pos = el.selectionStart;
+  var v = el.value.replace(/[^0-9.]/g, ""), dot = v.indexOf("."), pos = el.selectionStart;
+  if (dot >= 0) v = v.slice(0, dot + 1) + v.slice(dot + 1).replace(/\./g, "");      // one decimal point only
+  var n = v === "" || v === "." ? null : Number(v);
   if (p[2] === "m") r.m = n; else r.cost = n;
   $("#mrv-cards").innerHTML = mrvCardsHtml();
-  var back = document.querySelector('[data-mrv="' + el.dataset.mrv + '"]'); if (back) { back.focus(); try { back.setSelectionRange(pos, pos); } catch (x) { /* not a text box */ } }
+  // The cards are redrawn from the numbers; put back exactly what was typed ("12." or "45.50") so a decimal can be entered.
+  var back = document.querySelector('[data-mrv="' + el.dataset.mrv + '"]'); if (back) { back.value = v; back.focus(); try { back.setSelectionRange(pos, pos); } catch (x) { /* not a text box */ } }
 });
 function mrvSave() {
   var jobs = [];
@@ -6700,7 +6722,7 @@ function mrvSave() {
       busyEnd();
       return reload().then(function () {
         closeModal(); toast("Saved " + (jobs.length - failed) + " order" + (jobs.length - failed === 1 ? "" : "s") + (failed ? " · " + failed + " failed" : ""), failed > 0); render();
-      });
+      }).catch(function (err) { if (btn) btn.disabled = false; toast(err.message || "Could not reload", true); });
     }
     var j = jobs[i++], body = { order_id: j.r.id, miles: String(j.m) };
     if (j.r.cost != null) body.freight_amount = String(j.r.cost);        // a typed cost wins; otherwise the server works it out from the miles
@@ -6850,7 +6872,6 @@ function reload() { RELOADING++; return api("bootstrap").then(function (d) {
     var pmNew = placement();
     (d.orders || []).forEach(function (o) { if (!seenIds[o.id] && canStageOrder(o, pmNew[o.id])) STAGED.push(o.id); });
   }
-  AUTOSTAGE_OFF = false;
   schedNode = null; render();
   if (typeof rptOnReload === "function") rptOnReload();
   if (!DRIVER_BOOTED) { DRIVER_BOOTED = true; loadDriverActivity(); }   // first load: bring in notes, scans, views
@@ -6859,7 +6880,7 @@ function reload() { RELOADING++; return api("bootstrap").then(function (d) {
   // reload() already runs after essentially every mutation in the app, so
   // this is "live" without any polling/websocket infrastructure (D134).
   if (typeof historyPanelOpen === "function" && historyPanelOpen()) loadHistoryPanel();
-}).finally(function () { RELOADING--; }); }
+}).finally(function () { RELOADING--; AUTOSTAGE_OFF = false; }); }
 
 /* ── Global search (D44) — type anything, it scrapes the already-loaded DB and
    jumps you to the match: an order opens its drawer, everything else navigates
@@ -6896,8 +6917,7 @@ function parseDateQuery(q) {
 }
 function monthLabel(dq) { var n = MON[dq.mo]; return n.charAt(0) + n.slice(1).toLowerCase() + " " + dq.y; }
 function prettyDate(ds) {
-  return new Date(ds + "T00:00:00Z").toLocaleDateString(undefined,
-    { weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  return new Date(ds + "T00:00:00Z").toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" }) + " " + isoToMdy(ds);
 }
 /* Orders sitting on a given date on the board (any truck, any slot). */
 function loadsOnDate(ds) {
@@ -7192,7 +7212,8 @@ document.addEventListener("change", function (e) {
   var w4 = drawerRouteStops(o); if (!w4[i]) return; w4[i].appt = text;
   routeApply(o.id, w4, ROUTE_SEL && ROUTE_SEL.oid === o.id ? ROUTE_SEL.i : null);
 });
-function closeModal() { var m = $("#modal"); if (m) m.classList.remove("on"); $("#scrim").classList.remove("on"); }
+// The dimmed backdrop is shared with the order side window: it stays while that is still open.
+function closeModal() { var m = $("#modal"); if (m) m.classList.remove("on"); if (!$("#drawer").classList.contains("on")) $("#scrim").classList.remove("on"); }
 /* Database sorting has two modes: clicking a column name sorts this browser's view only; Save Order
    (shown while a sort is active) makes that order the default for everyone who opens this database. */
 function saveDatabaseOrder(grid) {
@@ -7207,7 +7228,7 @@ function saveDatabaseOrder(grid) {
         archived_view: archiveViewForGrid(grid) }).then(function () {
         delete GRIDSORT[grid]; toast("Saved row order"); return reload();
       }).catch(function (err) { toast(err.message, true); });
-    }, "Save row order");
+    }, "Save Row Order", true);
 }
 /* Day note popup (D230) — a dispatcher-only note pinned to a calendar date,
    opened from the scheduler's date-header right-click menu (openDayMenu,
@@ -7220,7 +7241,7 @@ function dayNoteModal(ds) {
     '<div class="modal-body"><p class="modal-note">Dispatcher-only — never shown to drivers or pushed to Sheets. Included in the full "Export entire app" data export.</p>' +
     '<label class="mf"><span>Note</span><textarea id="daynote-text" rows="4">' + esc(existing ? existing.text : "") + '</textarea></label></div>' +
     '<div class="modal-ft">' +
-    (existing ? '<button class="btn del" id="daynote-clear" style="margin-right:auto">Delete note</button>' : "") +
+    (existing ? '<button class="btn del" id="daynote-clear" style="margin-right:auto">Delete Note</button>' : "") +
     '<button class="btn" id="modal-cancel">Cancel</button>' +
     '<button class="btn pri" id="daynote-save">Save</button></div>');
   function submit(text) {
@@ -7235,11 +7256,13 @@ function dayNoteModal(ds) {
 }
 /* In-app confirm dialog (D77) — replaces the browser's confirm() so destructive
    actions get a styled modal. onYes runs after the user confirms. */
-function confirmModal(message, onYes, confirmLabel, primary) {
-  openModal('<div class="modal-hd"><h2>Are you sure?</h2></div>' +
+/* One confirm window for the whole app (DESIGN: Popups). The heading names the action ("Delete 3?"), the buttons sit together at
+   the right with the action last, and the dismiss button says Cancel, or Never Mind when the action itself is a cancel. */
+function confirmModal(message, onYes, confirmLabel, primary, dismissLabel) {
+  openModal('<div class="modal-hd"><h2>' + esc(confirmLabel || "Delete") + '?</h2></div>' +
     '<div class="modal-body"><p style="line-height:1.5;margin:0">' + esc(message) + "</p></div>" +
     '<div class="modal-ft"><span style="flex:1"></span>' +
-    '<button class="btn" id="modal-cancel">Cancel</button>' +
+    '<button class="btn" id="modal-cancel">' + esc(dismissLabel || "Cancel") + '</button>' +
     '<button class="btn ' + (primary ? "pri" : /^delete/i.test(confirmLabel || "Delete") ? "del" : "bad") + '" id="modal-confirm">' + esc(confirmLabel || "Delete") + "</button></div>");
   var btn = $("#modal-confirm");
   if (btn) btn.addEventListener("click", function () { closeModal(); onYes(); });
@@ -7261,6 +7284,8 @@ function confirmModal(message, onYes, confirmLabel, primary) {
 document.addEventListener("keydown", function (e) {
   if (e.key !== "Enter" || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
   if (e.target && e.target.tagName === "TEXTAREA") return;
+  // Enter on a focused button, link or dropdown is that control's own key (Enter on Cancel cancels; it never confirms).
+  if (e.target && e.target.closest && e.target.closest("button,select,a")) return;
   var modal = document.querySelector("#modal.on"); if (!modal) return;
   if (modal.dataset.keyConfirming) return;
   var yes = modal.querySelector("#modal-confirm,#confirm-del,#confirm-archive-delete,#confirm-customer-archive,#history-confirm");
@@ -7301,10 +7326,17 @@ document.addEventListener("keydown", function (e) {
    would otherwise run instead. */
 document.addEventListener("keydown", function (e) {
   if (e.key !== "Escape") return;
+  // A right-click menu, a color / border / font picker or the profile menu closes first, and nothing behind it reacts.
+  if (document.querySelector("#ctxmenu,#palette,#profile-menu")) {
+    e.preventDefault(); e.stopPropagation();
+    if (document.querySelector("#palette")) closePalette(); else closeCtxMenu();
+    closeProfileMenu();
+    return;
+  }
   var modal = document.querySelector("#modal.on");
   if (modal) {
     e.preventDefault(); e.stopPropagation();
-    var cancel = modal.querySelector("#modal-cancel");
+    var cancel = modal.querySelector("#modal-cancel,#afr-cancel,#dtype-cancel");
     if (cancel) cancel.click(); else closeModal();
     return;
   }
@@ -7329,7 +7361,9 @@ function openViewer(path, name) {
     '<button class="btn sm" id="viewer-close">Close</button></div><div class="viewer-body"><div class="empty">Loading…</div></div></div>';
   v0.classList.add("on");
   // Private Storage: the file is only reachable through a short-lived signed URL.
-  storedFileUrl(path).then(function (url) { renderViewer(path, name, url); })
+  v0.dataset.path = path;
+  // Closed (or pointed at another file) while the link was being fetched: leave it closed.
+  storedFileUrl(path).then(function (url) { if (v0.classList.contains("on") && v0.dataset.path === path) renderViewer(path, name, url); })
     .catch(function (e) { closeViewer(); toast(e.message, true); });
 }
 function renderViewer(path, name, url) {
@@ -7781,7 +7815,7 @@ function manageColumnsModal(key) {
   if (!ent) return;
   openModal('<div class="modal-hd"><h2>Manage columns</h2></div>' +
     '<div class="modal-body" id="colmgr-body" data-colmgr="' + ent.id + '">' + colmgrRowsHtml(ent.id) + "</div>" +
-    '<div class="modal-ft"><span style="flex:1"></span><button class="btn" id="modal-cancel">Done</button></div>');
+    '<div class="modal-ft"><span style="flex:1"></span><button class="btn" id="modal-cancel">Close</button></div>');
 }
 /* Re-renders the column list in place after a hide/reorder so the modal stays
    open — reload()/render() never touch #modal (separate node). */
@@ -7817,11 +7851,11 @@ function condFmtFieldModal(field) {
   var rules = field.conditional_format || [];
   var body = '<p style="font-size:var(--fs-label);color:var(--ink-2);margin:0 0 6px">First matching rule wins, top to bottom. A manually colored cell always overrides.</p>' +
     '<div id="condfmt-rules">' + rules.map(condRuleRowHtml).join("") + "</div>" +
-    '<button class="btn sm" id="condfmt-addrule" style="margin-top:6px">+ Add rule</button>';
+    '<button class="btn sm" id="condfmt-addrule" style="margin-top:6px">+ Add Rule</button>';
   openModal('<div class="modal-hd"><h2>Conditional formatting — ' + esc(field.label) + "</h2></div>" +
     '<div class="modal-body">' + body + "</div>" +
     '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
-    '<span style="flex:1"></span><button class="btn pri" id="condfmt-save" data-fieldid="' + field.id + '">Save</button></div>');
+    '<button class="btn pri" id="condfmt-save" data-fieldid="' + field.id + '">Save</button></div>');
   $("#modal").classList.add("wide-modal");
   var host = $("#condfmt-rules");
   host.addEventListener("click", function (e) {
@@ -7880,11 +7914,11 @@ function fieldOptionsModal(field) {
   var body = '<p style="font-size:var(--fs-label);color:var(--ink-2);margin:0 0 6px">' +
       'One option per row. Remove them all to make this a plain free-typed field again.</p>' +
     '<div id="field-options-rows">' + (opts.length ? opts.map(fieldOptionRowHtml).join("") : fieldOptionRowHtml("")) + "</div>" +
-    '<button class="btn sm" id="field-options-addrow" style="margin-top:6px">+ Add option</button>';
+    '<button class="btn sm" id="field-options-addrow" style="margin-top:6px">+ Add Option</button>';
   openModal('<div class="modal-hd"><h2>Dropdown options — ' + esc(field.label) + "</h2></div>" +
     '<div class="modal-body">' + body + "</div>" +
     '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
-    '<span style="flex:1"></span><button class="btn pri" id="field-options-save" data-fieldid="' + field.id + '">Save</button></div>');
+    '<button class="btn pri" id="field-options-save" data-fieldid="' + field.id + '">Save</button></div>');
   var foHost = $("#field-options-rows");
   foHost.addEventListener("click", function (e) {
     var del = e.target.closest("[data-optdel]");
@@ -8145,11 +8179,16 @@ function deleteSelection() {
     var k = td && td.dataset && td.dataset.key, cv = k && CELLS[k];
     return !!(cv && cv.oid && scheduleDateOf(k) < cut);
   });
-  if (historicalLoads) confirmModal("This removes a load from a past day and changes schedule history. Continue?", execute, "Change history");
+  if (historicalLoads) confirmModal("This removes a load from a past day and changes schedule history. Continue?", execute, "Change History");
   else execute();
 }
 document.addEventListener("keydown", function (e) {
-  if (e.key === "Escape" && DRAWER_OID && !EDITING) { closeDrawer(); return; }
+  if (e.key === "Escape" && DRAWER_OID && !EDITING) {
+    // An open Pickup / Drop suggestion list closes first; the side window on the next press.
+    var sug = document.getElementById("loc-suggest-portal");
+    if (sug && sug.style.display !== "none") { sug.style.display = "none"; return; }
+    closeDrawer(); return;
+  }
   if (EDITING) {
     if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
     else if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitEdit(); move(1, 0); }
@@ -8157,6 +8196,8 @@ document.addEventListener("keydown", function (e) {
     return;
   }
   if (DRAWER_OID) return;
+  // A popup, the document viewer or the Sign window owns the keyboard: the grid behind it does not delete, type or move.
+  if (document.querySelector("#modal.on,#viewer.on,#sgn")) return;
   // A Database/sheet grid's dropdown and combo cells (select.cell-i/
   // input.cell-i, D144/D160) are real, always-live form controls sitting
   // directly inside a normal td[data-key] — unlike a plain text cell, which
@@ -8176,7 +8217,7 @@ document.addEventListener("keydown", function (e) {
       e.target.closest("td[data-key]")) {
     e.preventDefault(); e.target.blur(); move(0, e.shiftKey ? -1 : 1); return;
   }
-  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
   // Delete/Backspace must work over a multi-cell marquee (SELSET), not just a
   // single selected cell — checked here, before the SEL-only guard below.
   // deleteSelection() itself always handled SELSET ("clears the whole
@@ -8256,7 +8297,7 @@ function afFormHtml(p) {
   return '<datalist id="afr-brokers">' + brokers + "</datalist>" +
     '<div class="fields">' + row("Broker", "broker", p.broker || "", { list: "afr-brokers", hint: "broker" }) + row("Order #", "solomon", p.solomon || "", { ph: "Optional" }) +
     row("Load #", "load_no", p.load_no || "") + row("PU / PO", "po", p.po || "") +
-    row("Rate", "rate", p.rate == null ? "" : "$" + Number(p.rate).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), { low: p.rate != null && (p.rate > 3000 || p.rate < 150) || (p.rate != null && conf.rate === "check") }) + "</div>" +
+    row("Rate", "rate", p.rate == null ? "" : fmtMoney(p.rate), { low: p.rate != null && (p.rate > 3000 || p.rate < 150) || (p.rate != null && conf.rate === "check") }) + "</div>" +
     stop("pickup", "Pickup") + stop("delivery", "Drop");
 }
 // Wires the boxes inside `root`: the hints under them, and collect() which returns the (possibly edited) values as the reader's own shape.
@@ -8298,7 +8339,7 @@ function afReview(p, source) {
       (ex ? '<div class="note-bar" style="margin:0 0 10px">This matches order <b>' + esc(ex.rexius_order_no || ex.broker_load_no || "") + "</b>. Only its blank boxes will be filled in; nothing already on it is changed.</div>" :
         '<p class="afr-intro">Check what was read, fix anything, then create the order. Nothing is saved until you do.</p>') +
       afFormHtml(p) +
-      '</div><div class="modal-ft"><button class="btn" id="afr-cancel" type="button">Cancel</button><span style="flex:1"></span>' +
+      '</div><div class="modal-ft"><button class="btn" id="afr-cancel" type="button">Cancel</button>' +
       '<button class="btn pri" id="afr-go" type="button">' + (ex ? "Fill In Order" : "Create Order") + "</button></div>";
     openModal(h); var m = $("#modal"); if (m) m.classList.add("wide-modal");
     var form = afFormBind(m, p);
@@ -8313,7 +8354,7 @@ function afReview(p, source) {
    typed text wherever you click on the page. The signed copy is a new PDF (the original is never changed): drag the file chip out to
    the desktop or an email, or click it to save. Initials are set up once (typed in a script font, or drawn) and kept on this computer. */
 var SGN = null, SGN_INK = "#0b1d5c";
-function sgnToday() { var d = new Date(); return (d.getMonth() + 1) + "/" + d.getDate() + "/" + String(d.getFullYear()).slice(2); }
+function sgnToday() { return isoToMdy(pacificToday()); }
 function sgnInitials() { try { return JSON.parse(localStorage.getItem("sgnInitials") || "null"); } catch (e) { return null; } }
 function sgnSaveInitials(o) { try { localStorage.setItem("sgnInitials", JSON.stringify(o)); } catch (e) { /* private mode */ } }
 function sgnTrim(cv) {
@@ -9051,7 +9092,7 @@ document.addEventListener("pointercancel", billDragEnd, true);
    it goes through the same reader and fills an order the same way, with the same tags. */
 function pasteLoadModal() {
   openModal('<div class="modal-hd"><h2>Paste Load Info</h2></div><div class="modal-body">' +
-    '<p style="font-size:var(--fs-label);color:var(--ink-3);margin-bottom:8px">Paste the email or text for the load. It fills a new order, and every box it fills gets a tag so you can check it.</p>' +
+    '<p style="font-size:var(--fs-label);color:var(--ink-3);margin-bottom:8px">Paste the email or text for the load. It opens a review window so you can check every box before the order is made.</p>' +
     '<textarea id="paste-load-text" rows="12" style="width:100%" placeholder="Paste here"></textarea></div>' +
     '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
     '<button class="btn pri" id="paste-load-go">Read It</button></div>');
@@ -9258,6 +9299,15 @@ function groupMerge() {
 }
 /* ═══ 07-events ═══ */
 /* ── Events ──────────────────────────────────────────────────────────────── */
+/* A second click on a save button right after the first (a double click) is dropped, so nothing is saved or added twice. */
+var ONCE_BTNS = { "col-save": 1, "field-save": 1, "db-save": 1, "modal-save-dept": 1, "xfer-save-bulk": 1, "modal-save-driver": 1,
+  "modal-save-truck": 1, "int-save-bulk": 1, "confirm-del": 1, "daynote-save": 1, "sgn-save": 1, "modal-confirm": 1 };
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("button"); if (!b || !ONCE_BTNS[b.id]) return;
+  var now = Date.now();
+  if (b.dataset.clickedAt && now - b.dataset.clickedAt < 900) { e.stopImmediatePropagation(); e.preventDefault(); return; }
+  b.dataset.clickedAt = now;
+}, true);
 /* Inline-rename an element's text with an input; onSave(newValue) fires on a
    real change (D75/D85). Shared by sheet tabs, database tabs, and column
    headers. `onCancel` (default: the global render()) restores the host on
@@ -9577,7 +9627,7 @@ document.addEventListener("click", function (e) {
     var dc = catById(t.dataset.catdel);
     if (dc) confirmModal('Delete designation "' + dc.name + '"? Chips using it fall back to no color.', function () {
       api("category", { id: dc.id, delete: true }).then(reload).catch(function (err) { toast(err.message, true); });
-    }, "Delete designation");
+    }, "Delete Designation");
     return;
   }
   if (t.dataset.managecols) { manageColumnsModal(t.dataset.managecols); return; }
@@ -9728,15 +9778,19 @@ document.addEventListener("click", function (e) {
       (odDelivered ? " " + odDelivered + (odDelivered > 1 ? " of them are" : " of them is") + " already delivered." : "") +
       (odSkipped ? " (" + odSkipped + " selected order" + (odSkipped > 1 ? "s stay" : " stays") + " on file because billed external orders and delivered bag orders with an order number can't be deleted.)" : ""),
       function () {
+        var odFail = 0, odWhy = "";
         Promise.all(odIds.map(function (id) {
-          return api("order/delete", { id: id }).catch(function (err) { toast(err.message, true); });
+          return api("order/delete", { id: id }).catch(function (err) { odFail++; odWhy = err.message; });
         })).then(function () {
           STAGED = STAGED.filter(function (id) { return odIds.indexOf(id) < 0; });
           if (DRAWER_OID && odIds.indexOf(DRAWER_OID) >= 0) closeDrawer();
           ROWSEL[odg] = [];
           return reload();
-        }).then(function () { toast(odIds.length + " order" + (odIds.length > 1 ? "s" : "") + " deleted"); });
-      }, "Delete " + odIds.length);
+        }).then(function () {
+          var odOk = odIds.length - odFail;
+          toast(odOk + " order" + (odOk === 1 ? "" : "s") + " deleted" + (odFail ? " · " + odFail + " could not be deleted: " + odWhy : ""), odFail > 0);
+        }).catch(function (err) { toast(err.message, true); });
+      }, "Delete " + odIds.length + " Order" + (odIds.length > 1 ? "s" : ""));
     return;
   }
   if (t.dataset.ordercancelrows) {
@@ -9748,14 +9802,18 @@ document.addEventListener("click", function (e) {
     confirmModal("Cancel " + ocIds.length + " order" + (ocIds.length > 1 ? "s" : "") + "? You can restore them later." +
       (ocSkipped ? " (" + ocSkipped + " selected order" + (ocSkipped > 1 ? "s" : "") + " can't be cancelled and will be skipped.)" : ""),
       function () {
+        var ocFail = 0, ocWhy = "";
         Promise.all(ocIds.map(function (id) {
-          return api("order/cancel", { id: id, cancelled: true }).catch(function (err) { toast(err.message, true); });
+          return api("order/cancel", { id: id, cancelled: true }).catch(function (err) { ocFail++; ocWhy = err.message; });
         })).then(function () {
           STAGED = STAGED.filter(function (id) { return ocIds.indexOf(id) < 0; });
           ROWSEL[ocg] = [];
           return reload();
-        }).then(function () { toast(ocIds.length + " order" + (ocIds.length > 1 ? "s" : "") + " cancelled"); });
-      }, "Cancel " + ocIds.length);
+        }).then(function () {
+          var ocOk = ocIds.length - ocFail;
+          toast(ocOk + " order" + (ocOk === 1 ? "" : "s") + " cancelled" + (ocFail ? " · " + ocFail + " could not be cancelled: " + ocWhy : ""), ocFail > 0);
+        }).catch(function (err) { toast(err.message, true); });
+      }, "Cancel " + ocIds.length + " Order" + (ocIds.length > 1 ? "s" : ""), false, "Never Mind");
     return;
   }
   if (t.dataset.deleteDoc) {
@@ -9764,7 +9822,7 @@ document.addEventListener("click", function (e) {
     confirmModal('Permanently delete unmatched document "' + (doc.original_filename || "file") + '"? This cannot be undone.', function () {
       api("document/delete", { id: doc.id }).then(reload).then(function () { toast("Document deleted"); })
         .catch(function (err) { toast(err.message, true); });
-    }, "Delete document");
+    }, "Delete Document");
     return;
   }
   if (t.id === "confirm-del") {
@@ -9805,8 +9863,11 @@ document.addEventListener("click", function (e) {
     return;
   }
   if (t.id === "col-delete") {
-    api("grid/column/delete", { id: t.dataset.colid }).then(reload).then(function () { closeModal(); })
-      .catch(function (err) { toast(err.message, true); });
+    // Asks first, the same as Delete column in the right-click menu.
+    var cdId = t.dataset.colid, cdName = ($("#modal [data-cf=label]") || {}).value || "this column";
+    confirmModal('Delete column "' + cdName + '"? Its data is lost.', function () {
+      api("grid/column/delete", { id: cdId }).then(reload).catch(function (err) { toast(err.message, true); });
+    }, "Delete Column");
     return;
   }
   if (t.id === "field-save") {
@@ -9898,13 +9959,12 @@ document.addEventListener("click", function (e) {
     SUB = t.dataset.sub; SEL = null; render(); return;
   }
   if (t.dataset.open) { openOrder(t.dataset.open); return; }
-  if (t.dataset.pkgrow) { doPackage(t.dataset.pkgrow, "merged"); return; }
-  if (t.dataset.pkg) { if (DRAWER_OID) doPackage(DRAWER_OID, t.dataset.pkg); return; }
+  if (t.dataset.pkgrow) { doPackage(t.dataset.pkgrow, "merged").catch(pkgFailed); return; }
+  if (t.dataset.pkg) { if (DRAWER_OID) doPackage(DRAWER_OID, t.dataset.pkg).catch(pkgFailed); return; }
   if (t.dataset.billDone) { billDone(t.dataset.billDone); return; }
   if (t.dataset.billDl) {
     var dlId = t.dataset.billDl;
-    doPackage(dlId, "merged").then(function () { askMarkBilled([dlId]); })
-      .catch(function (err) { toast(err.message || "Download failed", true); });
+    doPackage(dlId, "merged").then(function () { askMarkBilled([dlId]); }).catch(pkgFailed);
     return;
   }
   if (t.id === "bill-dl-sel") { billBatch(); return; }
@@ -10249,7 +10309,7 @@ document.addEventListener("change", function (e) {
     // before anything else in this handler could run).
     var id = e.target.dataset.group, i = GROUP.indexOf(id);
     if (e.target.checked && i < 0) GROUP.push(id); else if (!e.target.checked && i >= 0) GROUP.splice(i, 1);
-    var groupBtn = $("#group-btn"); if (groupBtn) groupBtn.textContent = "Group merge (" + GROUP.length + ")";
+    var groupBtn = $("#group-btn"); if (groupBtn) groupBtn.textContent = "Group Merge (" + GROUP.length + ")";
     var dlSelBtn = $("#bill-dl-sel"); if (dlSelBtn) dlSelBtn.textContent = "Download Selected (" + GROUP.length + ")";
     var doneSelBtn = $("#bill-done-sel"); if (doneSelBtn) doneSelBtn.textContent = "Mark Billed (" + GROUP.length + ")";
     var combSelBtn = $("#bill-combine-sel"); if (combSelBtn) combSelBtn.textContent = "Combine Into One PDF (" + GROUP.length + ")";
@@ -10458,7 +10518,7 @@ function docTypeChooser(files, guesses) {
         opts.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (guesses[i] || "other") ? " selected" : "") + ">" + o[1] + "</option>"; }).join("") + "</select></div></td></tr>";
     }).join("");
     openModal('<div class="modal-hd"><h2>What are these?</h2></div><div class="modal-body"><p style="margin:0 0 10px;color:var(--ink-2)">The file names don&rsquo;t say. Pick what each one is; a rate con can then be signed or read from its row.</p>' +
-      '<table class="data" style="min-width:0"><tbody>' + rows + '</tbody></table></div><div class="modal-ft"><button class="btn" id="dtype-cancel" type="button">Cancel</button><span style="flex:1"></span><button class="btn pri" id="dtype-go" type="button">Attach</button></div>');
+      '<table class="data" style="min-width:0"><tbody>' + rows + '</tbody></table></div><div class="modal-ft"><button class="btn" id="dtype-cancel" type="button">Cancel</button><button class="btn pri" id="dtype-go" type="button">Attach</button></div>');
     $("#dtype-cancel").onclick = function () { closeModal(); resolve(null); };
     $("#dtype-go").onclick = function () { var out = files.map(function (f, i) { return $('#modal [data-dtype="' + i + '"]').value; }); closeModal(); resolve(out); };
   });
@@ -10892,7 +10952,7 @@ function historicalMoveMessage(from, to) {
 function confirmHistoricalMove(from, to, action) {
   var msg = historicalMoveMessage(from, to);
   if (!msg) { action(); return; }
-  confirmModal(msg, action, "Change history");
+  confirmModal(msg, action, "Change History");
 }
 
 /* Server-backed mutation primitives. Both the user action and its undo/redo
@@ -11207,7 +11267,10 @@ var PALETTE_ON = false;
    own button can toggle it shut instead of the capture-mousedown closing then the
    click reopening it (D80). */
 var PALETTE_KIND = null;
-function closePalette() { var e = $("#palette"); if (e) e.remove(); PALETTE_ON = false; PALETTE_KIND = null; closeCtxMenu(); }
+// A menu or picker fades out the way it faded in. Its id is dropped at once, so "is a menu open" checks and a menu opened
+// right after it never see the one that is leaving.
+function menuFadeOut(e) { e.removeAttribute("id"); e.classList.add("closing"); setTimeout(function () { e.remove(); }, 140); }
+function closePalette() { var e = $("#palette"); if (e) menuFadeOut(e); PALETTE_ON = false; PALETTE_KIND = null; closeCtxMenu(); }
 /* If the named popover is already open, close it and report handled (toggle off). */
 function togglePalette(kind) { if (PALETTE_KIND === kind) { closePalette(); return true; } return false; }
 
@@ -11216,7 +11279,7 @@ function togglePalette(kind) { if (PALETTE_KIND === kind) { closePalette(); retu
    color in if i want" — the toolbar's Fill button already covers it).
    "Mark/Clear truck off" now applies to the current multi-selection when
    the clicked cell is part of one, else just that cell's own day. */
-function closeCtxMenu() { var m = $("#ctxmenu"); if (m) m.remove(); }
+function closeCtxMenu() { var m = $("#ctxmenu"); if (m) menuFadeOut(m); }
 function openCtxMenu(x, y, key) {
   closeCtxMenu();
   var cv = CELLS[key], p = key.split("|"), truckId = p[0], ds = p[1];
@@ -11363,7 +11426,7 @@ function removeDayRow(ds) {
       toast(plans.length ? "Row removed; its contents were shifted up or staged" : "Row removed");
     }).catch(function (e) { toast(e.message, true); });
   }
-  if (plans.length) confirmModal("Remove the bottom row? Its contents will shift into open cells; loads with no open cell move to Staging. Undo restores the row.", execute, "Remove row");
+  if (plans.length) confirmModal("Remove the bottom row? Its contents will shift into open cells; loads with no open cell move to Staging. Undo restores the row.", execute, "Remove Row");
   else execute();
 }
 function openDayMenu(x, y, rowhd) {
@@ -11468,7 +11531,7 @@ document.addEventListener("contextmenu", function (e) {
     if (fld.storage === "json") fitems.push({ label: "Delete field", danger: true, run: function () {
       confirmModal('Delete field "' + fld.label + '"? Its data is lost.', function () {
         api("field/delete", { id: fld.id }).then(reload).catch(function (err) { toast(err.message, true); });
-      }, "Delete field");
+      }, "Delete Field");
     } });
     openMenu(e.clientX, e.clientY, fitems);
     return;
@@ -11485,7 +11548,7 @@ document.addEventListener("contextmenu", function (e) {
       { label: "Delete column", danger: true, run: function () {
         confirmModal('Delete column "' + col.label + '"? Its data is lost.', function () {
           api("grid/column/delete", { id: col.id }).then(reload).catch(function (err) { toast(err.message, true); });
-        }, "Delete column");
+        }, "Delete Column");
       } }
     ]);
     return;
@@ -11513,7 +11576,7 @@ document.addEventListener("contextmenu", function (e) {
           api("sheet", { id: sid, delete: true }).then(function () {
             return reload().then(function () { SEC = "database"; SUB = "bagger"; render(); });
           }).catch(function (err) { toast(err.message, true); });
-        }, "Delete sheet");
+        }, "Delete Sheet");
       } }
     ]);
     return;
@@ -11529,7 +11592,7 @@ document.addEventListener("contextmenu", function (e) {
           api("entity/delete", { id: ent.id }).then(function () {
             return reload().then(function () { SUB = subsOf("database")[0].k; render(); });
           }).catch(function (err) { toast(err.message, true); });
-        }, "Delete database");
+        }, "Delete Database");
       } }]);
       return;
     }
@@ -12101,7 +12164,7 @@ function openSheetsPicker(x, y, onPick, initialColor, showOpacity) {
     }).join("") + "</div>";
   }).join("");
   el.innerHTML =
-    '<button class="sw-none" data-hex="">&#8856; No fill</button>' +
+    '<button class="sw-none" data-hex="">&#8856; No Fill</button>' +
     '<div class="sw-grid">' + grid + "</div>" +
     '<div class="sw-custom"><input type="color" id="sw-hex" value="' + base + '">' +
     '<input type="text" id="sw-hex-text" class="hex-text" value="' + base + '" maxlength="7" placeholder="#rrggbb" spellcheck="false"><span>Custom</span>' +
@@ -12823,6 +12886,18 @@ document.addEventListener("touchend", function (e) {
   }
   TOUCHDRAG = null;
 }, { passive: false });
+// The system took the touch away (a call, a gesture, a notification): clear the dragged copy without dropping anything.
+document.addEventListener("touchcancel", function () {
+  if (!TOUCHDRAG) return;
+  clearTimeout(TOUCHDRAG.timer);
+  if (TOUCHDRAG.started) {
+    if (TOUCHDRAG.clone) TOUCHDRAG.clone.remove();
+    TOUCHDRAG.chip.classList.remove("dragging");
+    $$(".over").forEach(function (n) { n.classList.remove("over"); });
+    DRAG = null;
+  }
+  TOUCHDRAG = null;
+});
 /* D208: Escape closes the mobile navigation drawer without affecting the
    desktop rail's persisted collapsed/expanded preference. */
 document.addEventListener("keydown", function (e) {
@@ -12992,7 +13067,7 @@ var HISTORY_HAS_MORE = false;
 function historyDate(value) {
   if (!value) return "";
   var d = new Date(value);
-  return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " · " +
+  return fmtDate(d) + " · " +
     d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 function historyFieldName(s) { return String(s || "").replace(/_/g, " "); }
@@ -13121,7 +13196,7 @@ function historyDayLabel(key) {
   var diff = Math.round((today - d) / 86400000);
   if (diff === 0) return "Today";
   if (diff === 1) return "Yesterday";
-  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-US", { weekday: "short" }) + " " + fmtDate(d);
 }
 function historyDayGroups(groups) {
   var byDay = {}, order = [];
@@ -13160,7 +13235,7 @@ function historyGroupHtml(g) {
       " · " + root.change_count + " change" + (root.change_count === 1 ? "" : "s") + '</div></div>' +
     '<div class="history-when">' + esc(historyDate(tip.occurred_at)) + "</div></div>" +
     (canAct ? '<div class="history-actions"><button class="btn sm" data-history-revert="' + tip.id + '">' +
-      (reverted ? "Redo" : "Revert action") + '</button></div>' : "") +
+      (reverted ? "Redo" : "Revert Action") + '</button></div>' : "") +
     (root.changes && root.changes.length
       ? '<div class="history-changes">' + root.changes.map(historyChangeHtml).join("") + "</div>"
       : "") + "</article>";
@@ -13169,7 +13244,7 @@ function historyDayHtml(day) {
   var open = !!HISTORY_OPEN_DAYS[day.key], n = day.groups.length;
   return '<div class="history-day">' +
     '<button class="history-day-hd" data-history-day="' + esc(day.key) + '" aria-expanded="' + open + '">' +
-    '<span><span class="history-day-arrow">▸</span>' + esc(historyDayLabel(day.key)) + '</span><span class="history-day-ct">' +
+    '<span><span class="history-day-arrow">&darr;</span>' + esc(historyDayLabel(day.key)) + '</span><span class="history-day-ct">' +
     n + " edit" + (n === 1 ? "" : "s") + "</span></button>" +
     (open ? '<div class="history-day-body">' + day.groups.map(historyGroupHtml).join("") + "</div>" : "") +
     "</div>";
@@ -13221,7 +13296,7 @@ function toggleHistoryPanel() {
 function openHistoryRevertPreview(eventId) {
   api("history/preview", { event_id: eventId }).then(function (p) {
     var target = p.target || {};
-    var isRedo = !!target.reverts_event_id, verb = isRedo ? "Redo" : "Revert action";
+    var isRedo = !!target.reverts_event_id, verb = isRedo ? "Redo" : "Revert Action";
     var warning = "";
     if ((p.irreversible || []).length) warning += '<div class="history-warning"><b>External effect remains.</b> ' +
       "This action sent an email, Google Sheets push, or other external effect that the database cannot take back.</div>";
@@ -13233,7 +13308,7 @@ function openHistoryRevertPreview(eventId) {
       esc((target.actor_name || "") + " · " + historyDate(target.occurred_at)) + '</span><span>' +
       p.change_count + " database change" + (p.change_count === 1 ? "" : "s") + " will be reversed</span></div></div>" +
       "</div>" +
-      '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button><span style="flex:1"></span>' +
+      '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
       '<button class="btn bad" id="history-confirm"' + (p.can_apply ? "" : " disabled") + ">" + verb + "</button></div>");
     var confirm = $("#history-confirm");
     if (confirm && p.can_apply) confirm.addEventListener("click", function () {
@@ -13267,6 +13342,11 @@ $("#history-panel") && $("#history-panel").addEventListener("click", function (e
   }
 });
 document.addEventListener("keydown", function (e) {
-  if (e.key === "Escape" && historyPanelOpen()) closeHistoryPanel();
+  // Only an Escape nothing else used: not one that cancelled a cell edit, left a text box or closed the side window.
+  if (e.key !== "Escape" || !historyPanelOpen() || e.defaultPrevented) return;
+  var el = e.target;
+  if ((typeof EDITING !== "undefined" && EDITING) || (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable))) return;
+  if (document.querySelector("#drawer.on")) return;
+  closeHistoryPanel();
 });
 })();

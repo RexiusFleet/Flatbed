@@ -55,7 +55,10 @@ function authRequest(path, body) {
     body: JSON.stringify(body)
   }).then(function (r) {
     return r.json().catch(function () { return {}; }).then(function (j) {
-      if (!r.ok) throw new Error(j.error_description || j.msg || j.message || j.error || ("Sign-in failed (" + r.status + ")"));
+      if (!r.ok) {
+        var e = new Error(j.error_description || j.msg || j.message || j.error || ("Sign-in failed (" + r.status + ")"));
+        e.status = r.status; throw e;
+      }
       return j;
     });
   });
@@ -66,16 +69,22 @@ function refreshSession() {
   if (!REFRESHING) {
     REFRESHING = authRequest("token?grant_type=refresh_token", { refresh_token: SESSION.refresh_token })
       .then(function (j) { saveSession(sessionFrom(j)); return SESSION; })
-      .catch(function (e) { saveSession(null); throw e; })
+      // Only a "no" from the sign-in server ends the session. No connection (a laptop waking up before Wi-Fi is back) keeps it,
+      // so the next try works.
+      .catch(function (e) { if (authRejected(e)) saveSession(null); throw e; })
       .then(function (s) { REFRESHING = null; return s; }, function (e) { REFRESHING = null; throw e; });
   }
   return REFRESHING;
 }
+function authRejected(e) { return !!(e && e.status >= 400 && e.status < 500 && e.status !== 429); }
 // A token with under a minute left is refreshed before use.
 function accessToken() {
   if (!SESSION) return Promise.reject(signedOutError());
   if ((SESSION.expires_at || 0) - 60 > Date.now() / 1000) return Promise.resolve(SESSION.access_token);
-  return refreshSession().then(function (s) { return s.access_token; });
+  return refreshSession().then(function (s) { return s.access_token; }, function (e) {
+    if (authRejected(e)) { signedOut(); throw signedOutError(); }
+    throw e;
+  });
 }
 function signedOutError() {
   var e = new Error("Your session ended — sign in again."); e.signedOut = true; return e;
@@ -105,7 +114,7 @@ function sbFetch(path, opts, retried) {
   }).then(function (r) {
     if (r.status === 401 && !retried) {
       return refreshSession().then(function () { return sbFetch(path, opts, true); },
-                                   function () { signedOut(); throw signedOutError(); });
+                                   function (e) { if (!authRejected(e)) throw e; signedOut(); throw signedOutError(); });
     }
     if (!r.ok) return errorFrom(r).then(function (e) { throw e; });
     return r;
@@ -659,7 +668,9 @@ var ROUTES = {
   // Live updates: look for what someone else changed since the last fetch (the History log), fold it into the kept copy, and say
   // whether anything changed and which orders. The app then redraws from that copy (a normal "bootstrap").
   "bootstrap/poll": function () {
-    if (LEGACY_BOOT || !BOOT || BOOT_DIRTY) return Promise.resolve({ changed: false, orders: [] });
+    if (LEGACY_BOOT || !BOOT) return Promise.resolve({ changed: false, orders: [] });
+    // After a failed call the kept copy may be behind: ask for a complete reload instead of going quiet until the next save.
+    if (BOOT_DIRTY) return Promise.resolve({ changed: true, orders: [], all: true });
     var before = BOOT.cursor;
     return rpc("api_bootstrap_since", { d: { since: before } }).then(function (res) {
       if (res.full) return bootFull().then(function () { return { changed: true, orders: [], all: true }; });
@@ -823,6 +834,9 @@ var ROUTES = {
 };
 
 var API_WRITES = { seq: 0, open: 0 };
+// Routes that only read. A failed read leaves nothing on screen that did not stick, and never holds up the live-update check.
+var READ_ROUTES = { "bootstrap": 1, "bootstrap/poll": 1, "history": 1, "history/preview": 1, "driver/employee-nos": 1, "driver/former": 1,
+  "driver/activity": 1, "ticker/get": 1, "motive/days-list": 1, "transfer/list": 1, "transfer/lines": 1, "saved-report/list": 1 };
 // The single entry point app.js uses (unchanged signature from the Python era).
 function api(path, body) {
   var qi = path.indexOf("?"), route = qi < 0 ? path : path.slice(0, qi), q = {};
@@ -833,14 +847,14 @@ function api(path, body) {
   var fn = ROUTES[route];
   if (!fn) return Promise.reject(new Error("no route /api/" + route));
   // Saves in flight / saves started: the live-update check waits for these so it never redraws around your own save.
-  var isRead = route === "bootstrap" || route === "bootstrap/poll" || route === "history" || route === "driver/employee-nos" || route === "driver/former" || route === "ticker/get" || route.indexOf("report") === 0;
+  var isRead = READ_ROUTES[route] === 1 || route.indexOf("report") === 0;
   if (!isRead) { API_WRITES.seq++; API_WRITES.open++; }
   return Promise.resolve().then(function () { return fn(body || {}, route, q); })
     .finally(function () { if (!isRead) API_WRITES.open--; })
     .catch(function (err) {
       // A failed save may leave something on screen that didn't stick; make
       // the next load a complete one so the screen matches the database.
-      if (route !== "bootstrap" && route !== "bootstrap/poll" && route !== "driver/employee-nos" && route !== "driver/former" && route !== "ticker/get") BOOT_DIRTY = true;
+      if (!isRead) BOOT_DIRTY = true;
       throw err;
     });
 }

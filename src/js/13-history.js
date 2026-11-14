@@ -32,7 +32,7 @@ var HISTORY_HAS_MORE = false;
 function historyDate(value) {
   if (!value) return "";
   var d = new Date(value);
-  return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " · " +
+  return fmtDate(d) + " · " +
     d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 function historyFieldName(s) { return String(s || "").replace(/_/g, " "); }
@@ -161,7 +161,7 @@ function historyDayLabel(key) {
   var diff = Math.round((today - d) / 86400000);
   if (diff === 0) return "Today";
   if (diff === 1) return "Yesterday";
-  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-US", { weekday: "short" }) + " " + fmtDate(d);
 }
 function historyDayGroups(groups) {
   var byDay = {}, order = [];
@@ -200,7 +200,7 @@ function historyGroupHtml(g) {
       " · " + root.change_count + " change" + (root.change_count === 1 ? "" : "s") + '</div></div>' +
     '<div class="history-when">' + esc(historyDate(tip.occurred_at)) + "</div></div>" +
     (canAct ? '<div class="history-actions"><button class="btn sm" data-history-revert="' + tip.id + '">' +
-      (reverted ? "Redo" : "Revert action") + '</button></div>' : "") +
+      (reverted ? "Redo" : "Revert Action") + '</button></div>' : "") +
     (root.changes && root.changes.length
       ? '<div class="history-changes">' + root.changes.map(historyChangeHtml).join("") + "</div>"
       : "") + "</article>";
@@ -209,7 +209,7 @@ function historyDayHtml(day) {
   var open = !!HISTORY_OPEN_DAYS[day.key], n = day.groups.length;
   return '<div class="history-day">' +
     '<button class="history-day-hd" data-history-day="' + esc(day.key) + '" aria-expanded="' + open + '">' +
-    '<span><span class="history-day-arrow">▸</span>' + esc(historyDayLabel(day.key)) + '</span><span class="history-day-ct">' +
+    '<span><span class="history-day-arrow">&darr;</span>' + esc(historyDayLabel(day.key)) + '</span><span class="history-day-ct">' +
     n + " edit" + (n === 1 ? "" : "s") + "</span></button>" +
     (open ? '<div class="history-day-body">' + day.groups.map(historyGroupHtml).join("") + "</div>" : "") +
     "</div>";
@@ -261,7 +261,7 @@ function toggleHistoryPanel() {
 function openHistoryRevertPreview(eventId) {
   api("history/preview", { event_id: eventId }).then(function (p) {
     var target = p.target || {};
-    var isRedo = !!target.reverts_event_id, verb = isRedo ? "Redo" : "Revert action";
+    var isRedo = !!target.reverts_event_id, verb = isRedo ? "Redo" : "Revert Action";
     var warning = "";
     if ((p.irreversible || []).length) warning += '<div class="history-warning"><b>External effect remains.</b> ' +
       "This action sent an email, Google Sheets push, or other external effect that the database cannot take back.</div>";
@@ -273,7 +273,7 @@ function openHistoryRevertPreview(eventId) {
       esc((target.actor_name || "") + " · " + historyDate(target.occurred_at)) + '</span><span>' +
       p.change_count + " database change" + (p.change_count === 1 ? "" : "s") + " will be reversed</span></div></div>" +
       "</div>" +
-      '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button><span style="flex:1"></span>' +
+      '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
       '<button class="btn bad" id="history-confirm"' + (p.can_apply ? "" : " disabled") + ">" + verb + "</button></div>");
     var confirm = $("#history-confirm");
     if (confirm && p.can_apply) confirm.addEventListener("click", function () {
@@ -307,5 +307,10 @@ $("#history-panel") && $("#history-panel").addEventListener("click", function (e
   }
 });
 document.addEventListener("keydown", function (e) {
-  if (e.key === "Escape" && historyPanelOpen()) closeHistoryPanel();
+  // Only an Escape nothing else used: not one that cancelled a cell edit, left a text box or closed the side window.
+  if (e.key !== "Escape" || !historyPanelOpen() || e.defaultPrevented) return;
+  var el = e.target;
+  if ((typeof EDITING !== "undefined" && EDITING) || (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable))) return;
+  if (document.querySelector("#drawer.on")) return;
+  closeHistoryPanel();
 });

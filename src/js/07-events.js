@@ -1,5 +1,14 @@
 /* ═══ 07-events ═══ */
 /* ── Events ──────────────────────────────────────────────────────────────── */
+/* A second click on a save button right after the first (a double click) is dropped, so nothing is saved or added twice. */
+var ONCE_BTNS = { "col-save": 1, "field-save": 1, "db-save": 1, "modal-save-dept": 1, "xfer-save-bulk": 1, "modal-save-driver": 1,
+  "modal-save-truck": 1, "int-save-bulk": 1, "confirm-del": 1, "daynote-save": 1, "sgn-save": 1, "modal-confirm": 1 };
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("button"); if (!b || !ONCE_BTNS[b.id]) return;
+  var now = Date.now();
+  if (b.dataset.clickedAt && now - b.dataset.clickedAt < 900) { e.stopImmediatePropagation(); e.preventDefault(); return; }
+  b.dataset.clickedAt = now;
+}, true);
 /* Inline-rename an element's text with an input; onSave(newValue) fires on a
    real change (D75/D85). Shared by sheet tabs, database tabs, and column
    headers. `onCancel` (default: the global render()) restores the host on
@@ -319,7 +328,7 @@ document.addEventListener("click", function (e) {
     var dc = catById(t.dataset.catdel);
     if (dc) confirmModal('Delete designation "' + dc.name + '"? Chips using it fall back to no color.', function () {
       api("category", { id: dc.id, delete: true }).then(reload).catch(function (err) { toast(err.message, true); });
-    }, "Delete designation");
+    }, "Delete Designation");
     return;
   }
   if (t.dataset.managecols) { manageColumnsModal(t.dataset.managecols); return; }
@@ -470,15 +479,19 @@ document.addEventListener("click", function (e) {
       (odDelivered ? " " + odDelivered + (odDelivered > 1 ? " of them are" : " of them is") + " already delivered." : "") +
       (odSkipped ? " (" + odSkipped + " selected order" + (odSkipped > 1 ? "s stay" : " stays") + " on file because billed external orders and delivered bag orders with an order number can't be deleted.)" : ""),
       function () {
+        var odFail = 0, odWhy = "";
         Promise.all(odIds.map(function (id) {
-          return api("order/delete", { id: id }).catch(function (err) { toast(err.message, true); });
+          return api("order/delete", { id: id }).catch(function (err) { odFail++; odWhy = err.message; });
         })).then(function () {
           STAGED = STAGED.filter(function (id) { return odIds.indexOf(id) < 0; });
           if (DRAWER_OID && odIds.indexOf(DRAWER_OID) >= 0) closeDrawer();
           ROWSEL[odg] = [];
           return reload();
-        }).then(function () { toast(odIds.length + " order" + (odIds.length > 1 ? "s" : "") + " deleted"); });
-      }, "Delete " + odIds.length);
+        }).then(function () {
+          var odOk = odIds.length - odFail;
+          toast(odOk + " order" + (odOk === 1 ? "" : "s") + " deleted" + (odFail ? " · " + odFail + " could not be deleted: " + odWhy : ""), odFail > 0);
+        }).catch(function (err) { toast(err.message, true); });
+      }, "Delete " + odIds.length + " Order" + (odIds.length > 1 ? "s" : ""));
     return;
   }
   if (t.dataset.ordercancelrows) {
@@ -490,14 +503,18 @@ document.addEventListener("click", function (e) {
     confirmModal("Cancel " + ocIds.length + " order" + (ocIds.length > 1 ? "s" : "") + "? You can restore them later." +
       (ocSkipped ? " (" + ocSkipped + " selected order" + (ocSkipped > 1 ? "s" : "") + " can't be cancelled and will be skipped.)" : ""),
       function () {
+        var ocFail = 0, ocWhy = "";
         Promise.all(ocIds.map(function (id) {
-          return api("order/cancel", { id: id, cancelled: true }).catch(function (err) { toast(err.message, true); });
+          return api("order/cancel", { id: id, cancelled: true }).catch(function (err) { ocFail++; ocWhy = err.message; });
         })).then(function () {
           STAGED = STAGED.filter(function (id) { return ocIds.indexOf(id) < 0; });
           ROWSEL[ocg] = [];
           return reload();
-        }).then(function () { toast(ocIds.length + " order" + (ocIds.length > 1 ? "s" : "") + " cancelled"); });
-      }, "Cancel " + ocIds.length);
+        }).then(function () {
+          var ocOk = ocIds.length - ocFail;
+          toast(ocOk + " order" + (ocOk === 1 ? "" : "s") + " cancelled" + (ocFail ? " · " + ocFail + " could not be cancelled: " + ocWhy : ""), ocFail > 0);
+        }).catch(function (err) { toast(err.message, true); });
+      }, "Cancel " + ocIds.length + " Order" + (ocIds.length > 1 ? "s" : ""), false, "Never Mind");
     return;
   }
   if (t.dataset.deleteDoc) {
@@ -506,7 +523,7 @@ document.addEventListener("click", function (e) {
     confirmModal('Permanently delete unmatched document "' + (doc.original_filename || "file") + '"? This cannot be undone.', function () {
       api("document/delete", { id: doc.id }).then(reload).then(function () { toast("Document deleted"); })
         .catch(function (err) { toast(err.message, true); });
-    }, "Delete document");
+    }, "Delete Document");
     return;
   }
   if (t.id === "confirm-del") {
@@ -547,8 +564,11 @@ document.addEventListener("click", function (e) {
     return;
   }
   if (t.id === "col-delete") {
-    api("grid/column/delete", { id: t.dataset.colid }).then(reload).then(function () { closeModal(); })
-      .catch(function (err) { toast(err.message, true); });
+    // Asks first, the same as Delete column in the right-click menu.
+    var cdId = t.dataset.colid, cdName = ($("#modal [data-cf=label]") || {}).value || "this column";
+    confirmModal('Delete column "' + cdName + '"? Its data is lost.', function () {
+      api("grid/column/delete", { id: cdId }).then(reload).catch(function (err) { toast(err.message, true); });
+    }, "Delete Column");
     return;
   }
   if (t.id === "field-save") {
@@ -640,13 +660,12 @@ document.addEventListener("click", function (e) {
     SUB = t.dataset.sub; SEL = null; render(); return;
   }
   if (t.dataset.open) { openOrder(t.dataset.open); return; }
-  if (t.dataset.pkgrow) { doPackage(t.dataset.pkgrow, "merged"); return; }
-  if (t.dataset.pkg) { if (DRAWER_OID) doPackage(DRAWER_OID, t.dataset.pkg); return; }
+  if (t.dataset.pkgrow) { doPackage(t.dataset.pkgrow, "merged").catch(pkgFailed); return; }
+  if (t.dataset.pkg) { if (DRAWER_OID) doPackage(DRAWER_OID, t.dataset.pkg).catch(pkgFailed); return; }
   if (t.dataset.billDone) { billDone(t.dataset.billDone); return; }
   if (t.dataset.billDl) {
     var dlId = t.dataset.billDl;
-    doPackage(dlId, "merged").then(function () { askMarkBilled([dlId]); })
-      .catch(function (err) { toast(err.message || "Download failed", true); });
+    doPackage(dlId, "merged").then(function () { askMarkBilled([dlId]); }).catch(pkgFailed);
     return;
   }
   if (t.id === "bill-dl-sel") { billBatch(); return; }
@@ -991,7 +1010,7 @@ document.addEventListener("change", function (e) {
     // before anything else in this handler could run).
     var id = e.target.dataset.group, i = GROUP.indexOf(id);
     if (e.target.checked && i < 0) GROUP.push(id); else if (!e.target.checked && i >= 0) GROUP.splice(i, 1);
-    var groupBtn = $("#group-btn"); if (groupBtn) groupBtn.textContent = "Group merge (" + GROUP.length + ")";
+    var groupBtn = $("#group-btn"); if (groupBtn) groupBtn.textContent = "Group Merge (" + GROUP.length + ")";
     var dlSelBtn = $("#bill-dl-sel"); if (dlSelBtn) dlSelBtn.textContent = "Download Selected (" + GROUP.length + ")";
     var doneSelBtn = $("#bill-done-sel"); if (doneSelBtn) doneSelBtn.textContent = "Mark Billed (" + GROUP.length + ")";
     var combSelBtn = $("#bill-combine-sel"); if (combSelBtn) combSelBtn.textContent = "Combine Into One PDF (" + GROUP.length + ")";
@@ -1200,7 +1219,7 @@ function docTypeChooser(files, guesses) {
         opts.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (guesses[i] || "other") ? " selected" : "") + ">" + o[1] + "</option>"; }).join("") + "</select></div></td></tr>";
     }).join("");
     openModal('<div class="modal-hd"><h2>What are these?</h2></div><div class="modal-body"><p style="margin:0 0 10px;color:var(--ink-2)">The file names don&rsquo;t say. Pick what each one is; a rate con can then be signed or read from its row.</p>' +
-      '<table class="data" style="min-width:0"><tbody>' + rows + '</tbody></table></div><div class="modal-ft"><button class="btn" id="dtype-cancel" type="button">Cancel</button><span style="flex:1"></span><button class="btn pri" id="dtype-go" type="button">Attach</button></div>');
+      '<table class="data" style="min-width:0"><tbody>' + rows + '</tbody></table></div><div class="modal-ft"><button class="btn" id="dtype-cancel" type="button">Cancel</button><button class="btn pri" id="dtype-go" type="button">Attach</button></div>');
     $("#dtype-cancel").onclick = function () { closeModal(); resolve(null); };
     $("#dtype-go").onclick = function () { var out = files.map(function (f, i) { return $('#modal [data-dtype="' + i + '"]').value; }); closeModal(); resolve(out); };
   });

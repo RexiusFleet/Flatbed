@@ -23,7 +23,7 @@ function openSheetsPicker(x, y, onPick, initialColor, showOpacity) {
     }).join("") + "</div>";
   }).join("");
   el.innerHTML =
-    '<button class="sw-none" data-hex="">&#8856; No fill</button>' +
+    '<button class="sw-none" data-hex="">&#8856; No Fill</button>' +
     '<div class="sw-grid">' + grid + "</div>" +
     '<div class="sw-custom"><input type="color" id="sw-hex" value="' + base + '">' +
     '<input type="text" id="sw-hex-text" class="hex-text" value="' + base + '" maxlength="7" placeholder="#rrggbb" spellcheck="false"><span>Custom</span>' +

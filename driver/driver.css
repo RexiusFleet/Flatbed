@@ -349,11 +349,13 @@ th.carriercol{background:var(--panel-2)}
 .drv-bagplant .chip.bp-bag .meta,.drv-bagplant .chip.bp-bag .meta *{font-weight:400}
 
 /* Refresh stays on the right on a phone, even when the "Last updated" times wrap onto a second line. */
-.driver-app .toolbar{flex-wrap:wrap}
-.driver-app .toolbar #refresh{margin-left:auto}
+.driver-app #main .toolbar{flex-wrap:wrap;overflow-x:visible}
 
 /* Hand-written cells (typed Scheduler cells) are white on a driver's tab. */
 :root{--blank-cell:#fff}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--blank-cell:var(--panel)}}
 :root[data-theme="dark"]{--blank-cell:var(--panel)}
 .dv>.dvx-note-row{background:var(--blank-cell)}
+
+/* Sign-in boxes at 16px so an iPhone does not zoom the page when one is tapped. */
+.drv-login .login-card input{font-size:16px}

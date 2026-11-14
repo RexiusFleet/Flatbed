@@ -138,7 +138,10 @@ var PALETTE_ON = false;
    own button can toggle it shut instead of the capture-mousedown closing then the
    click reopening it (D80). */
 var PALETTE_KIND = null;
-function closePalette() { var e = $("#palette"); if (e) e.remove(); PALETTE_ON = false; PALETTE_KIND = null; closeCtxMenu(); }
+// A menu or picker fades out the way it faded in. Its id is dropped at once, so "is a menu open" checks and a menu opened
+// right after it never see the one that is leaving.
+function menuFadeOut(e) { e.removeAttribute("id"); e.classList.add("closing"); setTimeout(function () { e.remove(); }, 140); }
+function closePalette() { var e = $("#palette"); if (e) menuFadeOut(e); PALETTE_ON = false; PALETTE_KIND = null; closeCtxMenu(); }
 /* If the named popover is already open, close it and report handled (toggle off). */
 function togglePalette(kind) { if (PALETTE_KIND === kind) { closePalette(); return true; } return false; }
 
@@ -147,7 +150,7 @@ function togglePalette(kind) { if (PALETTE_KIND === kind) { closePalette(); retu
    color in if i want" — the toolbar's Fill button already covers it).
    "Mark/Clear truck off" now applies to the current multi-selection when
    the clicked cell is part of one, else just that cell's own day. */
-function closeCtxMenu() { var m = $("#ctxmenu"); if (m) m.remove(); }
+function closeCtxMenu() { var m = $("#ctxmenu"); if (m) menuFadeOut(m); }
 function openCtxMenu(x, y, key) {
   closeCtxMenu();
   var cv = CELLS[key], p = key.split("|"), truckId = p[0], ds = p[1];
@@ -294,7 +297,7 @@ function removeDayRow(ds) {
       toast(plans.length ? "Row removed; its contents were shifted up or staged" : "Row removed");
     }).catch(function (e) { toast(e.message, true); });
   }
-  if (plans.length) confirmModal("Remove the bottom row? Its contents will shift into open cells; loads with no open cell move to Staging. Undo restores the row.", execute, "Remove row");
+  if (plans.length) confirmModal("Remove the bottom row? Its contents will shift into open cells; loads with no open cell move to Staging. Undo restores the row.", execute, "Remove Row");
   else execute();
 }
 function openDayMenu(x, y, rowhd) {
@@ -399,7 +402,7 @@ document.addEventListener("contextmenu", function (e) {
     if (fld.storage === "json") fitems.push({ label: "Delete field", danger: true, run: function () {
       confirmModal('Delete field "' + fld.label + '"? Its data is lost.', function () {
         api("field/delete", { id: fld.id }).then(reload).catch(function (err) { toast(err.message, true); });
-      }, "Delete field");
+      }, "Delete Field");
     } });
     openMenu(e.clientX, e.clientY, fitems);
     return;
@@ -416,7 +419,7 @@ document.addEventListener("contextmenu", function (e) {
       { label: "Delete column", danger: true, run: function () {
         confirmModal('Delete column "' + col.label + '"? Its data is lost.', function () {
           api("grid/column/delete", { id: col.id }).then(reload).catch(function (err) { toast(err.message, true); });
-        }, "Delete column");
+        }, "Delete Column");
       } }
     ]);
     return;
@@ -444,7 +447,7 @@ document.addEventListener("contextmenu", function (e) {
           api("sheet", { id: sid, delete: true }).then(function () {
             return reload().then(function () { SEC = "database"; SUB = "bagger"; render(); });
           }).catch(function (err) { toast(err.message, true); });
-        }, "Delete sheet");
+        }, "Delete Sheet");
       } }
     ]);
     return;
@@ -460,7 +463,7 @@ document.addEventListener("contextmenu", function (e) {
           api("entity/delete", { id: ent.id }).then(function () {
             return reload().then(function () { SUB = subsOf("database")[0].k; render(); });
           }).catch(function (err) { toast(err.message, true); });
-        }, "Delete database");
+        }, "Delete Database");
       } }]);
       return;
     }

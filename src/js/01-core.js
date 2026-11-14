@@ -117,18 +117,18 @@ function bytesFromB64(b64) {
    need a server round trip (this only widens what the picker offers; the
    underlying order data was never restricted by it). */
 var EXTRA_YEARS = (function () {
-  try { return JSON.parse(localStorage.getItem("extraYears") || "[]"); }
+  try { var ys = JSON.parse(localStorage.getItem("extraYears") || "[]"); return Array.isArray(ys) ? ys : []; }
   catch (e) { return []; }
 })();
 function availableYears() {
-  var now = new Date().getUTCFullYear(), max = Math.max(now + 1, 2026);
+  var now = +pacificToday().slice(0, 4), max = Math.max(now + 1, 2026);
   EXTRA_YEARS.forEach(function (y) { if (y > max) max = y; });
   var ys = [];
   for (var y = 2024; y <= max; y++) ys.push(y);
   return ys;
 }
 var YEAR = (function () {
-  var now = new Date().getUTCFullYear(), ys = availableYears();
+  var now = +pacificToday().slice(0, 4), ys = availableYears();
   return ys.indexOf(now) >= 0 ? now : 2026;
 })();
 /* Today is the date in Oregon (Pacific time), not UTC: in UTC the date turns over at 4 or 5 PM here, and an evening ELD pull
@@ -138,6 +138,13 @@ function pacificToday() {
   catch (e) { var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
 }
 var TODAY = pacificToday();
+/* One money format and one date format for the whole dashboard (DESIGN: Formats): $1,234.50 (always two decimals, -$ for a
+   negative) and MM/DD/YYYY. isoToMdy() does the same for a stored YYYY-MM-DD date. */
+function fmtMoney(n) {
+  n = Number(n); if (!isFinite(n)) return "\u2014";
+  return (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtDate(d) { return String(d.getMonth() + 1).padStart(2, "0") + "/" + String(d.getDate()).padStart(2, "0") + "/" + d.getFullYear(); }
 setInterval(function () {
   var t = pacificToday();
   if (t !== TODAY) { TODAY = t; if (typeof render === "function" && typeof DB !== "undefined" && DB) render(); }
@@ -157,7 +164,7 @@ function addNextYear() {
 function yearPicker() {
   return '<select id="year-pick" class="btn" title="Year">' + availableYears().map(function (y) {
     return '<option value="' + y + '"' + (y === YEAR ? " selected" : "") + ">" + y + "</option>";
-  }).join("") + '<option value="__add__">+ Add year…</option></select>';
+  }).join("") + '<option value="__add__">+ Add Year…</option></select>';
 }
 function orderYearCode(o) {
   if (o.order_period) return String(o.order_period).slice(2, 4);
@@ -423,7 +430,7 @@ function openProfileMenu() {
   m.innerHTML = '<div class="pm-hd"><span class="avatar lg">' + esc(initials(profileName)) + "</span>" +
     '<div class="pm-who"><b>' + esc(profileName) + "</b><span>" + esc(accountLine) + "</span></div></div>" +
     '<div class="pm-actions"><button class="pm-item" data-profile="help"><b>Help &amp; FAQ</b><span>Guides and keyboard help</span></button>' +
-    '<button class="pm-item danger" data-profile="signout"><b>Sign out</b></button></div>';
+    '<button class="pm-item danger" data-profile="signout"><b>Sign Out</b></button></div>';
   document.body.appendChild(m);
   var r = document.querySelector("#profile-btn").getBoundingClientRect();
   m.classList.add("from-nav");

@@ -434,6 +434,9 @@
         if (isNaN(d.getTime())) return { dow: "", md: s };
         return { dow: DOW[d.getUTCDay()], md: (d.getUTCMonth() + 1) + "/" + d.getUTCDate() };
     }
+    // Rows a day shows. Each day has its own count (a 4th row only on the day that has one); a schedule saved before that list
+    // existed shows the same number every day.
+    function daySlots(p, di) { var n = p.day_slots && +p.day_slots[di]; return n > 0 && n <= p.slots_per_day ? n : p.slots_per_day; }
     function todayIso() { var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
     function dateTimeLabel(d) {
         return d ? d.toLocaleDateString([], { month: "short", day: "numeric" }) + " at " + timeLabel(d) : "";
@@ -691,13 +694,13 @@
         h += "</tr></thead><tbody>";
         p.dates.forEach(function (ds, di) {
             var dp = dParts(ds);
-            for (var s = 0; s < p.slots_per_day; s++) {
+            for (var s = 0, nS = daySlots(p, di); s < nS; s++) {
                 h += '<tr class="slotrow' + (ds === today ? " today" : "") + (ds < today ? " past" : "") + (s === 0 ? " dstart" : "") + '">';
-                if (s === 0) h += '<td class="rowhd" rowspan="' + p.slots_per_day + '"><span class="dwk">' + dp.dow.toUpperCase() +
+                if (s === 0) h += '<td class="rowhd" rowspan="' + nS + '"><span class="dwk">' + dp.dow.toUpperCase() +
                     '</span><br><span class="dnum">' + (+ds.slice(5, 7)) + "/" + ds.slice(8, 10) + "</span></td>";
                 cw.forEach(function (t) {
                     var r = t.rows[di * p.slots_per_day + s] || {}, open = allowedTab(String(t.truck));
-                    if (r.off) { h += '<td class="offday">' + (s === Math.ceil(p.slots_per_day / 2) - 1 ? '<div class="off-label">OFF</div>' : "") + "</td>"; return; }
+                    if (r.off) { h += '<td class="offday">' + (s === Math.ceil(nS / 2) - 1 ? '<div class="off-label">OFF</div>' : "") + "</td>"; return; }
                     if (!r.chip) { h += "<td></td>"; return; }
                     // A typed Scheduler cell (no load behind it) reads as plain text in
                     // the cell, exactly like the dashboard's Current Week.
@@ -908,15 +911,19 @@
     function outboxFlush() {
         if (OUTBOX.busy || DEMO || !window.Dept12Outbox) return Promise.resolve();
         OUTBOX.busy = true; clearTimeout(OUTBOX.timer);
-        var sent = 0, paused = false;
+        var sent = 0, paused = false, dropped = 0;
         return outboxLoad().then(function () {
             return OUTBOX.items.filter(function (it) { return !it.failed; }).reduce(function (chain, it) {
                 return chain.then(function () {
                     if (paused) return;
                     return outboxSendOne(it).then(function () { sent++; return Dept12Outbox.remove(it.id); }, function (err) {
-                        if (err && (err.network || err.needLogin || err.status === 401)) { paused = true; return; }   // no signal, or signed out: keep it and try later
+                        if (err && (err.network || err.needLogin || err.status === 401 || err.status === 429 || err.status >= 500)) { paused = true; return; }   // no signal, signed out, or the server is busy: keep it and try later
                         it.tries = (it.tries || 0) + 1; it.error = (err && err.message) || "Not sent";
-                        if (it.tries >= 3) it.failed = true;
+                        if (it.tries >= 3) {
+                            // The office's server said no three rounds in a row (the order was deleted, say): it will never go through, so it is taken off the list.
+                            if ((it.rounds || 0) >= 2) { dropped++; return Dept12Outbox.remove(it.id); }
+                            it.failed = true;
+                        }
                         return Dept12Outbox.put(it);
                     });
                 });
@@ -927,6 +934,7 @@
             var waiting = OUTBOX.items.filter(function (it) { return !it.failed; }).length;
             if (waiting) { OUTBOX.tries = paused ? OUTBOX.tries + 1 : 0; OUTBOX.timer = setTimeout(outboxFlush, Math.min(120000, 15000 * Math.pow(2, Math.min(OUTBOX.tries, 3)))); }
             else OUTBOX.tries = 0;
+            if (dropped) { S.keepScroll = true; render(); toast(dropped + (dropped > 1 ? " items" : " item") + " could not be sent and " + (dropped > 1 ? "were" : "was") + " removed. Call dispatch.", true); }
             if (sent) { loadScans(); loadActivity(); if (OUTBOX.had) toast(sent + " waiting " + (sent > 1 ? "items were" : "item was") + " sent"); }
             OUTBOX.had = waiting > 0 || OUTBOX.items.length > 0;
             if (S.who && S.payload && !S.noteKey) { S.keepScroll = true; render(); }
@@ -987,7 +995,8 @@
     // Maps: a picture of the store (PNG in the storeimages folder) for bag orders, and the Pickup's and Drop's
     // pictures (Pick/Drop List -> Map) for internal freight. A button shows only when there is a picture link.
     function mapImg(u) {
-        return /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(u || "") ? u : "";
+        u = String(u || "");
+        return /^https:\/\/[^\s"'<>]+$/i.test(u) && /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(u) ? u : "";      // https only, same rule as the dashboard
     }
     function loadMaps(o) {
         if (!o) return [];
@@ -1089,7 +1098,7 @@
             '<div class="dv dv-head"><div class="hd">' + esc(dFirst(d.driver) || "Load") + '</div><div class="hd">Rexius Order #</div><div class="hd">Dispatch Notes</div><div class="hd">PO / PU #</div>' +
             '<div class="hd">Delivery #</div><div class="hd">Load #</div><div class="hd">Driver Notes</div></div>';
         p.dates.forEach(function (ds, di) {
-            var rows = d.rows.slice(di * p.slots_per_day, (di + 1) * p.slots_per_day), keys = dayLoadKeys(d, ds, rows), total = keys.length;
+            var rows = d.rows.slice(di * p.slots_per_day, di * p.slots_per_day + daySlots(p, di)), keys = dayLoadKeys(d, ds, rows), total = keys.length;
             h += '<div class="dvx-wrap"><section class="dvx-day">' + dayHeadHtml(ds, today, "dvx-hd", total);
             if (rows.some(function (r) { return r.off; })) { h += '<div class="off-cell off-hatch"><div class="off-label">OFF</div></div></section></div>'; return; }
             h += '<div class="dv dvx-body">';
@@ -1114,7 +1123,7 @@
     function vDriverCards(d) {
         var p = S.payload, today = todayIso(), h = '<div class="drv-scroll"><div class="drv-pad"><div class="drv-days">';
         p.dates.forEach(function (ds, di) {
-            var rows = d.rows.slice(di * p.slots_per_day, (di + 1) * p.slots_per_day), keys = dayLoadKeys(d, ds, rows), total = keys.length;
+            var rows = d.rows.slice(di * p.slots_per_day, di * p.slots_per_day + daySlots(p, di)), keys = dayLoadKeys(d, ds, rows), total = keys.length;
             h += '<div class="dvx-wrap"><section class="drv-day">' + dayHeadHtml(ds, today, "drv-day-hd", total);
             if (rows.some(function (r) { return r.off; })) { h += '<div class="drv-card off off-hatch"><div class="off-label">OFF</div></div></section></div>'; return; }
             var any = false;
@@ -1284,7 +1293,7 @@
     function checkPublished() {
         if (DEMO || S.loading || S.noteKey || (APP_MODE && !APP.session)) return;
         tickerLoad();
-        OUTBOX.items.forEach(function (it) { if (it.failed) { it.failed = false; it.tries = 0; Dept12Outbox.put(it); } });
+        OUTBOX.items.forEach(function (it) { if (it.failed) { it.failed = false; it.tries = 0; it.rounds = (it.rounds || 0) + 1; Dept12Outbox.put(it); } });
         outboxFlush();
         rpcPublicRead("public_published_at", {}).then(function (ts) {
             var t = ts ? Date.parse(ts) : 0;
@@ -1306,7 +1315,12 @@
         if (e.key === "Enter" && e.target.id === "login-driver") { e.preventDefault(); $("#login-go").click(); }
         if (e.key === "Enter" && (e.target.id === "login-email" || e.target.id === "login-password")) { e.preventDefault(); appLogin(); }
     });
-    NARROW.addEventListener("change", function () { S.keepScroll = true; render(); });
+    // Turning the iPad redraws the page: a note being typed is put back.
+    NARROW.addEventListener("change", function () {
+        var d = $("#note-draft"), typed = d ? d.value : "";
+        S.keepScroll = true; render();
+        d = $("#note-draft"); if (d && typed) d.value = typed;
+    });
     var resizeT = null;
     window.addEventListener("resize", function () {
         if (!isBagPlant()) return;

@@ -52,7 +52,7 @@ function historicalMoveMessage(from, to) {
 function confirmHistoricalMove(from, to, action) {
   var msg = historicalMoveMessage(from, to);
   if (!msg) { action(); return; }
-  confirmModal(msg, action, "Change history");
+  confirmModal(msg, action, "Change History");
 }
 
 /* Server-backed mutation primitives. Both the user action and its undo/redo

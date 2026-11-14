@@ -9,7 +9,7 @@ function dcClass(t) { return isHex(t.driver_color) ? " has-dc" : ""; }
 function dcStyle(t) { return isHex(t.driver_color) ? "--dc:" + dcSolid(t.driver_color) + ";" : ""; }
 function truckColHeader(t) {
   var dc = isHex(t.driver_color) ? ' style="--dc:' + t.driver_color + '"' : "";
-  return '<span class="drv"' + dc + '>' + esc(dFirst(t.driver_name) || "— unassigned —") + "</span>" +
+  return '<span class="drv"' + dc + '>' + esc(dFirst(t.driver_name) || "Unassigned") + "</span>" +
     '<span class="trk">' + esc(t.number) + " " + esc(t.eq || "") + "</span>";
 }
 /* Outside-carrier lane header (D115) — pinned to the far right of the main
@@ -176,7 +176,7 @@ function schedMonthHtml(mStart) {
       if (s === 1) { var dn = dayNote(ds); h += '<td class="rowhd' + (dn ? " has-daynote" : "") +
         '" rowspan="' + slots + '" id="row-' + ds + '"' + (dn ? ' title="' + esc(dn.text) + '"' : "") +
         '><span class="dwk">' + DOW[dow] + '</span><br><span class="dnum">' + ds.slice(8) +
-        '</span><br><span class="trk">' + ds.slice(5, 7) + "/" + ds.slice(8) + "/" + ds.slice(2, 4) + "</span>" +
+        '</span><br><span class="trk">' + isoToMdy(ds) + "</span>" +
         (dn ? '<div class="daynote-txt">' + esc(dn.text) + '</div>' : "") + "</td>"; }
       DB.trucks.forEach(function (t) {
         var key = cellKey(t.id, ds, s), off = OFFDAYS[t.id + "|" + ds];
@@ -389,7 +389,7 @@ function lastPushMs() {
 }
 function seenWhen(ms) {
   var d = new Date(ms), t = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  return d.toDateString() === new Date().toDateString() ? t : d.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" }) + " " + t;
+  return d.toDateString() === new Date().toDateString() ? t : fmtDate(d) + " " + t;
 }
 // {cls, txt} for one driver + one view ("cw" or "own"): seen since the last
 // push, only before it, or never.
@@ -687,7 +687,7 @@ function tickerLoadBoxes() {
   api("ticker/get", {}).then(function (t) {
     TICKER = { drivers: (t && t.drivers) || "", bagger: (t && t.bagger) || "" };
     [].forEach.call(document.querySelectorAll("[data-tick]"), function (i) { if (document.activeElement !== i) i.value = TICKER[i.dataset.tick] || ""; });
-  }, function () { /* the banner SQL has not been run yet: the boxes stay empty */ });
+  }, function () { TICKER = { drivers: "", bagger: "" }; /* the banner SQL has not been run yet: the boxes stay empty, and it is not asked for again on every redraw */ });
 }
 document.addEventListener("change", function (e) {
   var i = e.target.closest && e.target.closest("[data-tick]"); if (!i) return;
@@ -715,7 +715,7 @@ function vCurrentWeek() {
   h += "</tr></thead><tbody>";
   for (var i = 0; i < dates.length; i++) {
     var day = dates[i], ds = iso(day), dow = day.getUTCDay(), isWeekend = dow === 0 || dow === 6;
-    var slots = Math.max(3, DAYSLOT[ds] || 0);
+    var slots = Math.max(3, DAYSLOT[ds] || 0, DAYADD[ds] || 0);      // same count as the Scheduler, so OFF lands on a row that is drawn
     for (var s = 1; s <= slots; s++) {
       h += '<tr class="' + (ds === TODAY ? "today " : "") + (isWeekend ? "weekend-active " : "") + 'slotrow">';
       if (s === 1) h += '<td class="rowhd" rowspan="' + slots + '"><span class="dwk">' + DOW[dow] +
@@ -785,7 +785,7 @@ function dvChip(o, v, truck, day) {
   }
   if (isExt(o)) {
     var tag = function (t) { return t ? ' <span class="appt">APPT ' + esc(t) + "</span>" : ""; };
-    var lines = ["<b>Broker/Customer:</b> " + esc(o.broker_name || "—")];
+    var lines = ["<b>Broker / Customer:</b> " + esc(o.broker_name || "—")];
     var cs = o.route_mode === "custom" ? orderStops(o.id) : null;
     if (cs && cs.length) {
       var nPick = cs.filter(function (s) { return s.stop_type === "pickup"; }).length, nDrop = cs.length - nPick, cp = 0, cd = 0;
@@ -975,9 +975,10 @@ function vDriverView() {
   for (var i = 0; i < dates.length; i++) {
     var day = dates[i], ds = iso(day);
     h += '<div class="day-bar' + (ds === TODAY ? " today" : "") + '" id="d-' + ds + '"><span class="dwk">' + DOW[day.getUTCDay()] +
-      '</span><span class="dnum">' + (+ds.slice(5, 7)) + "/" + (+ds.slice(8, 10)) + "</span>" + (ds === TODAY ? '<span class="today-tag">Today</span>' : "") + "</div>";
+      '</span><span class="dnum">' + isoToMdy(ds) + "</span>" + (ds === TODAY ? '<span class="today-tag">Today</span>' : "") + "</div>";
     if (OFFDAYS[dvTruck.id + "|" + ds]) { h += '<div class="off-cell off-hatch"><div class="off-label">OFF</div></div>'; continue; }
-    for (var s = 1; s <= 3; s++) h += dvSlotCellsHtml(cellKey(dvTruck.id, ds, s));
+    // 3 rows, or as many as the day has on the Scheduler (a 4th row shows here and on the driver's own page).
+    for (var s = 1, nS = Math.max(3, DAYSLOT[ds] || 0); s <= nS; s++) h += dvSlotCellsHtml(cellKey(dvTruck.id, ds, s));
   }
   h += "</div></div></div>";
   return h;
@@ -1089,7 +1090,7 @@ function tsortTh(grid, key, label, width, cls) {
   return '<th class="tsortable' + (cls ? " " + cls : "") + '" style="width:' + width + 'px" data-tsort="' + grid + "|" + key +
     '" title="Sort the ' + (grid === "ext" ? "Billed" : "Delivered") + ' list by this column"' +
     (on ? ' aria-sort="' + (s.dir > 0 ? "ascending" : "descending") + '"' : "") + ">" + label +
-    (on ? '<span class="tsort-arrow">' + (s.dir > 0 ? "&#9650;" : "&#9660;") + "</span>" : "") + "</th>";
+    (on ? '<span class="tsort-arrow">' + (s.dir > 0 ? "&uarr;" : "&darr;") + "</span>" : "") + "</th>";
 }
 function tsortValue(o, key) {
   var loc = function (id) { var l = id ? locById(id) : null; return l ? l.name || "" : ""; };
@@ -1155,7 +1156,7 @@ function trackerCollapseToggleRow(key, label, count, colspan) {
   var open = !!TRACKER_COLLAPSED_OPEN[key];
   return '<tr class="tracker-collapse-row"><td colspan="' + colspan + '">' +
     '<button class="tracker-collapse-hd" data-tracker-collapse="' + esc(key) + '" aria-expanded="' + open + '">' +
-    '<span><span class="tracker-collapse-arrow">&#9656;</span>' + esc(label) + '</span>' +
+    '<span><span class="tracker-collapse-arrow">&darr;</span>' + esc(label) + '</span>' +
     '<span class="tracker-collapse-ct">' + count + '</span></button></td></tr>';
 }
 /* Paged rendering inside an expanded collapse group (D235) — Nate: "it lags
@@ -1244,18 +1245,18 @@ function vOrders(kind) {
   var h = toolbarHtml("External Orders", {
     className: "orders-toolbar", context: yearPicker(),
     secondary: ordersToolbarExtras() + trackerBulkButtonsHtml("ext"),
-    primary: '<button class="btn pri sm orders-primary-btn" id="new-order">+ New Order</button>'
+    primary: '<button class="btn pri sm orders-primary-btn" id="new-order">New Order</button>'
   });
-  h += '<div class="drop" id="rc-drop" style="margin-bottom:10px"><b>Drop a rate con here</b> or click to upload or paste</div>';
+  h += '<div class="drop" id="rc-drop" style="margin:8px 14px 10px"><b>Drop a rate con here</b> or click to upload or paste</div>';
   h += '<div class="grid-wrap tracker-scroll"><table class="data order-tracker external-tracker" style="width:2132px"><thead><tr>' +
     trackerSelTh("ext") +
     trackerOpenTh() +
     '<th class="order-actions-col" style="width:220px">Status / Stage</th>' +
     tsortTh("ext", "order", "Order #", 120) + tsortTh("ext", "load", "Load #", 96) +
-    tsortTh("ext", "broker", "Broker/Customer", 190) + tsortTh("ext", "po", "PU/PO", 100) +
+    tsortTh("ext", "broker", "Broker / Customer", 190) + tsortTh("ext", "po", "PO / PU #", 100) +
     tsortTh("ext", "delnum", "Delivery #", 100) + tsortTh("ext", "rate", "Rate", 100) + tsortTh("ext", "notes", "Private notes", 200) +
     tsortTh("ext", "tarp", "Tarp", 56) + tsortTh("ext", "backhaul", "Backhaul", 84) +
-    tsortTh("ext", "pickup", "Pickup Address", 180) + tsortTh("ext", "drop", "Drop Address", 180) +
+    tsortTh("ext", "pickup", "Pickup", 180) + tsortTh("ext", "drop", "Drop", 180) +
     tsortTh("ext", "ordered", "Ordered", 112) + tsortTh("ext", "delivered", "Delivered", 112) +
     tsortTh("ext", "docs", "Docs", 64) +
     "</tr></thead><tbody>";
@@ -1429,7 +1430,7 @@ function vInternal() {
 
   var h = toolbarHtml("Bag Orders", {
     className: "orders-toolbar", context: yearPicker(),
-    secondary: ordersToolbarExtras() + '<button class="btn sm" id="int-add" title="Reserve the next order number in the selected month">Add One Order</button>' + trackerBulkButtonsHtml("int"),
+    secondary: ordersToolbarExtras() + '<button class="btn sm" id="int-add" title="Reserve the next order number for this month">Add One Order</button>' + trackerBulkButtonsHtml("int"),
     primary: '<button class="btn pri sm orders-primary-btn" id="int-bulk">Add Orders</button>'
   });
 
@@ -1465,8 +1466,8 @@ function vInternal() {
    since transfers are never Solomon-numbered (never invoiced). */
 /* One Internal Freight row (D232, split out of vInternalFreight the same
    way extOrderRowHtml was — see that comment for `i`). */
-function xferOrderRowHtml(o, i) {
-  var on = placement()[o.id];
+function xferOrderRowHtml(o, i, pm) {
+  var on = (pm || placement())[o.id];
   return '<tr data-roworder="' + o.id + '">' +
     trackerSelTd("xfer", o.id, i + 1) +
     trackerOpenTd(o) +
@@ -1505,7 +1506,7 @@ function vInternalFreight() {
   var depts = departmentsForPicker(null);
   var h = toolbarHtml("Internal Freight", {
     className: "orders-toolbar", context: yearPicker(),
-    secondary: ordersToolbarExtras() + trackerBulkButtonsHtml("xfer"),
+    secondary: ordersToolbarExtras() + '<button class="btn sm" id="xfer-add" title="Add one internal freight load">Add One Order</button>' + trackerBulkButtonsHtml("xfer"),
     primary: '<button class="btn pri sm orders-primary-btn" id="xfer-bulk">Add Orders</button>'
   });
   h += '<div class="grid-wrap tracker-scroll"><table class="data order-tracker" style="width:1916px"><thead><tr>' +
@@ -1517,15 +1518,15 @@ function vInternalFreight() {
     tsortTh("xfer", "ordered", "Ordered", 112) + tsortTh("xfer", "delivered", "Delivered", 112) +
     tsortTh("xfer", "truck", "Truck", 80) + tsortTh("xfer", "miles", "Miles", 150) +
     tsortTh("xfer", "freight", "Transfer $", 100) + '</tr></thead><tbody>';
-  liveRows.forEach(function (o, i) { h += xferOrderRowHtml(o, i); });
+  var pm = placement();          // worked out once for the whole table, not once per row
+  liveRows.forEach(function (o, i) { h += xferOrderRowHtml(o, i, pm); });
   if (deliveredRows.length) {
     h += trackerCollapseToggleRow("xfer-delivered", "Delivered", deliveredRows.length, XFER_TRACKER_COLS);
     if (TRACKER_COLLAPSED_OPEN["xfer-delivered"])
       h += trackerCollapsedRowsHtml("xfer-delivered", tsortRows("xfer-delivered", deliveredRows), liveRows.length,
-        function (o, i) { return xferOrderRowHtml(o, i); }, XFER_TRACKER_COLS);
+        function (o, i) { return xferOrderRowHtml(o, i, pm); }, XFER_TRACKER_COLS);
   }
   h += "</tbody></table></div>";
-  h += '<button class="btn sm" id="xfer-add" style="margin-top:8px">+ Add one</button>';
   if (!depts.length)
     h += '<div class="note-bar" style="margin-top:8px">No departments yet — add one from Database → Departments.</div>';
   return h;
@@ -1539,7 +1540,7 @@ function billDocCardHtml(d, exts) {
   var h = '<div class="bill-doc" draggable="true" data-dragdoc="' + d.id + '" title="Drag onto a load in the Billing Queue">' +
     '<div class="bill-doc-hd"><span class="pill">' + esc(type) + "</span><b>" + esc(title) + "</b>" +
     '<span class="bill-doc-acts"><a class="btn sm" href="#" data-filepath="' + esc(d.storage_path) + '" data-filename="' + esc(d.original_filename || "") + '" data-filemode="open">Open</a>' +
-    '<button class="btn sm bad" data-delete-doc="' + d.id + '">Delete</button></span></div>';
+    '<button class="btn sm del" data-delete-doc="' + d.id + '">Delete</button></span></div>';
   if (sug.length) {
     var top = sug[0], o = order(top.order_id), strong = top.score >= 9;
     h += '<div class="bill-sug"><span class="af ' + (strong ? "af-ok" : "af-check") + '">' + (strong ? "Likely" : "Possible") + "</span>" +
@@ -1591,7 +1592,7 @@ function vBilling() {
     (readyN ? '<span class="bill-ready">' + readyN + " ready</span>" : "") + "</div>";
   h += '<div class="grid-wrap"><table class="data order-tracker billing-tracker"><thead><tr>' +
     '<th style="width:36px"></th>' + trackerOpenTh() +
-    '<th style="width:128px">Order #</th><th style="width:210px">Customer / Broker</th><th style="width:138px">Paperwork</th>' +
+    '<th style="width:128px">Order #</th><th style="width:210px">Broker / Customer</th><th style="width:138px">Paperwork</th>' +
     '<th style="width:170px">Invoice #</th><th style="width:196px"></th></tr></thead><tbody>';
   shown.forEach(function (o) {
     var have = haveOf(o), ready = have.pod && have.invoice;
@@ -1727,7 +1728,7 @@ function dbSortFieldId(colref) {
 function dbSortArrow(grid, colref) {
   var s = GRIDSORT[grid];
   return s && s.fieldId === dbSortFieldId(colref)
-    ? '<span class="tsort-arrow">' + (s.dir === "asc" ? "&#9650;" : "&#9660;") + "</span>" : "";
+    ? '<span class="tsort-arrow">' + (s.dir === "asc" ? "&uarr;" : "&darr;") + "</span>" : "";
 }
 function dbSortAttr(grid, colref) {
   var s = GRIDSORT[grid];
@@ -2087,12 +2088,12 @@ function vBuiltin(ent) {
   var cols = databaseColumns(ent, gk);
   var baseRows = custom ? recordRows(ent.id) : builtinRows(slug);
   var rows = sortRows(storedOrderRows(baseRows, gk, ent), sortFlds, gk);
-  var addBtn = custom ? '<button class="btn pri" data-addrow="' + gk + '">+ Row</button>' :
-    { bagger: '<button class="btn pri" data-addcust="bagger">+ Add Customer</button>',
-      brokers: '<button class="btn pri" data-addcust="external">+ Add Customer</button>',
-      pickdrop: '<button class="btn pri" id="add-pickdrop">+ Add Location</button>',
-      fleet: '<button class="btn" id="add-driver">+ Add Driver</button><button class="btn pri" id="add-truck">+ Add Truck</button>',
-      departments: '<button class="btn pri" id="add-department">+ Add Department</button>' }[slug];
+  var addBtn = custom ? '<button class="btn pri sm" data-addrow="' + gk + '">Add Row</button>' :
+    { bagger: '<button class="btn pri sm" data-addcust="bagger">Add Customer</button>',
+      brokers: '<button class="btn pri sm" data-addcust="external">Add Customer</button>',
+      pickdrop: '<button class="btn pri sm" id="add-pickdrop">Add Location</button>',
+      fleet: '<button class="btn sm" id="add-driver">Add Driver</button><button class="btn pri sm" id="add-truck">Add Truck</button>',
+      departments: '<button class="btn pri sm" id="add-department">Add Department</button>' }[slug];
   // Fixed layout (via .gridfixed) so column drag-resize is pixel-precise; table
   // width is the exact sum of column widths so a column grows the table, not its
   // neighbours (D85). Custom-column widths default to 140. Custom entities
@@ -2109,26 +2110,26 @@ function vBuiltin(ent) {
     });
     var archiveCount = backing.filter(function (row) { return !!row[archiveCfg.field]; }).length;
     var activeCount = backing.length - archiveCount;
-    archiveViewButton = '<button class="btn" data-archiveview="' + gk + '|' +
+    archiveViewButton = '<button class="btn sm" data-archiveview="' + gk + '|' +
       (archivedView ? "active" : "archived") + '">' +
       (archivedView ? "Show Active (" + activeCount + ")" : "Show Archived (" + archiveCount + ")") +
       "</button>";
-    rowAction = '<button class="btn" data-archiverows="' + gk + '" data-archive-mode="' +
+    rowAction = '<button class="btn sm" data-archiverows="' + gk + '" data-archive-mode="' +
       (archivedView ? "restore" : "archive") + '"' + (selectedRows ? "" : " disabled") + ">" +
       (archivedView ? "Restore Selected" : "Archive Selected") +
       (selectedRows ? " (" + selectedRows + ")" : "") + "</button>" +
-      (archivedView ? '<button class="btn del" data-delarchived="' + gk + '"' + (selectedRows ? "" : " disabled") + ">" +
+      (archivedView ? '<button class="btn sm del" data-delarchived="' + gk + '"' + (selectedRows ? "" : " disabled") + ">" +
         (selectedRows ? "Delete Selected (" + selectedRows + ")" : "Delete Selected") + "</button>" : "");
   } else {
-    rowAction = '<button class="btn del" data-delrows="' + gk + '"' + (selectedRows ? "" : " disabled") + ">" +
+    rowAction = '<button class="btn sm del" data-delrows="' + gk + '"' + (selectedRows ? "" : " disabled") + ">" +
       (selectedRows ? "Delete Selected (" + selectedRows + ")" : "Delete Selected") + "</button>";
   }
   // Sort's highlight when a custom sort is active is a status indicator, not
   // a call to action — .active (outline, not fill) so it never competes with
   // the one real primary button (D172's "exactly one .btn.pri" contract).
   var h = toolbarHtml(ent.name, {
-    secondary: (srtFld ? '<button class="btn active" data-sortsave="' + gk + '" title="Make this the saved row order for everyone">Save Order</button>' +
-        '<button class="btn" data-sortclear="' + gk + '" title="Back to the normal order">Clear Sort</button>' : "") +
+    secondary: (srtFld ? '<button class="btn sm active" data-sortsave="' + gk + '" title="Make this the saved row order for everyone">Save Order</button>' +
+        '<button class="btn sm" data-sortclear="' + gk + '" title="Back to the normal order">Clear Sort</button>' : "") +
       archiveViewButton + rowAction,
     primary: addBtn
   });
@@ -2311,7 +2312,7 @@ function rptRange(per, from, to) {
 }
 function rptDashRange() { return rptRange(REP.per, REP.from, REP.to); }
 function rptNum(v) { if (v === null || v === undefined || v === "") return null; var n = Number(v); return isNaN(n) ? null : n; }
-function rptMoney(n) { return (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString(); }
+function rptMoney(n) { return fmtMoney(n); }
 function rptEnrich(r) {
   var internal = r.kind === "internal" || r.is_transfer === true || r.is_transfer === "true";
   var xfer = r.is_transfer === true || r.is_transfer === "true";
@@ -2411,11 +2412,11 @@ function motRangeHtml(r) {
   var order = trucks.slice().sort(function (a, b) { return per[b].miles - per[a].miles || a.localeCompare(b, undefined, { numeric: true }); });
   h += '<div class="mot-h">Trucks</div>' +
     '<div class="grid-wrap mot-wrap"><table class="data mot-table"><thead><tr><th style="width:110px">Truck</th><th class="n" style="width:110px">Days</th>' +
-    '<th class="n" style="width:90px">Miles</th><th class="n" style="width:90px">Per day</th><th class="n" style="width:80px">Hours</th><th>Bag / Internal / External</th></tr></thead><tbody>';
+    '<th class="n" style="width:90px">Miles</th><th class="n" style="width:90px">Per Day</th><th class="n" style="width:80px">Hours</th><th>Bag / Internal / External</th></tr></thead><tbody>';
   order.forEach(function (t) {
     var x = per[t], open = !!MOT.open[t];
     if (!x.days) { h += '<tr class="mot-idle"><td><b>' + esc(t) + '</b></td><td colspan="5" class="mute">' + (done.length ? "Did not run" : "") + "</td></tr>"; return; }
-    h += '<tr data-motopen="' + esc(t) + '" class="' + (open ? "sel" : "") + '"><td><b><span class="mot-car">' + (open ? "&#9662;" : "&#9656;") + "</span>" + esc(t) + '</b></td><td class="n">' + x.days +
+    h += '<tr data-motopen="' + esc(t) + '" class="' + (open ? "sel" : "") + '"><td><b><span class="mot-car">' + (open ? "&uarr;" : "&darr;") + "</span>" + esc(t) + '</b></td><td class="n">' + x.days +
       '</td><td class="n"><b>' + Math.round(x.miles).toLocaleString() + '</b></td><td class="n">' + Math.round(x.miles / x.days).toLocaleString() + '</td><td class="n">' + (Math.round(x.hours * 10) / 10) + "</td><td>" +
       motBarHtml({ total: x.miles, bag: x.bag, intf: x.intf, ext: x.ext }) + (x.over ? '<span class="mot-over">Over by ' + Math.round(x.over * 10) / 10 + "</span>" : "") + "</td></tr>";
     if (open) done.slice().reverse().forEach(function (d) {
@@ -2461,7 +2462,7 @@ function motWeekGrid(mon, r, order) {
   var head = '<div class="mot-wkh"><b>Week of ' + esc(fmtLongDay(mon)) + "</b><span>" + (fleet ? Math.round(fleet).toLocaleString() + " fleet miles" : "No miles saved") + "</span></div>";
   if (!body) return head + '<div class="mot-wkempty">No truck ran or had orders this week.</div>';
   return head + '<div class="grid-wrap mot-wrap"><table class="data mot-grid"><colgroup><col class="c-t">' + wd.map(function () { return "<col>"; }).join("") + '<col class="c-tot"></colgroup><thead><tr><th>Truck</th>' +
-    wd.map(function (d) { var lab = "<span>" + esc(new Date(d + "T12:00:00").toLocaleDateString([], { weekday: "short" })) + "</span>" + esc(isoToMdy(d).slice(0, 5));
+    wd.map(function (d) { var lab = "<span>" + esc(new Date(d + "T12:00:00").toLocaleDateString([], { weekday: "short" })) + "</span>" + esc(isoToMdy(d));
       return '<th class="n mot-dh' + (inR(d) ? "" : " out") + '">' + lab + "</th>"; }).join("") +
     '<th class="n">Week</th></tr></thead><tbody>' + body + '</tbody><tfoot><tr><td><b>Fleet</b></td>' +
     wd.map(function (d) { return '<td class="n' + (inR(d) ? "" : " out") + '">' + (fleetDay[d] ? Math.round(fleetDay[d]).toLocaleString() : "") + "</td>"; }).join("") +
@@ -2480,7 +2481,7 @@ function motOrdersHtml(t, d, withDay) {
       internal ? (o.customer_name || (o.customer_party_id && party(o.customer_party_id) ? party(o.customer_party_id).name : "")) : (o.broker_name || o.customer_name || "");
     h += '<button type="button" class="mot-ev mot-ord" data-motorder="' + o.id + '" title="Open this order"><span class="mot-tag ' + cls + '">' + tag + '</span><span class="mot-no">' + esc(o.rexius_order_no || o.transfer_no || "No order #") +
       (!internal && o.broker_load_no ? " <small>Load " + esc(o.broker_load_no) + "</small>" : "") + "</span><span>" + esc(who) + '</span><span class="n">' +
-      (internal ? (motNum(o.miles) != null ? motNum(o.miles) + " mi" : "no miles yet") : (motNum(o.external_rate) != null ? "$" + motNum(o.external_rate).toLocaleString() : "no rate")) + "</span></button>";
+      (internal ? (motNum(o.miles) != null ? motNum(o.miles) + " mi" : "no miles yet") : (motNum(o.external_rate) != null ? fmtMoney(motNum(o.external_rate)) : "no rate")) + "</span></button>";
   });
   if (b.total != null) h += '<div class="mot-ev mot-ord tot"><span class="mot-tag x">External</span><span></span><span>The rest of the truck\'s miles (deadhead, fuel, shop)</span><span class="n">' + Math.round(b.ext * 10) / 10 + " mi</span></div>";
   return h + "</div>";
@@ -2548,7 +2549,7 @@ function vMotive() {
 }
 function motTabContext() {
   if (!MOT.day) MOT.day = motYesterday();
-  return '<button class="btn sm mot-dt" data-mot="cal" aria-haspopup="dialog" aria-expanded="' + !!MOT.calOpen + '">' + esc(fmtLongDay(MOT.day)) + ' <span class="mot-caret">&#9662;</span></button>';
+  return '<button class="btn sm mot-dt" data-mot="cal" aria-haspopup="dialog" aria-expanded="' + !!MOT.calOpen + '">' + esc(fmtLongDay(MOT.day)) + ' <span class="mot-caret">&darr;</span></button>';
 }
 // Every truck-day ever saved, with all the data we hold and where the miles went, as one CSV.
 function motDownloadAll() {
@@ -2687,8 +2688,8 @@ function motRollup(range) {
 function motBrokerTable(r) {
   var list = Object.keys(r.brokers).map(function (k) { var x = r.brokers[k]; return { who: k, loads: x.loads, rev: x.rev, miles: x.miles, rpm: x.miles ? x.rev / x.miles : null }; }).sort(function (a, b) { return b.rev - a.rev; });
   if (!list.length) return "";
-  return '<div class="rpt-card rpt-months"><div class="lbl">External RPM by customer</div><table><thead><tr><th></th><th>Loads</th><th>Revenue</th><th>External miles</th><th>RPM</th></tr></thead><tbody>' +
-    list.map(function (x) { return "<tr><td>" + esc(x.who) + "</td><td>" + x.loads + "</td><td>" + rptMoney(x.rev) + "</td><td>" + Math.round(x.miles).toLocaleString() + "</td><td>" + (x.rpm ? "$" + x.rpm.toFixed(2) : "—") + "</td></tr>"; }).join("") +
+  return '<div class="rpt-card rpt-months"><div class="lbl">External RPM By Customer</div><table><thead><tr><th></th><th>Loads</th><th>Revenue</th><th>External Miles</th><th>RPM</th></tr></thead><tbody>' +
+    list.map(function (x) { return "<tr><td>" + esc(x.who) + "</td><td>" + x.loads + "</td><td>" + rptMoney(x.rev) + "</td><td>" + Math.round(x.miles).toLocaleString() + "</td><td>" + (x.rpm ? fmtMoney(x.rpm) : "—") + "</td></tr>"; }).join("") +
     '</tbody></table><div class="rpt-foot">Each day\'s external miles are shared evenly between that day\'s external loads. ' +
     (r.noLoadMiles ? Math.round(r.noLoadMiles).toLocaleString() + " external miles were on days with no external load (shop, fuel, empty miles) and count in the total above." : "") + "</div></div>";
 }
@@ -2699,7 +2700,7 @@ function vReports() {
   var h = toolbarHtml("Reports", {
     className: "orders-toolbar rpt-toolbar", context: rdxPeriodHtml(),
     secondary: '<button class="btn sm" data-report="dump" title="Every table in the database, as CSV files">Export CSV</button>',
-    primary: '<button class="btn pri sm" id="rdx-addbtn" aria-haspopup="menu" aria-expanded="false">+ Add Card</button>'
+    primary: '<button class="btn pri sm" id="rdx-addbtn" aria-haspopup="menu" aria-expanded="false">Add Card</button>'
   });
   h += '<div class="grid-wrap rpt-page">';
   if (REP.noSql) h += '<div class="note-bar">Saved reports are not set up in the database yet, so nothing can be saved yet. Run the saved reports SQL first.</div>';
@@ -2788,7 +2789,7 @@ function rdxFigure(r) {
   return o;
 }
 function rdxNum(n, d) { return n == null || !isFinite(n) ? "—" : n.toLocaleString(undefined, { minimumFractionDigits: d || 0, maximumFractionDigits: d || 0 }); }
-function rdxMoney(n, d) { return n == null || !isFinite(n) ? "—" : (n < 0 ? "-$" : "$") + rdxNum(Math.abs(n), d); }
+function rdxMoney(n) { return n == null ? "—" : fmtMoney(n); }
 // A number card's value, and what to compare it with: [shown value, raw value for the change, line under it (null = the change)]
 function rdxValue(id, o) {
   switch (id) {
@@ -2816,7 +2817,7 @@ function rdxListMap(id, o) { return { bag_n: [o.bagN, ""], bag_mi: [o.bagMi, " m
 function rdxCmp(cur, old, days) {
   if (cur == null || old == null || !old) return "";
   var p = Math.round((cur - old) / Math.abs(old) * 100);
-  return '<span class="rc-cmp ' + (p === 0 ? "flat" : p > 0 ? "up" : "down") + '"><b>' + (p === 0 ? "= no change" : (p > 0 ? "&#9650; " : "&#9660; ") + Math.abs(p) + "%") + "</b> vs the " + days + " days before</span>";
+  return '<span class="rc-cmp ' + (p === 0 ? "flat" : p > 0 ? "up" : "down") + '"><b>' + (p === 0 ? "= no change" : (p > 0 ? "&uarr; " : "&darr; ") + Math.abs(p) + "%") + "</b> vs the " + (days === 1 ? "day" : days + " days") + " before</span>";
 }
 // A ranked list: the name and its count (or miles, or dollars), most first.
 function rdxList(map, unit) {
@@ -2944,7 +2945,7 @@ function trfLoad() {
 }
 function trfDay(ts) { return rptIso(new Date(ts)); }   // the local calendar day a timestamp falls on
 function trfDept(v) { v = String(v == null ? "" : v).trim(); return !v ? "(no department)" : /^\d+$/.test(v) ? "Dept " + v : v; }
-function trfMoney(n) { return "$" + (Math.round(n * 100) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function trfMoney(n) { return fmtMoney(n); }
 /* What is due: delivered, not cancelled, bag or internal freight, not in a batch yet, delivered inside the From and Through dates (no From = everything not transferred yet).
    Also, for orders ALREADY transferred: if the cost has changed since (or the order was cancelled), the difference is flagged, and it goes out as an adjustment (plus or
    minus) in the next transfer when the order's delivery date is inside the same dates. "late" lists orders that were delivered on or before the last transfer's last day but
@@ -3052,7 +3053,7 @@ function ncPaint() {
       '<td class="nc-ord"><b>' + esc(o.is_transfer ? (o.transfer_no || "") : (o.rexius_order_no || "No order #")) + "</b> <span>" + esc(o.is_transfer ? (o.notes || "Internal freight") : (lab[1] || "")) + "</span></td>" +
       "<td>" + esc(o.is_transfer ? (o.transfer_department_name || "") : trfDept(o.department)) + "</td>" +
       '<td><input class="mrv-in nc-in" data-nc="' + o.id + '|m" inputmode="decimal" aria-label="Miles" value="' + (e.m != null ? e.m : (motNum(o.miles) != null ? o.miles : "")) + '"></td>' +
-      '<td><input class="mrv-in nc-in" data-nc="' + o.id + '|c" inputmode="decimal" aria-label="Cost" value="' + (e.c != null ? e.c : "") + '" placeholder="' + (auto != null ? "$" + auto.toFixed(2) : "") + '"></td></tr>';
+      '<td><input class="mrv-in nc-in" data-nc="' + o.id + '|c" inputmode="decimal" aria-label="Cost" value="' + (e.c != null ? e.c : "") + '" placeholder="' + (auto != null ? fmtMoney(auto) : "") + '"></td></tr>';
   });
   if (list.length > 600) h += '<tr><td colspan="7" class="rpt-none">The first 600 of ' + list.length + " are shown. Pick a month to see the rest.</td></tr>";
   $("#nc-list").innerHTML = h + "</tbody></table>";
@@ -3065,7 +3066,7 @@ function ncCount() {
 document.addEventListener("input", function (e) {
   var el = e.target.closest && e.target.closest("[data-nc]"); if (!el) return;
   var p = el.dataset.nc.split("|"), v = el.value.replace(/[^0-9.]/g, ""), n = v === "" || v === "." ? null : Number(v), ed = NC.edit[p[0]] = NC.edit[p[0]] || {};
-  if (p[1] === "m") { ed.m = n; var c = document.querySelector('[data-nc="' + p[0] + '|c"]'), auto = n != null ? motFreightCost(n) : null; if (c) c.placeholder = auto != null ? "$" + auto.toFixed(2) : ""; }
+  if (p[1] === "m") { ed.m = n; var c = document.querySelector('[data-nc="' + p[0] + '|c"]'), auto = n != null ? motFreightCost(n) : null; if (c) c.placeholder = auto != null ? fmtMoney(auto) : ""; }
   else ed.c = n;
   ncCount();
 });
@@ -3129,7 +3130,7 @@ function vTransfers() {
   h += '<div class="mot-tiles trf-tiles">' +
     '<div class="mot-tile' + (late ? " bad" : "") + '"><i>Due now</i><b>' + trfMoney(due.total) + "</b><small>" + (any ? nOrd + " order" + (nOrd === 1 ? "" : "s") + (nAdj ? " + " + nAdj + " adj" : "") + (due.from ? " since " + esc(isoToMdy(due.from)) : "") : "Nothing due") + "</small></div>" +
     '<div class="mot-tile"><i>Transferred in ' + yr + "</i><b>" + trfMoney(yrSent) + "</b><small>" + yrBatches.length + " transfer" + (yrBatches.length === 1 ? "" : "s") + "</small></div>" +
-    '<div class="mot-tile' + (late ? " bad" : "") + '"><i>Last transfer</i><b>' + (last ? esc(isoToMdy(trfDay(last.done_at)).slice(0, 5)) : "—") + "</b><small>" + (last ? trfAgo(trfDay(last.done_at)) + (last.batch_no ? " · batch " + esc(last.batch_no) : "") : "None yet") + "</small></div>" +
+    '<div class="mot-tile' + (late ? " bad" : "") + '"><i>Last transfer</i><b>' + (last ? esc(isoToMdy(trfDay(last.done_at))) : "—") + "</b><small>" + (last ? trfAgo(trfDay(last.done_at)) + (last.batch_no ? " · batch " + esc(last.batch_no) : "") : "None yet") + "</small></div>" +
     (noCost ? '<button type="button" class="mot-tile warn trf-nc" data-trf-nocost="1" title="See them and add the costs"><i>Missing a cost</i><b>' + noCost.toLocaleString() + "</b><small>Not in any transfer. Click to add the costs</small></button>" :
       '<div class="mot-tile"><i>Missing a cost</i><b>0</b><small>Every delivered order has one</small></div>') + "</div>";
   // the dates "due now" covers
@@ -3160,14 +3161,14 @@ function vTransfers() {
   h += "</tbody></table></div>";
   // past transfers
   var lastB = yrBatches[0];
-  h += '<button type="button" class="trf-h trf-past" data-trfpast="1" aria-expanded="' + !!TRF.past + '"><i>' + (TRF.past ? "&#9662;" : "&#9656;") + '</i><span class="lbl">Past transfers in ' + yr + " (" + yrBatches.length + ")</span>" +
-    '<span class="trf-flag-sub">' + (lastB ? "Last: " + esc(isoToMdy(trfDay(lastB.done_at))) + (lastB.batch_no ? " · batch " + esc(lastB.batch_no) : "") + " · " + trfMoney(lastB.total) + " · " + lastB.order_count + " orders" : "None yet") + "</span></button>";
+  h += '<button type="button" class="trf-h trf-past" data-trfpast="1" aria-expanded="' + !!TRF.past + '"><i>' + (TRF.past ? "&uarr;" : "&darr;") + '</i><span class="lbl">Past transfers in ' + yr + " (" + yrBatches.length + ")</span>" +
+    '<span class="trf-flag-sub">' + (lastB ? "Last: " + esc(isoToMdy(trfDay(lastB.done_at))) + (lastB.batch_no ? " · batch " + esc(lastB.batch_no) : "") + " · " + trfMoney(lastB.total) + " · " + lastB.order_count + " order" + (+lastB.order_count === 1 ? "" : "s") : "None yet") + "</span></button>";
   if (!TRF.past) return h + "</div>";
   h += '<div class="rpt-card trf-card"><table class="trf-tbl trf-hist"><thead><tr><th>Done</th><th>Batch</th><th>Covers</th><th>Orders</th><th>Amount</th><th></th></tr></thead><tbody>';
   if (!yrBatches.length) h += '<tr><td colspan="6" class="trf-none">No transfers in ' + yr + ".</td></tr>";
   yrBatches.forEach(function (b) {
     var open = !!TRF.open[b.id];
-    h += '<tr class="trf-b' + (open ? " open" : "") + '" data-trfopen="' + b.id + '"><td><i>&#9656;</i>' + esc(isoToMdy(trfDay(b.done_at))) + "</td><td>" + esc(b.batch_no || "—") + "</td><td>" +
+    h += '<tr class="trf-b' + (open ? " open" : "") + '" data-trfopen="' + b.id + '"><td><i>&darr;</i>' + esc(isoToMdy(trfDay(b.done_at))) + "</td><td>" + esc(b.batch_no || "—") + "</td><td>" +
       esc((b.from_date ? isoToMdy(String(b.from_date).slice(0, 10)) + " – " : "through ") + isoToMdy(String(b.through_date).slice(0, 10))) + "</td><td>" + b.order_count + "</td><td>" + trfMoney(b.total) +
       '</td><td class="act"><button class="btn sm" data-trfundo="' + b.id + '">Undo</button></td></tr>';
     if (open) h += '<tr class="trf-detail"><td colspan="6">' + (!TRF.lines[b.id] ? "Loading…" : trfBatchDetail(TRF.lines[b.id])) + "</td></tr>";
@@ -3230,7 +3231,11 @@ document.addEventListener("change", function (e) {
 });
 document.addEventListener("change", function (e) {
   var el = e.target;
-  if (el.id === "rpt-per") { REP.per = el.value; if (el.value !== "custom") { REP.from = ""; REP.to = ""; try { localStorage.setItem("dept12RepPer", el.value); } catch (e2) {} } render(); return; }
+  if (el.id === "rpt-per") {
+    var curRange = rptDashRange(); REP.per = el.value;
+    // Custom starts from the dates on screen instead of jumping to the last three months.
+    if (el.value === "custom") { REP.from = REP.from || curRange.from; REP.to = REP.to || curRange.to; }
+    if (el.value !== "custom") { REP.from = ""; REP.to = ""; try { localStorage.setItem("dept12RepPer", el.value); } catch (e2) {} } render(); return; }
   if (el.matches && el.matches("[data-rptdfrom],[data-rptdto]")) {
     var f = $("[data-rptdfrom]"), t = $("[data-rptdto]");
     if (f.dataset.lastIso && t.dataset.lastIso) {

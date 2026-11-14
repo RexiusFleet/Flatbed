@@ -190,7 +190,8 @@ document.addEventListener("change", function (e) {
   var w4 = drawerRouteStops(o); if (!w4[i]) return; w4[i].appt = text;
   routeApply(o.id, w4, ROUTE_SEL && ROUTE_SEL.oid === o.id ? ROUTE_SEL.i : null);
 });
-function closeModal() { var m = $("#modal"); if (m) m.classList.remove("on"); $("#scrim").classList.remove("on"); }
+// The dimmed backdrop is shared with the order side window: it stays while that is still open.
+function closeModal() { var m = $("#modal"); if (m) m.classList.remove("on"); if (!$("#drawer").classList.contains("on")) $("#scrim").classList.remove("on"); }
 /* Database sorting has two modes: clicking a column name sorts this browser's view only; Save Order
    (shown while a sort is active) makes that order the default for everyone who opens this database. */
 function saveDatabaseOrder(grid) {
@@ -205,7 +206,7 @@ function saveDatabaseOrder(grid) {
         archived_view: archiveViewForGrid(grid) }).then(function () {
         delete GRIDSORT[grid]; toast("Saved row order"); return reload();
       }).catch(function (err) { toast(err.message, true); });
-    }, "Save row order");
+    }, "Save Row Order", true);
 }
 /* Day note popup (D230) — a dispatcher-only note pinned to a calendar date,
    opened from the scheduler's date-header right-click menu (openDayMenu,
@@ -218,7 +219,7 @@ function dayNoteModal(ds) {
     '<div class="modal-body"><p class="modal-note">Dispatcher-only — never shown to drivers or pushed to Sheets. Included in the full "Export entire app" data export.</p>' +
     '<label class="mf"><span>Note</span><textarea id="daynote-text" rows="4">' + esc(existing ? existing.text : "") + '</textarea></label></div>' +
     '<div class="modal-ft">' +
-    (existing ? '<button class="btn del" id="daynote-clear" style="margin-right:auto">Delete note</button>' : "") +
+    (existing ? '<button class="btn del" id="daynote-clear" style="margin-right:auto">Delete Note</button>' : "") +
     '<button class="btn" id="modal-cancel">Cancel</button>' +
     '<button class="btn pri" id="daynote-save">Save</button></div>');
   function submit(text) {
@@ -233,11 +234,13 @@ function dayNoteModal(ds) {
 }
 /* In-app confirm dialog (D77) — replaces the browser's confirm() so destructive
    actions get a styled modal. onYes runs after the user confirms. */
-function confirmModal(message, onYes, confirmLabel, primary) {
-  openModal('<div class="modal-hd"><h2>Are you sure?</h2></div>' +
+/* One confirm window for the whole app (DESIGN: Popups). The heading names the action ("Delete 3?"), the buttons sit together at
+   the right with the action last, and the dismiss button says Cancel, or Never Mind when the action itself is a cancel. */
+function confirmModal(message, onYes, confirmLabel, primary, dismissLabel) {
+  openModal('<div class="modal-hd"><h2>' + esc(confirmLabel || "Delete") + '?</h2></div>' +
     '<div class="modal-body"><p style="line-height:1.5;margin:0">' + esc(message) + "</p></div>" +
     '<div class="modal-ft"><span style="flex:1"></span>' +
-    '<button class="btn" id="modal-cancel">Cancel</button>' +
+    '<button class="btn" id="modal-cancel">' + esc(dismissLabel || "Cancel") + '</button>' +
     '<button class="btn ' + (primary ? "pri" : /^delete/i.test(confirmLabel || "Delete") ? "del" : "bad") + '" id="modal-confirm">' + esc(confirmLabel || "Delete") + "</button></div>");
   var btn = $("#modal-confirm");
   if (btn) btn.addEventListener("click", function () { closeModal(); onYes(); });
@@ -259,6 +262,8 @@ function confirmModal(message, onYes, confirmLabel, primary) {
 document.addEventListener("keydown", function (e) {
   if (e.key !== "Enter" || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
   if (e.target && e.target.tagName === "TEXTAREA") return;
+  // Enter on a focused button, link or dropdown is that control's own key (Enter on Cancel cancels; it never confirms).
+  if (e.target && e.target.closest && e.target.closest("button,select,a")) return;
   var modal = document.querySelector("#modal.on"); if (!modal) return;
   if (modal.dataset.keyConfirming) return;
   var yes = modal.querySelector("#modal-confirm,#confirm-del,#confirm-archive-delete,#confirm-customer-archive,#history-confirm");
@@ -299,10 +304,17 @@ document.addEventListener("keydown", function (e) {
    would otherwise run instead. */
 document.addEventListener("keydown", function (e) {
   if (e.key !== "Escape") return;
+  // A right-click menu, a color / border / font picker or the profile menu closes first, and nothing behind it reacts.
+  if (document.querySelector("#ctxmenu,#palette,#profile-menu")) {
+    e.preventDefault(); e.stopPropagation();
+    if (document.querySelector("#palette")) closePalette(); else closeCtxMenu();
+    closeProfileMenu();
+    return;
+  }
   var modal = document.querySelector("#modal.on");
   if (modal) {
     e.preventDefault(); e.stopPropagation();
-    var cancel = modal.querySelector("#modal-cancel");
+    var cancel = modal.querySelector("#modal-cancel,#afr-cancel,#dtype-cancel");
     if (cancel) cancel.click(); else closeModal();
     return;
   }
@@ -327,7 +339,9 @@ function openViewer(path, name) {
     '<button class="btn sm" id="viewer-close">Close</button></div><div class="viewer-body"><div class="empty">Loading…</div></div></div>';
   v0.classList.add("on");
   // Private Storage: the file is only reachable through a short-lived signed URL.
-  storedFileUrl(path).then(function (url) { renderViewer(path, name, url); })
+  v0.dataset.path = path;
+  // Closed (or pointed at another file) while the link was being fetched: leave it closed.
+  storedFileUrl(path).then(function (url) { if (v0.classList.contains("on") && v0.dataset.path === path) renderViewer(path, name, url); })
     .catch(function (e) { closeViewer(); toast(e.message, true); });
 }
 function renderViewer(path, name, url) {
@@ -779,7 +793,7 @@ function manageColumnsModal(key) {
   if (!ent) return;
   openModal('<div class="modal-hd"><h2>Manage columns</h2></div>' +
     '<div class="modal-body" id="colmgr-body" data-colmgr="' + ent.id + '">' + colmgrRowsHtml(ent.id) + "</div>" +
-    '<div class="modal-ft"><span style="flex:1"></span><button class="btn" id="modal-cancel">Done</button></div>');
+    '<div class="modal-ft"><span style="flex:1"></span><button class="btn" id="modal-cancel">Close</button></div>');
 }
 /* Re-renders the column list in place after a hide/reorder so the modal stays
    open — reload()/render() never touch #modal (separate node). */
@@ -815,11 +829,11 @@ function condFmtFieldModal(field) {
   var rules = field.conditional_format || [];
   var body = '<p style="font-size:var(--fs-label);color:var(--ink-2);margin:0 0 6px">First matching rule wins, top to bottom. A manually colored cell always overrides.</p>' +
     '<div id="condfmt-rules">' + rules.map(condRuleRowHtml).join("") + "</div>" +
-    '<button class="btn sm" id="condfmt-addrule" style="margin-top:6px">+ Add rule</button>';
+    '<button class="btn sm" id="condfmt-addrule" style="margin-top:6px">+ Add Rule</button>';
   openModal('<div class="modal-hd"><h2>Conditional formatting — ' + esc(field.label) + "</h2></div>" +
     '<div class="modal-body">' + body + "</div>" +
     '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
-    '<span style="flex:1"></span><button class="btn pri" id="condfmt-save" data-fieldid="' + field.id + '">Save</button></div>');
+    '<button class="btn pri" id="condfmt-save" data-fieldid="' + field.id + '">Save</button></div>');
   $("#modal").classList.add("wide-modal");
   var host = $("#condfmt-rules");
   host.addEventListener("click", function (e) {
@@ -878,11 +892,11 @@ function fieldOptionsModal(field) {
   var body = '<p style="font-size:var(--fs-label);color:var(--ink-2);margin:0 0 6px">' +
       'One option per row. Remove them all to make this a plain free-typed field again.</p>' +
     '<div id="field-options-rows">' + (opts.length ? opts.map(fieldOptionRowHtml).join("") : fieldOptionRowHtml("")) + "</div>" +
-    '<button class="btn sm" id="field-options-addrow" style="margin-top:6px">+ Add option</button>';
+    '<button class="btn sm" id="field-options-addrow" style="margin-top:6px">+ Add Option</button>';
   openModal('<div class="modal-hd"><h2>Dropdown options — ' + esc(field.label) + "</h2></div>" +
     '<div class="modal-body">' + body + "</div>" +
     '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
-    '<span style="flex:1"></span><button class="btn pri" id="field-options-save" data-fieldid="' + field.id + '">Save</button></div>');
+    '<button class="btn pri" id="field-options-save" data-fieldid="' + field.id + '">Save</button></div>');
   var foHost = $("#field-options-rows");
   foHost.addEventListener("click", function (e) {
     var del = e.target.closest("[data-optdel]");
@@ -1143,11 +1157,16 @@ function deleteSelection() {
     var k = td && td.dataset && td.dataset.key, cv = k && CELLS[k];
     return !!(cv && cv.oid && scheduleDateOf(k) < cut);
   });
-  if (historicalLoads) confirmModal("This removes a load from a past day and changes schedule history. Continue?", execute, "Change history");
+  if (historicalLoads) confirmModal("This removes a load from a past day and changes schedule history. Continue?", execute, "Change History");
   else execute();
 }
 document.addEventListener("keydown", function (e) {
-  if (e.key === "Escape" && DRAWER_OID && !EDITING) { closeDrawer(); return; }
+  if (e.key === "Escape" && DRAWER_OID && !EDITING) {
+    // An open Pickup / Drop suggestion list closes first; the side window on the next press.
+    var sug = document.getElementById("loc-suggest-portal");
+    if (sug && sug.style.display !== "none") { sug.style.display = "none"; return; }
+    closeDrawer(); return;
+  }
   if (EDITING) {
     if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
     else if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitEdit(); move(1, 0); }
@@ -1155,6 +1174,8 @@ document.addEventListener("keydown", function (e) {
     return;
   }
   if (DRAWER_OID) return;
+  // A popup, the document viewer or the Sign window owns the keyboard: the grid behind it does not delete, type or move.
+  if (document.querySelector("#modal.on,#viewer.on,#sgn")) return;
   // A Database/sheet grid's dropdown and combo cells (select.cell-i/
   // input.cell-i, D144/D160) are real, always-live form controls sitting
   // directly inside a normal td[data-key] — unlike a plain text cell, which
@@ -1174,7 +1195,7 @@ document.addEventListener("keydown", function (e) {
       e.target.closest("td[data-key]")) {
     e.preventDefault(); e.target.blur(); move(0, e.shiftKey ? -1 : 1); return;
   }
-  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
   // Delete/Backspace must work over a multi-cell marquee (SELSET), not just a
   // single selected cell — checked here, before the SEL-only guard below.
   // deleteSelection() itself always handled SELSET ("clears the whole
@@ -1254,7 +1275,7 @@ function afFormHtml(p) {
   return '<datalist id="afr-brokers">' + brokers + "</datalist>" +
     '<div class="fields">' + row("Broker", "broker", p.broker || "", { list: "afr-brokers", hint: "broker" }) + row("Order #", "solomon", p.solomon || "", { ph: "Optional" }) +
     row("Load #", "load_no", p.load_no || "") + row("PU / PO", "po", p.po || "") +
-    row("Rate", "rate", p.rate == null ? "" : "$" + Number(p.rate).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), { low: p.rate != null && (p.rate > 3000 || p.rate < 150) || (p.rate != null && conf.rate === "check") }) + "</div>" +
+    row("Rate", "rate", p.rate == null ? "" : fmtMoney(p.rate), { low: p.rate != null && (p.rate > 3000 || p.rate < 150) || (p.rate != null && conf.rate === "check") }) + "</div>" +
     stop("pickup", "Pickup") + stop("delivery", "Drop");
 }
 // Wires the boxes inside `root`: the hints under them, and collect() which returns the (possibly edited) values as the reader's own shape.
@@ -1296,7 +1317,7 @@ function afReview(p, source) {
       (ex ? '<div class="note-bar" style="margin:0 0 10px">This matches order <b>' + esc(ex.rexius_order_no || ex.broker_load_no || "") + "</b>. Only its blank boxes will be filled in; nothing already on it is changed.</div>" :
         '<p class="afr-intro">Check what was read, fix anything, then create the order. Nothing is saved until you do.</p>') +
       afFormHtml(p) +
-      '</div><div class="modal-ft"><button class="btn" id="afr-cancel" type="button">Cancel</button><span style="flex:1"></span>' +
+      '</div><div class="modal-ft"><button class="btn" id="afr-cancel" type="button">Cancel</button>' +
       '<button class="btn pri" id="afr-go" type="button">' + (ex ? "Fill In Order" : "Create Order") + "</button></div>";
     openModal(h); var m = $("#modal"); if (m) m.classList.add("wide-modal");
     var form = afFormBind(m, p);
@@ -1311,7 +1332,7 @@ function afReview(p, source) {
    typed text wherever you click on the page. The signed copy is a new PDF (the original is never changed): drag the file chip out to
    the desktop or an email, or click it to save. Initials are set up once (typed in a script font, or drawn) and kept on this computer. */
 var SGN = null, SGN_INK = "#0b1d5c";
-function sgnToday() { var d = new Date(); return (d.getMonth() + 1) + "/" + d.getDate() + "/" + String(d.getFullYear()).slice(2); }
+function sgnToday() { return isoToMdy(pacificToday()); }
 function sgnInitials() { try { return JSON.parse(localStorage.getItem("sgnInitials") || "null"); } catch (e) { return null; } }
 function sgnSaveInitials(o) { try { localStorage.setItem("sgnInitials", JSON.stringify(o)); } catch (e) { /* private mode */ } }
 function sgnTrim(cv) {
@@ -2049,7 +2070,7 @@ document.addEventListener("pointercancel", billDragEnd, true);
    it goes through the same reader and fills an order the same way, with the same tags. */
 function pasteLoadModal() {
   openModal('<div class="modal-hd"><h2>Paste Load Info</h2></div><div class="modal-body">' +
-    '<p style="font-size:var(--fs-label);color:var(--ink-3);margin-bottom:8px">Paste the email or text for the load. It fills a new order, and every box it fills gets a tag so you can check it.</p>' +
+    '<p style="font-size:var(--fs-label);color:var(--ink-3);margin-bottom:8px">Paste the email or text for the load. It opens a review window so you can check every box before the order is made.</p>' +
     '<textarea id="paste-load-text" rows="12" style="width:100%" placeholder="Paste here"></textarea></div>' +
     '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
     '<button class="btn pri" id="paste-load-go">Read It</button></div>');
