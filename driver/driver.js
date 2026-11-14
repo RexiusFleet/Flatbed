@@ -701,7 +701,9 @@
                 cw.forEach(function (t) {
                     var r = t.rows[di * p.slots_per_day + s] || {}, open = allowedTab(String(t.truck));
                     if (r.off) { h += '<td class="offday">' + (s === Math.ceil(nS / 2) - 1 ? '<div class="off-label">OFF</div>' : "") + "</td>"; return; }
-                    if (!r.chip) { h += "<td></td>"; return; }
+                    // one cell marked off (a partial day off), or a cell dispatch only colored
+                    if (r.off_cell) { h += '<td class="offday"><div class="off-label">' + esc(r.chip || "OFF") + "</div></td>"; return; }
+                    if (!r.chip) { h += r.color ? '<td style="background-color:' + esc(r.color) + '"></td>' : "<td></td>"; return; }
                     // A typed Scheduler cell (no load behind it) reads as plain text in
                     // the cell, exactly like the dashboard's Current Week.
                     if (!S.loadKeys[t.truck_id + "|" + ds + "|" + (s + 1)]) {
@@ -1105,8 +1107,9 @@
             rows.forEach(function (r, s) {
                 var key = d.truck_id + "|" + ds + "|" + (s + 1), isLoad = !!S.loadKeys[key];   // typed cells: text only
                 S.chipTitle[key] = String(r.chip || "").split("\n")[0];
+                if (r.off_cell) { h += '<div class="off-cell off-hatch"><div class="off-label">' + esc(r.chip || "OFF") + "</div></div>"; return; }
                 if (!r.chip && !r.notes) return;
-                if (!isLoad) { h += '<div class="dvx-note-row">' + esc(r.chip) + "</div>"; return; }
+                if (!isLoad) { h += '<div class="dvx-note-row"' + (r.color ? ' style="' + fillStyle(r.color) + '"' : "") + ">" + esc(r.chip) + "</div>"; return; }
                 h += '<div><div class="load-txt' + (r.color ? "" : " unfilled") + '" style="' + fillStyle(r.color) + '">' + storeMapBtn(key) + tabChipHtml(key, r) +
                     '<div class="chip-scan">' + scanBtn(key) + filesHtml(key) + "</div></div></div>" +
                     '<div class="mono">' + esc(rexiusOrderNo(key)) + "</div>" +
@@ -1130,9 +1133,10 @@
             rows.forEach(function (r, s) {
                 if (!r.chip) return;
                 any = true;
+                if (r.off_cell) { h += '<div class="drv-card off off-hatch"><div class="off-label">' + esc(r.chip || "OFF") + "</div></div>"; return; }
                 var key = d.truck_id + "|" + ds + "|" + (s + 1), isLoad = !!S.loadKeys[key];   // typed cells: text only
                 S.chipTitle[key] = String(r.chip || "").split("\n")[0];
-                if (!isLoad) { h += '<div class="drv-card dvx-note-card">' + esc(r.chip) + "</div>"; return; }
+                if (!isLoad) { h += '<div class="drv-card dvx-note-card"' + (r.color ? ' style="' + fillStyle(r.color) + '"' : "") + ">" + esc(r.chip) + "</div>"; return; }
                 var fields = [["Rexius Order #", rexiusOrderNo(key)], ["PO / PU #", r.po_number],
                 ["Delivery #", r.delivery_number], ["Load #", loadNo(key)]].filter(function (f) { return f[1]; });
                 h += '<div class="drv-card"><div class="load-txt' + (r.color ? "" : " unfilled") + '" style="' + fillStyle(r.color) + '">' + storeMapBtn(key) + tabChipHtml(key, r) + "</div>" +

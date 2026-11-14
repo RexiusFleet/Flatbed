@@ -241,6 +241,8 @@ main{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden
    the signaling; Go/Today/the primary button stay exactly as styled
    everywhere else in the app. */
 .toolbar.home-base-bar{position:relative;padding-left:22px}
+.toolbar.home-base-bar::before{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;background:var(--brand)}
+.toolbar.home-base-bar h2{color:var(--brand);font-weight:900}
 .pad{padding:10px 14px;overflow:auto;flex:1;animation:content-in var(--motion-ui) var(--ease-ui) both}
 @keyframes content-in{from{opacity:.35;transform:translateY(3px)}to{opacity:1;transform:none}}
 /* Database tables scroll inside the available app viewport. Previously the

@@ -65,6 +65,23 @@ function truckOffToggleCells(keys, truckId, ds) {
   }).catch(function (e) { toast(e.message, true); });
 }
 
+/* A partial day off: mark (or clear) just the selected cells, or the one right-clicked when nothing is selected. Cells holding
+   a load are left alone. It is the cell's own format (fmt.off), so it saves, undoes and publishes like a cell color. */
+function cellOffToggleCells(keys, key) {
+  var on = !cellIsOff(key);
+  var ts = keys.filter(function (k) { return !cellHasLoad(k) && k.indexOf(CARRIER_TID + "|") !== 0; }).map(function (k) { return { key: k }; });
+  var skipped = keys.length - ts.length;
+  if (!ts.length) { toast("A cell with a load can't be marked off. Move the load first.", true); return; }
+  var before = ts.map(function (t) { return { t: t, fmt: JSON.parse(JSON.stringify((CELLS[t.key] && CELLS[t.key].fmt) || {})) }; });
+  function apply1(t) { return fmtApply(t, { off: on ? true : null }, false); }
+  Promise.all(ts.map(apply1)).then(function () {
+    histPush((on ? "mark " : "clear ") + ts.length + " cell" + (ts.length > 1 ? "s" : "") + " off",
+      function () { return Promise.all(before.map(function (b) { return fmtSetFull(b.t, b.fmt); })); },
+      function () { return Promise.all(ts.map(apply1)); });
+    if (skipped) toast(skipped + " cell" + (skipped > 1 ? "s" : "") + " with a load " + (skipped > 1 ? "were" : "was") + " left alone");
+  }).catch(function (e) { toast(e.message, true); });
+}
+
 /* Copy/paste one chip between cells (D66). Stores the source order id. */
 var CELLCLIP = null;
 function copyCell(key) {
@@ -155,9 +172,11 @@ function openCtxMenu(x, y, key) {
   closeCtxMenu();
   var cv = CELLS[key], p = key.split("|"), truckId = p[0], ds = p[1];
   var isOff = !!OFFDAYS[truckId + "|" + ds], hasChip = !!(cv && cv.oid);
-  var items = [
-    { a: "off", t: isOff ? "Clear truck off" : "Mark truck off" }
-  ];
+  var many = selectedKeys(key).length > 1, cellOff = cellIsOff(key);
+  var items = [];
+  // two ways to give time off: just these cells (a partial day), or the truck's whole day
+  if (!hasChip) items.push({ a: "celloff", t: (cellOff ? "Clear " : "Mark ") + (many ? "selected cells" : "this cell") + " off" });
+  items.push({ a: "off", t: isOff ? "Clear whole day off" : "Mark whole day off" });
   if (hasChip) items.push({ a: "open", t: "Open order" }, { a: "copy", t: "Copy chip" }, { a: "clear", t: "Clear cell" });
   else items.push({ a: "paste", t: "Paste chip" });
   var m = document.createElement("div");
@@ -171,7 +190,8 @@ function openCtxMenu(x, y, key) {
     var b = e.target.closest("[data-a]"); if (!b) return;
     var a = b.getAttribute("data-a");
     closeCtxMenu();
-    if (a === "off") truckOffToggleCells(selectedKeys(key), truckId, ds);
+    if (a === "celloff") cellOffToggleCells(selectedKeys(key), key);
+    else if (a === "off") truckOffToggleCells(selectedKeys(key), truckId, ds);
     else if (a === "open" && cv && cv.oid) openOrder(cv.oid);
     else if (a === "copy") copyCell(key);
     else if (a === "paste") pasteCell(key);

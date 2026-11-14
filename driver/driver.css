@@ -359,3 +359,32 @@ th.carriercol{background:var(--panel-2)}
 
 /* Sign-in boxes at 16px so an iPhone does not zoom the page when one is tapped. */
 .drv-login .login-card input{font-size:16px}
+
+/* Current Week on small screens (the drivers' page only; the bag plant TV keeps its own sizing). A phone showed about one
+   driver at a time; now a little over two fit across and a tablet held upright shows four, with the text still readable.
+   The date column is narrower so more of the width goes to the loads. */
+@media (max-width:900px){
+  .driver-app:not(.drv-bagplant){--row-h:96px;--col-w:176px}
+  .driver-app:not(.drv-bagplant) table.grid th.trkcol{width:176px!important}
+}
+@media (max-width:560px){
+  .driver-app:not(.drv-bagplant){--row-h:74px;--col-w:140px}
+  .driver-app:not(.drv-bagplant) table.grid th.trkcol{width:140px!important;padding:4px 6px}
+  .driver-app:not(.drv-bagplant) table.grid td.rowhd,.driver-app:not(.drv-bagplant) table.grid th.corner{width:3.7rem;min-width:3.7rem;padding-left:5px;padding-right:5px}
+  .driver-app:not(.drv-bagplant) td.rowhd .dnum{font-size:var(--fs-h3)}
+  .driver-app:not(.drv-bagplant) table.grid th.trkcol .drv{font-size:var(--fs-body-lg)}
+  .driver-app:not(.drv-bagplant) table.grid th.trkcol .trk{font-size:var(--fs-label)}
+  .driver-app:not(.drv-bagplant) table.grid .chip{padding:3px 5px}
+  .driver-app:not(.drv-bagplant) table.grid .chip .who{font-size:var(--fs-label);line-height:1.2}
+  .driver-app:not(.drv-bagplant) table.grid .chip .meta,.driver-app:not(.drv-bagplant) table.grid .chip .dnote,.driver-app:not(.drv-bagplant) table.grid .chip .line{font-size:var(--fs-caption)}
+  .driver-app:not(.drv-bagplant) table.grid .cell .txt{font-size:var(--fs-label);line-height:1.25}
+}
+/* Nothing is cut off on a phone or an upright tablet: names and lines wrap, and a row grows as tall as its loads need. */
+@media (max-width:900px){
+  .driver-app:not(.drv-bagplant) .slotrow td>.cell,.driver-app:not(.drv-bagplant) .slotrow .chip{max-height:none;overflow:visible}
+  .driver-app:not(.drv-bagplant) table.grid .chip .who,.driver-app:not(.drv-bagplant) table.grid .chip .meta,.driver-app:not(.drv-bagplant) table.grid .chip .meta *,
+  .driver-app:not(.drv-bagplant) table.grid .chip .line,.driver-app:not(.drv-bagplant) table.grid .chip .dnote,.driver-app:not(.drv-bagplant) table.grid .chip .route{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+  .driver-app:not(.drv-bagplant) table.grid th.trkcol .drv,.driver-app:not(.drv-bagplant) table.grid th.trkcol .trk{white-space:normal;overflow:visible;text-overflow:clip}
+  .driver-app:not(.drv-bagplant) table.grid td.rowhd{overflow:visible}
+  .driver-app:not(.drv-bagplant) td.rowhd .dnum{white-space:nowrap}
+}

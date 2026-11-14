@@ -101,10 +101,14 @@ function offLabelFor(key) {
   var n = Math.max(3, DAYSLOT[ds] || 0, DAYADD[ds] || 0);
   return slot === Math.ceil(n / 2) ? '<div class="off-label">OFF</div>' : "";
 }
+/* One cell marked off (a partial day off): fmt.off on that cell's own schedule note, set from the right-click menu.
+   It gets the same stripes and OFF word as a whole day off, in that cell only, and publishes that way. */
+function cellIsOff(key) { var v = CELLS[key]; return !!(v && !v.oid && v.fmt && v.fmt.off); }
 function cellInner(key) {
   var v = CELLS[key];
   if (!v) return offLabelFor(key);
   if (v.oid) { var o = order(v.oid); if (o) return chipHtml(o, true, 'data-from="' + key + '"', v.cat, v.fmt, pushColorFor(o, v), !!v.pushedAt); }
+  if (v.fmt && v.fmt.off) return '<div class="off-label">' + esc((v.text || "").trim() || "OFF") + "</div>";
   var fill = effFill(v), fm = v.fmt || {};
   var st = "";
   if (isHex(fm.text)) st += "color:" + fm.text + ";";
@@ -138,8 +142,9 @@ function cellBorderCss(cv) {
 /* One scheduler/Current-Week cell — used by the initial build AND Current Week so
    fills + borders render identically in both (D73). `off` is the truck-off note. */
 function schedCellHtml(key, off, firstRow, cls) {
-  var cv = CELLS[key], fill = (cv && !cv.oid) ? effFill(cv) : "", bd = cellBorderCss(cv);
-  var cn = [cls, off ? "offday" : ""].filter(Boolean).join(" ");
+  var cellOff = cellIsOff(key);
+  var cv = CELLS[key], fill = (cv && !cv.oid && !cellOff) ? effFill(cv) : "", bd = cellBorderCss(cv);
+  var cn = [cls, off || cellOff ? "offday" : ""].filter(Boolean).join(" ");
   return '<td data-key="' + key + '"' +
     (cn ? ' class="' + cn + '"' : "") + (off ? ' title="' + esc(off) + '"' : "") +
     (fill ? ' style="background-color:' + fill + '"' : "") +   // not shorthand: keeps CSS background-clip (D73)
@@ -288,8 +293,9 @@ function repaintCell(key) {
     var c = td.querySelector(".cell");
     if (c) { c.innerHTML = cellInner(key); c.style.cssText = cellBorderCss(CELLS[key]); }
     var p = key.split("|"), cv = CELLS[key], off = OFFDAYS[p[0] + "|" + p[1]];
-    var fill = (cv && !cv.oid) ? effFill(cv) : "";
-    td.classList.toggle("offday", !!off);
+    var cellOff = cellIsOff(key);
+    var fill = (cv && !cv.oid && !cellOff) ? effFill(cv) : "";
+    td.classList.toggle("offday", !!off || cellOff);
     if (off) td.setAttribute("title", off); else td.removeAttribute("title");
     td.style.background = "";                    // clear any prior shorthand
     td.style.backgroundColor = fill || "";       // background-color keeps CSS background-clip (D73)
@@ -879,6 +885,11 @@ function dvSlotCellsHtml(key) {
     (o && o.is_transfer && dvMaps(o).length ? '<div class="chip-scan">' + dvStoreMapBtn(o) + "</div>" : "") +
     (o && !o.is_transfer ? '<div class="chip-scan">' + dvStoreMapBtn(o) + '<button class="btn sm dv-dead" tabindex="-1" title="Drivers use this on their own page">Scan POD / BOL</button>' +
       dvScanStatusHtml(o.id) + "</div>" : "") + "</div>" : "";
+  if (cellIsOff(key)) {
+    // one slot marked off: a striped row with OFF, the way the driver's own page shows it
+    return '<div class="dv-cell dv-typed off-hatch" data-key="' + key + '"><div class="off-label">' + esc((v.text || "").trim() || "OFF") + "</div></div>" +
+      '<div class="off-hatch"></div><div class="off-hatch"></div><div class="off-hatch"></div><div class="off-hatch"></div><div class="off-hatch"></div><div class="off-hatch"></div>';
+  }
   if (!o) {
     // A typed or empty slot is edited right in the chip cell (click it), the
     // same text the Scheduler and Current Week edit.

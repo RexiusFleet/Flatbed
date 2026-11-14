@@ -136,7 +136,7 @@ function buildPayload(dates, data) {
   const dayMax = /* @__PURE__ */ new Map();
   const bumpDay = (dt, slot) => { if (inRange.has(dt) && slot > (dayMax.get(dt) || 3) && slot <= 24) dayMax.set(dt, slot); };
   for (const l of data.loads) bumpDay(l.scheduled_date, l.slot);
-  for (const n of data.notes) if (n.body) bumpDay(n.scheduled_date, n.slot);
+  for (const n of data.notes) if (n.body || (n.fmt && (n.fmt.off || n.fmt.fill)) || n.cat_color) bumpDay(n.scheduled_date, n.slot);
   const daySlots = dates.map((dt) => dayMax.get(dt) || 3);
   const perDay = Math.max(3, ...daySlots);
   const truckRows = (t, compact = false) => {
@@ -184,10 +184,16 @@ function buildPayload(dates, data) {
             continue;
           }
           const note = notesByKey.get(`${t.truck_id}|${dt}|${slot}`);
-          if (note && note.body) {
-            row.chip = note.body;
-            const fill = (note.fmt || {}).fill;
-            row.color = fill ? fill : (_a = note.cat_color) != null ? _a : null;
+          const nf = note && note.fmt || {};
+          if (note && nf.off) {
+            // one cell marked off (a partial day off): striped with OFF in that cell only. off_cell, not off, so the rest of the day still shows.
+            row.chip = s(note.body) || "OFF";
+            row.color = TRUCK_OFF_COLOR;
+            row.off_cell = true;
+          } else if (note && (note.body || nf.fill || note.cat_color)) {
+            // a typed cell, or a cell that is only colored: the color goes out with or without text
+            row.chip = note.body || "";
+            row.color = nf.fill ? nf.fill : (_a = note.cat_color) != null ? _a : null;
           }
         }
         out.push(row);
