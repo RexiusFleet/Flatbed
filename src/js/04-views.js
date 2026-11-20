@@ -433,14 +433,17 @@ function actRowHtml(x) {
 }
 function seenHtml() {
   var push = lastPushMs(), drivers = DB.trucks.filter(function (t) { return t.driver_name; });
-  var un = actUnread(), n = un.length;
+  var un = actUnread(), n = un.length, pri = inboxCount();
+  // A driver's change or upload waiting for an OK turns the badge amber and is counted first.
+  var bn = pri || n;
   var h = '<span class="seen-wrap" id="seen-wrap"><button class="hbtn act-btn" id="seen-btn" aria-expanded="' + ACT_OPEN +
-    '" aria-label="Driver activity' + (n ? ", " + n + " unread" : "") + '" title="Driver activity">' + icon("person") +
-    (n ? '<span class="act-badge">' + (n > 99 ? "99+" : n) + "</span>" : "") + "</button>";
+    '" aria-label="Driver activity' + (pri ? ", " + pri + " waiting for your OK" : "") + (n ? ", " + n + " unread" : "") + '" title="Driver activity">' + icon("person") +
+    (bn ? '<span class="act-badge' + (pri ? " pri" : "") + '">' + (bn > 99 ? "99+" : bn) + "</span>" : "") + "</button>";
   if (ACT_OPEN) {
     var rows = ACT_ITEMS.filter(function (x) { return (ACT_FILTER === "all" || x.k === ACT_FILTER) && order(x.oid); }).slice(0, 40);
     h += '<div class="seen-pop act-pop' + (ACT_ANIM ? " pop-in" : "") + '" role="dialog" aria-label="Driver activity">' +
       '<div class="act-hd"><b>Driver activity</b><button class="btn sm" id="act-all"' + (n ? "" : " disabled") + ">Mark All Read</button></div>" +
+      inboxPopHtml() +
       '<div class="act-filters">' + [["all", "All"], ["note", "Notes"], ["scan", "Scans"]].map(function (f) {
         return '<button class="btn sm' + (ACT_FILTER === f[0] ? " active" : "") + '" data-actf="' + f[0] + '">' + f[1] + "</button>";
       }).join("") + "</div>" +
@@ -2115,7 +2118,8 @@ function vBuiltin(ent) {
   // width is the exact sum of column widths so a column grows the table, not its
   // neighbours (D85). Custom-column widths default to 140. Custom entities
   // don't ride the legacy grid_columns system — their fields ARE `fields`.
-  var tblW = 44 + cols.reduce(function (s, c) { return s + c.width; }, 0) + 38;
+  var locOpen = slug === "pickdrop";              // the Open column: the location's window (photos, files, drivers' changes)
+  var tblW = 44 + (locOpen ? 44 : 0) + cols.reduce(function (s, c) { return s + c.width; }, 0) + 38;
   var srt = GRIDSORT[gk], srtFld = srt && sortFlds.filter(function (f) { return f.id === srt.fieldId; })[0];
   var selectedRows = (ROWSEL[gk] || []).length;
   var rowAction;
@@ -2157,13 +2161,13 @@ function vBuiltin(ent) {
     h += '<datalist id="fleetdrivers">' + (DB.drivers || []).filter(function (d) { return d.active !== false; }).map(function (d) { return '<option value="' + esc(d.full_name) + '">'; }).join("") + "</datalist>";
     h += '<datalist id="eqtypes">' + eqTypes.map(function (x) { return '<option value="' + esc(x) + '">'; }).join("") + "</datalist>";
   }
-  h += '<div class="grid-wrap"><table class="data gridfixed" style="width:' + tblW + 'px"><thead><tr>' + selTh(gk) +
+  h += '<div class="grid-wrap"><table class="data gridfixed' + (locOpen ? " has-open" : "") + '" style="width:' + tblW + 'px"><thead><tr>' + selTh(gk) + (locOpen ? locOpenTh() : "") +
     cols.map(function (c) { return c.kind === "field" ? fieldTh(c.obj, gk) : customThCol(c.obj, gk); }).join("") +
     '<th class="col-plus-h" data-addcol="' + gk + '" title="Add ' + (custom ? "field" : "column") + '">+</th></tr></thead><tbody>';
   rows.forEach(function (ctx, i) {
     var base = custom ? ctx.records : (ctx[ent.backing_table] || {});
     h += '<tr' + (ent.backing_table ? ' data-histrow="' + ent.backing_table + "|" + base.id + '"' : "") + ">" +
-      selTd(gk, base.id, i + 1) +
+      selTd(gk, base.id, i + 1) + (locOpen ? locOpenTd(base.id) : "") +
       cols.map(function (c) {
         return c.kind === "field" ? fieldCell(c.obj, ctx) :
           customTdCol(c.obj, ent.backing_table, base.id, base.obj && base.obj.custom);

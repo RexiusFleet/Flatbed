@@ -1018,6 +1018,10 @@ function revealCell(td) {
   var stickyTop = container.querySelector("thead");
   var cRect = container.getBoundingClientRect(), tRect = td.getBoundingClientRect();
   var leftBound = cRect.left + (stickyLeft ? stickyLeft.getBoundingClientRect().width : 0);
+  // Database grids pin the row number and the name column: a cell must clear those too.
+  if (!stickyLeft && tr && td.closest("table.gridfixed") && getComputedStyle(td).position !== "sticky") {
+    [].forEach.call(tr.children, function (c) { if (getComputedStyle(c).position === "sticky") leftBound = Math.max(leftBound, c.getBoundingClientRect().right); });
+  }
   var topBound = cRect.top + (stickyTop ? stickyTop.getBoundingClientRect().height : 0);
   if (tRect.left < leftBound) container.scrollLeft -= (leftBound - tRect.left);
   else if (tRect.right > cRect.right) container.scrollLeft += (tRect.right - cRect.right);

@@ -182,6 +182,8 @@ function storageRemove(paths) {
    storage_path is "driver-scan:<order id>/<file>.pdf" inside the dashboard; every
    other document is in the "documents" bucket. */
 function bucketAndKey(path) {
+  // A driver's photo or file (Send To Office, a Pick/Drop location) is "location-file:<path>" in the "location-files" bucket.
+  if (/^location-file:/.test(path)) return { bucket: "location-files", key: String(path).slice("location-file:".length) };
   return /^driver-scan:/.test(path) ? { bucket: "driver-scans", key: String(path).slice("driver-scan:".length) }
                                     : { bucket: BUCKET, key: path };
 }
@@ -259,6 +261,7 @@ var HISTORY_LABELS = {
   "sync-delivery-dates": "Sync delivery dates", "driver": "Add driver",
   "truck": "Add truck", "assign-truck": "Assign truck",
   "truck/driver": "Change truck driver", "driver/employee-no": "Set employee number", "driver/phone": "Set driver phone", "driver/delete": "Delete driver", "location": "Add location",
+  "location-change/decide": "Decide a driver's Pick/Drop change", "driver-upload/done": "File a driver upload", "location-file/add": "Add a location photo or file", "location-file/delete": "Delete a location photo or file",
   "department": "Add department", "customer": "Add customer",
   "category": "Edit scheduler category", "sheet": "Change sheet",
   "sheet/cell": "Edit sheet cell", "grid/cell-fmt": "Format database cell",
@@ -311,6 +314,7 @@ function scopeFor(route, d) {
     "driver": ["database", "fleet"], "truck": ["database", "fleet"],
     "assign-truck": ["database", "fleet"], "truck/driver": ["database", "fleet"], "driver/employee-no": ["database", "fleet"], "driver/phone": ["database", "fleet"], "driver/delete": ["database", "fleet"],
     "location": ["database", "pickdrop"], "department": ["database", "departments"],
+    "location-change/decide": ["database", "pickdrop"], "location-file/add": ["database", "pickdrop"], "location-file/delete": ["database", "pickdrop"],
     "customer": ["database", d.kind === "external" ? "brokers" : "bagger"]
   }[route];
   if (s) return s;
@@ -773,6 +777,38 @@ var ROUTES = {
   },
   // The banner typed on the Current Week bar (drivers' page and bag plant page).
   "ticker": viaRpc("api_ticker_set"),
+  // What drivers sent: changes to Pick/Drop locations waiting for approval, and Send To Office uploads (supabase/sql/2026-11-20_03).
+  "driver-inbox": function () {
+    return Promise.all([
+      rest("GET", "location_change_requests?status=eq.pending&order=created_at.desc&limit=200"),
+      rest("GET", "driver_uploads?status=eq.new&order=created_at.desc&limit=200")
+    ]).then(function (r) { return { changes: r[0] || [], uploads: r[1] || [] }; },
+      function (e) { if (/location_change_requests|driver_uploads|does not exist|schema cache/i.test(e.message || "")) return { changes: [], uploads: [], missing: true }; throw e; });
+  },
+  "location-change/decide": viaRpc("api_location_change_decide"),
+  "driver-upload/done": viaRpc("api_driver_upload_done"),
+  // A Pick/Drop location's photos and files (the location_files list, files in the "location-files" bucket).
+  "location-files": function (d) {
+    return rest("GET", "location_files?location_id=eq." + encodeURIComponent(d.location_id) + "&order=created_at.desc");
+  },
+  "location-file/add": function (d, route) {
+    var name = String(d.name || "file").replace(/[^\w.\-]+/g, "_").slice(-80) || "file";
+    var path = "loc/" + d.location_id + "/" + Date.now() + "-" + name;
+    return sbFetch("/storage/v1/object/location-files/" + objectPath(path), {
+      method: "POST", headers: { "Content-Type": d.blob.type || "application/octet-stream", "x-upsert": "false" }, body: d.blob
+    }).then(function () {
+      return rest("POST", "location_files", { location_id: d.location_id, storage_path: path, file_name: d.name || name,
+        mime_type: d.blob.type || null, kind: /pdf$/i.test(d.blob.type || "") || /\.pdf$/i.test(d.name || "") ? "document" : "photo",
+        uploaded_by: d.by || null }, histHeaders(route, d)).then(one);
+    });
+  },
+  "location-file/delete": function (d, route) {
+    return rest("DELETE", "location_files?id=eq." + encodeURIComponent(d.id), undefined, histHeaders(route, d), "return=minimal").then(function () {
+      return sbFetch("/storage/v1/object/location-files", { method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prefixes: [d.path] }) }).catch(function () { /* the list entry is gone; a leftover file is harmless */ });
+    });
+  },
+  "location-file/url": function (d) { return storedFileUrl("location-file:" + d.path).then(function (u) { return { url: u }; }); },
   "ticker/get": function (d) { return rpc("api_ticker_get", { d: d || {} }); },
   "driver/employee-nos": function (d) { return rpc("api_driver_employee_nos", { d: d || {} }); },
   "driver/employee-no": viaRpc("api_driver_employee_no_set"),
@@ -836,7 +872,7 @@ var ROUTES = {
 var API_WRITES = { seq: 0, open: 0 };
 // Routes that only read. A failed read leaves nothing on screen that did not stick, and never holds up the live-update check.
 var READ_ROUTES = { "bootstrap": 1, "bootstrap/poll": 1, "history": 1, "history/preview": 1, "driver/employee-nos": 1, "driver/former": 1,
-  "driver/activity": 1, "ticker/get": 1, "motive/days-list": 1, "transfer/list": 1, "transfer/lines": 1, "saved-report/list": 1 };
+  "driver/activity": 1, "driver-inbox": 1, "location-files": 1, "location-file/url": 1, "ticker/get": 1, "motive/days-list": 1, "transfer/list": 1, "transfer/lines": 1, "saved-report/list": 1 };
 // The single entry point app.js uses (unchanged signature from the Python era).
 function api(path, body) {
   var qi = path.indexOf("?"), route = qi < 0 ? path : path.slice(0, qi), q = {};

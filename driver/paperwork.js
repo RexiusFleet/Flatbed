@@ -1,12 +1,17 @@
 /* Flatbed Schedule — paperwork viewer and signature.
  *
- *   Dept12Paper.open({ title, getBytes() -> Promise<ArrayBuffer>, onDone(pdfBlob, pageCount) -> Promise })
+ *   Dept12Paper.open({ title, getBytes() -> Promise<ArrayBuffer>, onDone(pdfBlob, pageCount) -> Promise,
+ *                      saveKey, notesHeader })
  *
  * A PDF the office marked "Show To Driver" opens full screen. Sign turns the pen on: draw with a finger
  * or pencil on any page. Send Signed Copy stamps the drawing onto the PDF (vendor/pdf-lib) and hands the
  * new PDF to onDone, which uploads it the same way a scan goes. Nothing is changed on the original file.
  * pdf.js (to draw the pages) and pdf-lib (to stamp them) are not loaded with the page: they load when a
  * paper is first opened.
+ *
+ * Notes: typed notes go on a page added at the end of the copy (headed with notesHeader: driver, truck, order, time).
+ * saveKey: after a copy is sent, the drawing and the notes are kept on this device under that key, so opening the same
+ * paper again shows them; the driver can change them and send a new copy.
  */
 (function () {
 "use strict";
@@ -59,6 +64,7 @@ function open(opts) {
     '<div class="paper-tools"><a class="btn" data-pp="raw" target="_blank" rel="noopener" hidden>Open File</a><button class="btn" data-pp="sign" type="button" aria-pressed="false" disabled>Sign</button>' +
     '<button class="btn" data-pp="undo" type="button" disabled>Undo</button>' +
     '<button class="btn" data-pp="clear" type="button" disabled>Clear</button>' +
+    '<button class="btn" data-pp="notes" type="button" disabled>Notes</button>' +
     '<button class="btn pri" data-pp="send" type="button" disabled>Send Signed Copy</button></div></div>' +
     '<div class="paper-body" data-pp="body"></div>';
   document.body.appendChild(el);
@@ -67,20 +73,30 @@ function open(opts) {
   var $ = function (sel) { return el.querySelector(sel); };
   var statusEl = $('[data-pp="status"]'), body = $('[data-pp="body"]');
   var bSign = $('[data-pp="sign"]'), bUndo = $('[data-pp="undo"]'), bClear = $('[data-pp="clear"]'), bSend = $('[data-pp="send"]');
-  var pages = [], hist = [], bytes = null, busy = false, pen = false, dead = false;
+  var pages = [], hist = [], bytes = null, busy = false, pen = false, dead = false, notesEl = null;
+  var saved = null;
+  try { saved = opts.saveKey ? JSON.parse(localStorage.getItem(opts.saveKey) || "null") : null; } catch (e) { saved = null; }
   if (opts.readOnly) {      // a scan: view only, no pen
-    ["sign", "undo", "clear", "send"].forEach(function (k) { $('[data-pp="' + k + '"]').hidden = true; });
+    ["sign", "undo", "clear", "notes", "send"].forEach(function (k) { $('[data-pp="' + k + '"]').hidden = true; });
   }
+  if (saved) bSend.textContent = "Send New Copy";
 
   function say(t) { statusEl.textContent = t; }
   function strokeCount() { return hist.length; }
+  function drawn() { return pages.some(function (pg) { return pg.strokes.length; }); }
+  function notesText() { return notesEl ? notesEl.value.trim() : ""; }
+  function changed() { return drawn() || !!notesText(); }
   function sync() {
-    bUndo.disabled = bClear.disabled = bSend.disabled = busy || !strokeCount();
+    bUndo.disabled = bClear.disabled = busy || !strokeCount();
+    bSend.disabled = busy || !changed();
     bSign.disabled = busy || !pages.length;
+    $('[data-pp="notes"]').disabled = busy || !pages.length;
     if (opts.readOnly) { say(pages.length ? pages.length + " page" + (pages.length > 1 ? "s" : "") : ""); return; }
     bSign.classList.toggle("active", pen); bSign.setAttribute("aria-pressed", String(pen));
     body.classList.toggle("pen", pen);
-    say(busy ? "Working…" : pen ? "Sign is on: draw with a finger or pencil. Turn Sign off to scroll." : strokeCount() ? "Signed. Send Signed Copy when you are done." : pages.length ? pages.length + " page" + (pages.length > 1 ? "s" : "") : "");
+    say(busy ? "Working…" : pen ? "Sign is on: draw with a finger or pencil. Turn Sign off to scroll." :
+      saved && saved.at ? "You sent a copy " + saved.at + ". Change it and send again; the office gets the new copy." :
+      changed() ? "Ready. Send Signed Copy when you are done." : pages.length ? pages.length + " page" + (pages.length > 1 ? "s" : "") + ". Sign to draw on it, Notes to type notes onto a last page." : "");
   }
   function paint(pg) {
     var c = pg.over, ctx = c.getContext("2d"), cw = c.width, ch = c.height;
@@ -130,7 +146,60 @@ function open(opts) {
         return page.render({ canvasContext: cv.getContext("2d"), viewport: vp }).promise;
       });
     })(n);
-    return chain;
+    return chain.then(function () {
+      if (dead || opts.readOnly) return;
+      // The typed notes: a card after the last page, sent as the copy's last page.
+      var card = document.createElement("div"); card.className = "paper-notes"; card.style.width = width + "px";
+      card.innerHTML = '<div class="paper-notes-hd"><b>Notes</b><span>Typed notes are added as the last page of the copy you send.</span></div>' +
+        '<textarea data-pp-notes rows="6" placeholder="e.g. 2 pallets damaged on the left side. Receiver Jim signed."></textarea>';
+      body.appendChild(card); notesEl = card.querySelector("textarea");
+      notesEl.addEventListener("input", sync);
+      // What was sent last time (this device): the drawing on each page and the notes.
+      if (saved) {
+        (saved.strokes || []).forEach(function (list, i) { var pg = pages[i]; if (!pg || !list) return; pg.strokes = list; list.forEach(function () { hist.push(pg); }); paint(pg); });
+        notesEl.value = saved.notes || "";
+      }
+    });
+  }
+
+  // Text broken into lines that fit maxW at the given size (a word longer than a line is cut).
+  function wrap(text, font, size, maxW) {
+    var out = [];
+    String(text).split(/\r?\n/).forEach(function (para) {
+      var line = "";
+      para.split(/\s+/).forEach(function (w) {
+        if (!w) return;
+        while (font.widthOfTextAtSize(w, size) > maxW) {
+          var n = w.length; while (n > 1 && font.widthOfTextAtSize(w.slice(0, n), size) > maxW) n--;
+          if (line) { out.push(line); line = ""; }
+          out.push(w.slice(0, n)); w = w.slice(n);
+        }
+        var t = line ? line + " " + w : w;
+        if (font.widthOfTextAtSize(t, size) > maxW) { out.push(line); line = w; } else line = t;
+      });
+      out.push(line);
+    });
+    return out;
+  }
+  // The notes as page(s) at the end of the copy, the same size as the paper's last page.
+  function addNotes(doc) {
+    var text = notesText(); if (!text) return Promise.resolve();
+    var L = window.PDFLib;
+    return Promise.all([doc.embedFont(L.StandardFonts.Helvetica), doc.embedFont(L.StandardFonts.HelveticaBold)]).then(function (f) {
+      var last = doc.getPages()[doc.getPageCount() - 1], sz = last ? last.getSize() : { width: 612, height: 792 };
+      var W = Math.min(sz.width, sz.height) === sz.width ? sz.width : 612, H = W === sz.width ? sz.height : 792;
+      var m = 54, size = 12, lh = 17, maxW = W - 2 * m;
+      // Helvetica only has Latin characters; anything else is dropped rather than failing the whole copy.
+      var clean = function (s) { return String(s).replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/[\u2013\u2014]/g, "-").replace(/[^\x20-\x7E\xA0-\xFF\n]/g, ""); };
+      var lines = wrap(clean(text), f[0], size, maxW), page = null, y = 0;
+      var newPage = function () {
+        page = doc.addPage([W, H]); y = H - m;
+        page.drawText(clean(opts.notesHeader || "Driver notes"), { x: m, y: y, size: 10, font: f[1] });
+        y -= 8; page.drawLine({ start: { x: m, y: y }, end: { x: W - m, y: y }, thickness: 1 }); y -= 20;
+      };
+      newPage();
+      lines.forEach(function (ln) { if (y < m) newPage(); if (ln) page.drawText(ln, { x: m, y: y, size: size, font: f[0] }); y -= lh; });
+    });
   }
 
   // Stamp the drawing onto a copy of the PDF.
@@ -152,12 +221,12 @@ function open(opts) {
           }
         });
       });
-      return doc.save().then(function (out) { return { blob: new Blob([out], { type: "application/pdf" }), pages: list.length }; });
+      return addNotes(doc).then(function () { return doc.save(); }).then(function (out) { return { blob: new Blob([out], { type: "application/pdf" }), pages: doc.getPageCount() }; });
     });
   }
 
   function close() {
-    if (strokeCount() && !busy && !window.confirm("Close without sending your signature?")) return;
+    if (changed() && !saved && !busy && !window.confirm("Close without sending your signature and notes?")) return;
     dead = true; el.remove(); document.body.style.overflow = "";
   }
   el.addEventListener("click", function (e) {
@@ -167,9 +236,14 @@ function open(opts) {
     else if (k === "sign") { pen = !pen; sync(); }
     else if (k === "undo") { var pg = hist.pop(); if (pg) { pg.strokes.pop(); paint(pg); } sync(); }
     else if (k === "clear") { pages.forEach(function (pg) { pg.strokes = []; paint(pg); }); hist = []; sync(); }
+    else if (k === "notes") { pen = false; sync(); if (notesEl) { notesEl.scrollIntoView({ block: "center", behavior: "smooth" }); notesEl.focus(); } }
     else if (k === "send") {
       busy = true; pen = false; sync();
       build().then(function (r) { return opts.onDone(r.blob, r.pages); }).then(function () {
+        if (opts.saveKey) {
+          var d = new Date(), at = (d.getMonth() + 1) + "/" + d.getDate() + " " + ((d.getHours() % 12) || 12) + ":" + String(d.getMinutes()).padStart(2, "0") + (d.getHours() < 12 ? " AM" : " PM");
+          try { localStorage.setItem(opts.saveKey, JSON.stringify({ at: at, notes: notesText(), strokes: pages.map(function (pg) { return pg.strokes; }) })); } catch (e) { /* no storage: nothing kept */ }
+        }
         dead = true; el.remove(); document.body.style.overflow = "";
       }, function (err) { busy = false; sync(); say("Couldn't send it: " + ((err && err.message) || "try again") + "."); });
     }

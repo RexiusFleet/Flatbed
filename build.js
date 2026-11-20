@@ -12,7 +12,7 @@ var ROOT = __dirname, check = process.argv.includes("--check");
 var JS_PARTS = ["head.js", "01-core.js", "02-chips-extract.js", "03-drawer-billing.js",
   "04-views.js", "05-settings-nav-search.js", "06-modals-grids.js", "07-events.js",
   "08-undo.js", "09-color.js", "10-select.js", "11-toolbar.js", "12-touch-boot.js",
-  "13-history.js", "tail.js"];
+  "13-history.js", "14-driver-inbox.js", "tail.js"];
 
 function read(f) { return fs.readFileSync(path.join(ROOT, f), "utf8"); }
 

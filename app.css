@@ -727,6 +727,16 @@ table.data.gridfixed thead th:nth-child(2),table.data.gridfixed tbody td:nth-chi
 table.data.gridfixed tbody td.rowgut:hover{background:linear-gradient(var(--rule),var(--rule)),var(--paper)}
 table.data.gridfixed tbody td.rowgut.on{background:var(--focus)}
 table.data.gridfixed tbody tr.selrow td:nth-child(2){background:linear-gradient(var(--focus-soft),var(--focus-soft)),var(--paper)}
+/* Pick/Drop List has an Open column after the row number, so the name is the third column: pin all three. */
+table.data.gridfixed.has-open thead th:nth-child(3),table.data.gridfixed.has-open tbody td:nth-child(3){position:sticky;z-index:3;left:88px;border-right-color:var(--rule-2)}
+table.data.gridfixed.has-open thead th:nth-child(3){z-index:5}
+table.data.gridfixed.has-open tbody td:nth-child(3){background:var(--paper)}
+table.data.gridfixed.has-open thead th:nth-child(2),table.data.gridfixed.has-open tbody td:nth-child(2){border-right-color:var(--rule)}
+table.data.gridfixed.has-open tbody tr.selrow td:nth-child(3){background:linear-gradient(var(--focus-soft),var(--focus-soft)),var(--paper)}
+table.data th.loc-open-col,table.data td.loc-open-col{width:44px;min-width:44px;max-width:44px;padding:0;text-align:center}
+td.loc-open-col .tracker-open{position:relative;height:32px}
+td.loc-open-col .tracker-open.on{background:var(--brand-soft);border-left-color:var(--focus);color:var(--focus)}
+.loc-wait-dot{position:absolute;top:6px;right:7px;width:8px;height:8px;border-radius:50%;background:var(--warn)}
 /* Fleet color chip (D85) — a filled swatch cell showing the driver's color. */
 .colorchip{width:100%;height:100%;min-height:26px;border:0;cursor:pointer;font-family:var(--mono);
      font-size:var(--fs-caption);letter-spacing:.02em;display:flex;align-items:center;justify-content:center}
@@ -2078,3 +2088,47 @@ body.rdx-dragging,body.rdx-dragging *{cursor:grabbing!important;user-select:none
 .rdx-nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:12px!important}
 .rdx-v{text-align:right;font-family:var(--mono);font-weight:600}
 @container (max-width:900px){.rdx-g-tot,.rdx-cols,.rdx-g-ext{grid-template-columns:minmax(0,1fr)}}
+
+/* Driver inbox (Needs your OK in the driver activity panel) and the Pick/Drop location window (14-driver-inbox.js) */
+.act-badge.pri{background:var(--warn);color:var(--paper)}
+.ib-hdline{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:var(--fs-caption);font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--warn)}
+.ib-n{background:var(--warn);color:var(--paper);border-radius:9px;padding:0 6px;letter-spacing:0}
+.ib-card{border:1px solid color-mix(in srgb,var(--warn) 45%,transparent);border-left:3px solid var(--warn);border-radius:var(--r-md);
+  background:color-mix(in srgb,var(--warn) 5%,var(--panel));padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.ib-hd{display:flex;align-items:baseline;gap:8px;font-size:var(--fs-body-sm)}
+.ib-hd>span:first-child{flex:1;min-width:0}
+.ib-hd b{font-weight:650}
+.ib-when{font-size:var(--fs-label);color:var(--ink-3);white-space:nowrap}
+.ib-diff{width:100%;border-collapse:collapse;font-size:var(--fs-label)}
+.ib-diff td{padding:3px 4px;border-top:1px solid var(--rule);vertical-align:top}
+.ib-diff td:first-child{width:20px}
+.ib-diff td.old{color:var(--ink-3);text-decoration:line-through}
+.ib-diff td.new{font-weight:600}
+.ib-acts{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.lf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:6px}
+.lf-thumb{position:relative;aspect-ratio:1;border-radius:var(--r-sm);overflow:hidden;background:var(--panel-2)}
+.lf-open{position:absolute;inset:0;border:0;padding:0;background:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  font-size:var(--fs-caption);color:var(--ink-2);text-align:center;overflow:hidden}
+.lf-open img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.lf-open span{padding:0 4px;overflow-wrap:anywhere}
+.lf-keep{position:absolute;top:4px;left:4px;margin:0;width:16px;height:16px}
+.lf-del{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:50%;border:0;background:rgba(0,0,0,.55);color:#fff;font-size:13px;line-height:20px;cursor:pointer;padding:0}
+.locwin{position:fixed;top:0;right:0;bottom:0;width:min(440px,100vw);z-index:70;background:var(--panel);border-left:1px solid var(--rule-2);box-shadow:-12px 0 30px rgba(0,0,0,.16);
+  display:flex;flex-direction:column;transform:translateX(105%);transition:transform var(--motion-panel,240ms) var(--ease-ui,ease);visibility:hidden}
+.locwin.on{transform:none;visibility:visible}
+.lw-top{display:flex;align-items:center;gap:8px;height:var(--bar-h,40px);padding:0 12px;border-bottom:1px solid var(--rule);font-size:var(--fs-body-sm);flex:none}
+.lw-body{flex:1;overflow:auto}
+.lw-hd{padding:14px 16px;border-bottom:1px solid var(--rule)}
+.lw-hd h3{margin:0;font-size:var(--fs-h3)}
+.lw-hd p{margin:3px 0 0;color:var(--ink-2);font-size:var(--fs-body-sm)}
+.lw-sec{padding:12px 16px;border-bottom:1px solid var(--rule);display:flex;flex-direction:column;gap:8px}
+.lw-sh{display:flex;align-items:center}
+.lw-f{display:grid;grid-template-columns:110px 1fr;align-items:center;gap:10px;font-size:var(--fs-body-sm)}
+.lw-f>span{color:var(--ink-3)}
+.lw-f input,.lw-f select,.lw-f textarea{font:inherit;font-size:var(--fs-body-sm);padding:5px 8px;border:1px solid var(--rule-2);border-radius:var(--r-sm);background:var(--paper);color:var(--ink);width:100%;box-sizing:border-box}
+.lw-f textarea{resize:vertical}
+.lw-f input:focus,.lw-f select:focus,.lw-f textarea:focus{outline:none;border-color:var(--focus)}
+.lw-muted{font-size:var(--fs-body-sm);color:var(--ink-3)}
+.lw-add{display:flex;align-items:center;justify-content:center;min-height:36px;border:1.5px dashed var(--rule-2);border-radius:var(--r-sm);color:var(--ink-2);font-size:var(--fs-body-sm);font-weight:600;cursor:pointer}
+.lw-add:hover{border-color:var(--brand);color:var(--brand)}
+

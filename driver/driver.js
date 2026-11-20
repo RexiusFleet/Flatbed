@@ -485,6 +485,8 @@
         return a && (a.from || a.to || a.date) ? apptText(a, day) : "";
     }
     function apptTag(text) { return text ? ' <span class="appt">APPT ' + esc(text) + "</span>" : ""; }
+    // The small › after a pick, drop or store: opens that Pick/Drop location (dock hours, phone, photos, edit). places.js.
+    function locMore(id, cls) { return id && allowedTab("pd") ? window.Dept12Places.arrowHtml(id, cls) : ""; }
     // The extra picks and drops of a multi-stop route (published with the load); null for a normal pick and drop.
     function routeStops(o, key) { return o && o.route_mode === "custom" && S.stopsByKey && S.stopsByKey[key] && S.stopsByKey[key].length ? S.stopsByKey[key] : null; }
     function hasAppt(o) {
@@ -507,23 +509,23 @@
                 var nP = stops.filter(function (x) { return x.stop_type === "pickup"; }).length, nD = stops.length - nP, cp = 0, cd = 0;
                 stops.forEach(function (x) {
                     var isP = x.stop_type === "pickup", n = isP ? ++cp : ++cd, tot = isP ? nP : nD;
-                    lines.push("", "<b>" + (isP ? "PICK" : "DROP") + (tot > 1 ? " " + n : "") + ":</b> " + esc(stopLine(x.name, x.address, x.city, x.state)) + apptTag(x.notes));
+                    lines.push("", "<b>" + (isP ? "PICK" : "DROP") + (tot > 1 ? " " + n : "") + ":</b> " + esc(stopLine(x.name, x.address, x.city, x.state)) + apptTag(x.notes) + locMore(x.location_id));
                 });
                 return lsHtml(lines);
             }
             var pick = stopLine(o.pickup_name, o.pickup_address, o.pickup_city, o.pickup_state);
             var drop = stopLine(o.delivery_name, o.delivery_address, o.delivery_city, o.delivery_state);
-            return lsHtml(lines.concat(["<b>PICK:</b> " + esc(pick) + apptTag(apptLabel(o, "pick", day)),
-            "<b>DROP:</b> " + esc(drop) + apptTag(apptLabel(o, "drop", day))]));
+            return lsHtml(lines.concat(["<b>PICK:</b> " + esc(pick) + apptTag(apptLabel(o, "pick", day)) + locMore(o.pickup_location_id),
+            "<b>DROP:</b> " + esc(drop) + apptTag(apptLabel(o, "drop", day)) + locMore(o.delivery_location_id)]));
         }
         // Internal freight: its Pickup and Drop (when either is set) under the load info, printed like an external load's.
         if (o && o.is_transfer && (o.pickup_name || o.delivery_name)) {
-            return loadTextHtml(r.chip) + '<div style="margin-top:6px">' + lsHtml(["<b>PICK:</b> " + esc(stopLine(o.pickup_name, o.pickup_address, o.pickup_city, o.pickup_state)),
-                "<b>DROP:</b> " + esc(stopLine(o.delivery_name, o.delivery_address, o.delivery_city, o.delivery_state))]) + "</div>";
+            return loadTextHtml(r.chip) + '<div style="margin-top:6px">' + lsHtml(["<b>PICK:</b> " + esc(stopLine(o.pickup_name, o.pickup_address, o.pickup_city, o.pickup_state)) + locMore(o.pickup_location_id),
+                "<b>DROP:</b> " + esc(stopLine(o.delivery_name, o.delivery_address, o.delivery_city, o.delivery_state)) + locMore(o.delivery_location_id)]) + "</div>";
         }
         // Bag orders: the same EARLY / ANYTIME and FORKLIFT boxes as Current Week.
         var fl = o && o.kind === "internal" && !o.is_transfer ? flagsHtml(bagFlags(o)) : "";
-        return loadTextHtml(r.chip) + (fl ? '<div style="margin-top:6px">' + fl + "</div>" : "");
+        return locMore(fl ? o.customer_location_id : null, "store") + loadTextHtml(r.chip) + (fl ? '<div style="margin-top:6px">' + fl + "</div>" : "");
     }
     function ordNo(o) { return o && o.rexius_order_no || ""; }
     function rexiusOrderNo(key) { return ordNo(orderForKey(key)); }
@@ -574,6 +576,7 @@
     function allowedTab(tab) {
         if (tab === "cw") return true;
         if (isBagPlant()) return false;
+        if (tab === "pd") return !!S.who && APP_MODE && !!window.Dept12Places;   // the Pick/Drop List (places.js)
         return !!driverByTruck(tab) && !!S.who && (!!S.who.all || String(S.who.truck) === String(tab));
     }
 
@@ -597,6 +600,7 @@
         S.payload.drivers.forEach(function (d) {
             if (allowedTab(String(d.truck))) h += tab(d.truck, dFirst(d.driver) || "Unassigned", d.truck);
         });
+        if (allowedTab("pd")) h += tab("pd", "Pick/Drop List");
         tabs.innerHTML = h;
         var on = tabs.querySelector("[aria-selected=true]");
         if (on && on.scrollIntoView) on.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -655,6 +659,7 @@
     function toolbarHtml(title) {
         return '<div class="toolbar cw-toolbar">' + (BAG_PLANT ? "" : "<h2>" + esc(title) + "</h2>") + tickerHtml() +
             '<span style="flex:1"></span>' + zoomHtml() +
+            (allowedTab("pd") ? '<button class="btn sm" type="button" data-upload="">Upload</button>' : "") +
             (S.source === "published" || S.source === "live" || S.source === "saved" ? '<span class="lbl" style="color:var(--good)">Dispatch updated ' + esc(dateTimeLabel(S.loadedAt)) + "</span>" : "") + "</div>";
     }
     function noticeHtml() { return noticeCore(); }
@@ -992,7 +997,9 @@
         return S.noteKey !== key ? '<button class="' + (big ? "btn" : "btn sm") + '" data-note="' + esc(key) + '">Add Note</button>' : "";
     }
     function scanBtn(key, big) {
-        return '<button class="' + (big ? "btn" : "btn sm") + '" data-scan="' + esc(key) + '" title="Scan the POD / BOL">Scan</button>';
+        return '<button class="' + (big ? "btn" : "btn sm") + '" data-scan="' + esc(key) + '" title="Scan the POD / BOL">Scan POD</button>' +
+            // Upload: photos or files for the office about this load (places.js), next to the scan.
+            (allowedTab("pd") && S.loadOrder[key] ? '<button class="' + (big ? "btn" : "btn sm") + '" type="button" data-upload="' + esc(S.loadOrder[key]) + '" data-upload-title="' + esc(S.chipTitle[key] || "") + '">Upload</button>' : "");
     }
     // Maps: a picture of the store (PNG in the storeimages folder) for bag orders, and the Pickup's and Drop's
     // pictures (Pick/Drop List -> Map) for internal freight. A button shows only when there is a picture link.
@@ -1059,6 +1066,9 @@
         if (!d || !window.Dept12Paper) return;
         window.Dept12Paper.open({
             title: S.chipTitle[key] || d.name,
+            // Typed notes become the copy's last page; the drawing and notes are kept on this device so the paper can be changed and sent again.
+            saveKey: "dept12Paper:" + S.loadOrder[key] + ":" + d.id,
+            notesHeader: "Driver notes · " + (S.who ? dFirst(S.who.name) + " · Truck " + S.who.truck + " · " : "") + "Order " + (rexiusOrderNo(key) || loadNo(key) || "") + " · " + new Date().toLocaleString(),
             getBytes: function () { return storageBytes("documents", d.path); },
             onDone: function (blob, pages) {
                 return sendScan(key, blob, pages, "Signed " + d.name).then(function (state) {
@@ -1192,6 +1202,7 @@
             return;
         }
         if (!allowedTab(S.tab)) S.tab = S.who && driverByTruck(S.who.truck) ? String(S.who.truck) : "cw";
+        if (S.tab === "pd") { $("#main").innerHTML = toolbarHtml("Pick/Drop List") + noticeHtml() + window.Dept12Places.listHtml(); window.Dept12Places.mounted(); return; }
         var d = S.tab === "cw" ? null : driverByTruck(S.tab);
         var prev = $("#main .grid-wrap, #main .drv-scroll"), top = prev ? prev.scrollTop : 0, left = prev ? prev.scrollLeft : 0;
         var title = d ? (dFirst(d.driver) || "Unassigned") + " · " + d.truck : "Current Week";
@@ -1212,6 +1223,17 @@
         if (!allowedTab(tab)) return;
         S.tab = tab; S.scrollTo = date || null; store("dept12DriverTab", tab); render();
     }
+
+    /* ── Pick/Drop List, location details and Upload (places.js): it gets what it needs from here ── */
+    if (window.Dept12Places) window.Dept12Places.init({
+        rpc: rpcPublic,
+        token: function () { return APP_MODE ? appToken() : Promise.resolve(null); },
+        base: function () { return { url: SB_URL, key: SB_KEY }; },
+        who: function () { return APP_MODE ? S.who : null; },
+        toast: toast,
+        redraw: function () { if (!S.noteKey) { S.keepScroll = true; render(); } },
+        openTab: function (tab) { openTab(tab); }
+    });
 
     /* ── Events ───────────────────────────────────────────────────────────── */
     document.addEventListener("click", function (e) {
