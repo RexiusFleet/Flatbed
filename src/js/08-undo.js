@@ -170,6 +170,12 @@ function gridCellSet(table, id, field, value) {
     var rc = field.split("|");
     return api("sheet/cell", { sheet_id: id, r: +rc[0], c: +rc[1], value: value }).then(reload);
   }
+  if (table === "records") {                  // a database tab you made (Equipment): field is the column's id
+    return api("record/update", { id: id, field_id: field, value: value }).then(function () {
+      var rec = (DB.records || []).filter(function (r) { return r.id === id; })[0];
+      if (rec) { rec.data = rec.data || {}; if (value == null || value === "") delete rec.data[field]; else rec.data[field] = String(value); }
+    });
+  }
   var vals = {}; vals[field] = value;
   // Update the local row in place instead of reload() (D84/D87 pattern) — a full
   // bootstrap refetch + whole-grid rebuild on every single cell commit made a

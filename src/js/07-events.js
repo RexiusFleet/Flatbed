@@ -408,14 +408,24 @@ document.addEventListener("click", function (e) {
     var arEnt = entityByKey(t.dataset.addrow);
     var arCall = (arEnt && arEnt.kind === "custom") ? api("record", { entity_id: arEnt.id })
       : api("grid/row", { grid: t.dataset.addrow });
-    arCall.then(reload).catch(function (err) { toast(err.message, true); });
+    // Adding takes a moment (it reloads): the button is off meanwhile so a second click doesn't add a second row,
+    // then the new row is scrolled into view with its first cell selected, ready to type in.
+    t.disabled = true;
+    arCall.then(function (row) {
+      return reload().then(function () {
+        var nid = row && row.id, td = nid && document.querySelector('tr [data-gridrowid="' + nid + '"]');
+        var first = td && td.closest("tr").querySelector("td[data-field]");
+        if (first) { first.scrollIntoView({ block: "nearest" }); selectCell(first); }
+      });
+    }).catch(function (err) { toast(err.message, true); })
+      .then(function () { var b = document.querySelector('[data-addrow="' + t.dataset.addrow + '"]'); if (b) b.disabled = false; });
     return;
   }
   if (t.dataset.delrows) {
     var g = t.dataset.delrows, ids = (ROWSEL[g] || []).slice();
     if (!ids.length) { toast("Select rows first — click the numbers on the left", true); return; }
     /* Confirm before destroying data (Nate's ask, D50). */
-    openModal('<div class="modal-hd"><h2>Delete ' + ids.length + ' row' + (ids.length > 1 ? "s" : "") +
+    openModal('<div class="modal-hd"><h2>Delete ' + ids.length + ' Row' + (ids.length > 1 ? "s" : "") +
       '?</h2></div><div class="modal-body"><p style="font-size:var(--fs-body);color:var(--ink-2)">' +
       "This can&rsquo;t be undone. Rows still referenced elsewhere (e.g. a customer on an order) are kept and reported.</p></div>" +
       '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +

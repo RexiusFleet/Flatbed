@@ -716,6 +716,17 @@ th[data-colref].colsel{background:var(--focus);color:var(--brand-ink)}
 /* Built-in Database grids use fixed layout so drag-resize is pixel-precise. */
 table.data.gridfixed{table-layout:fixed}
 table.data.gridfixed th.rowgut-h,table.data.gridfixed td.rowgut{width:44px}
+/* Database grids: the row number and the first column (the name) stay put when the grid scrolls sideways.
+   Pinned cells need a solid ground (--paper) so the cells scrolling under them don't show through. */
+table.data.gridfixed thead th:nth-child(-n+2),table.data.gridfixed tbody td:nth-child(-n+2){position:sticky;z-index:3}
+table.data.gridfixed thead th:nth-child(-n+2){z-index:5}
+table.data.gridfixed thead th:nth-child(1),table.data.gridfixed tbody td:nth-child(1){left:0}
+table.data.gridfixed thead th:nth-child(2),table.data.gridfixed tbody td:nth-child(2){left:44px}
+table.data.gridfixed tbody td:nth-child(-n+2){background:var(--paper)}
+table.data.gridfixed thead th:nth-child(2),table.data.gridfixed tbody td:nth-child(2){border-right-color:var(--rule-2)}
+table.data.gridfixed tbody td.rowgut:hover{background:linear-gradient(var(--rule),var(--rule)),var(--paper)}
+table.data.gridfixed tbody td.rowgut.on{background:var(--focus)}
+table.data.gridfixed tbody tr.selrow td:nth-child(2){background:linear-gradient(var(--focus-soft),var(--focus-soft)),var(--paper)}
 /* Fleet color chip (D85) — a filled swatch cell showing the driver's color. */
 .colorchip{width:100%;height:100%;min-height:26px;border:0;cursor:pointer;font-family:var(--mono);
      font-size:var(--fs-caption);letter-spacing:.02em;display:flex;align-items:center;justify-content:center}

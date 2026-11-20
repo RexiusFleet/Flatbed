@@ -484,7 +484,7 @@ function addLocationModal(typedText, target) {
     mfield("city", "City", "text", { value: f.city }) + mfield("state", "State", "text", { value: f.state }) +
     mfield("postal_code", "ZIP", "text", { value: f.zip }) +
     mfield("phone", "Phone", "text") +
-    mfield("appointment_note", "Appointment / dock hours", "text") +
+    mfield("appointment_note", fieldLabel("pickdrop", "appointment_note", "Dock hours"), "text") +
     mfield("notes", "Notes", "text") + customFieldsHtml("pickdrop");
   openModal('<div class="modal-hd"><h2>Add pick/drop location</h2></div>' +
     '<div class="modal-body">' + body + "</div>" +

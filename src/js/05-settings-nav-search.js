@@ -206,7 +206,7 @@ var NAV = [
   { k: "billing", t: "Billing", subs: [{ k: "bill", t: "Invoices & Packages" }, { k: "transfers", t: "Internal Transfers" }] },
   { k: "reports", t: "Reports", subs: [{ k: "rep", t: "Dashboard" }] },
   { k: "database", t: "Database", subs: [{ k: "bagger", t: "Bagger Customers" }, { k: "brokers", t: "External Customers" },
-      { k: "pickdrop", t: "Pick/Drop List" }, { k: "fleet", t: "Fleet" }] },
+      { k: "pickdrop", t: "Pick/Drop List" }, { k: "fleet", t: "Drivers" }] },
   // One entry under Database, drawn the same way (navMenuHtml): Motive's truck-days, miles and hours.
   { k: "motive", t: "ELD", subs: [{ k: "motive", t: "ELD" }] }
 ];
@@ -683,6 +683,12 @@ function render() {
      from one draw to the next. */
   var viewKey = SEC + "|" + SUB + "|" + (SUB === "driver" ? DRIVER_VIEW : ""), SCROLL_SEL = ".grid-wrap, .pad, #main > div";
   var keepScroll = viewKey === LAST_VIEW_KEY ? [].map.call(main.querySelectorAll(SCROLL_SEL), function (el) { return [el.scrollTop, el.scrollLeft]; }) : null;
+  // The selected cell is found again after the redraw (a save, a reload, a live update from the other dispatcher),
+  // so it doesn't drop out from under you.
+  var selQ = null, sd = keepScroll && SEL && SEL.dataset;
+  if (sd && sd.table && sd.id && sd.field) selQ = 'td[data-table="' + sd.table + '"][data-id="' + sd.id + '"][data-field="' + CSS.escape(sd.field) + '"]';
+  else if (sd && sd.sheet) selQ = 'td[data-sheet="' + sd.sheet + '"][data-r="' + sd.r + '"][data-c="' + sd.c + '"]';
+  else if (sd && sd.key) selQ = 'td[data-key="' + CSS.escape(sd.key) + '"]';
   var railEl = $("#rail"), railTop = railEl ? railEl.scrollTop : 0;
   var navEl = $("#sidenav-body"), navTop = navEl ? navEl.scrollTop : 0;
   LAST_VIEW_KEY = viewKey;
@@ -753,6 +759,12 @@ function render() {
   }
   if (railEl && $("#rail")) $("#rail").scrollTop = railTop;
   if (navEl && $("#sidenav-body")) $("#sidenav-body").scrollTop = navTop;
+  if (selQ && !SEL.isConnected) {
+    var again = main.querySelector(selQ);
+    SEL = again || null;
+    if (again) { again.classList.add("sel"); if (typeof positionFillHandle === "function") positionFillHandle(); }
+    renderFmtBar();
+  }
 }
 var LAST_VIEW_KEY = null, SCHED_KEEP = false, DRIVER_BOOTED = false;
 var AUTOSTAGE_OFF = false;

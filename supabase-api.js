@@ -382,7 +382,7 @@ var REPORT_LABELS = {
     name: "Customer", address: "Address", city: "City", state: "State",
     forklift: "Forklift", timing_window: "Time Window", designation: "Designation",
     standard_miles: "Miles", miles_from_umatilla: "Umatilla Miles",
-    is_umatilla: "Is Umatilla", appointment_note: "Appointment Note",
+    is_umatilla: "Is Umatilla", appointment_note: "Dock Hours",
     notes: "Notes", phone: "Phone", manager_name: "Manager"
   },
   brokers: { name: "Broker", rexius_customer_no: "Rexius #", ap_email: "AP Email",

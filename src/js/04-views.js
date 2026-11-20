@@ -1726,9 +1726,11 @@ function jsonCell(f, ctx) {
   }
   if (f.type === "checkbox")
     return '<td><div class="cell"><input type="checkbox" ' + a + (val === "true" ? " checked" : "") + "></div></td>";
-  var ty = f.type === "number" ? "number" : f.type === "date" ? "date" : "text";
-  return '<td><div class="cell"><input class="cell-i" type="' + ty + '" ' + a +
-    ' value="' + esc(val == null ? "" : val) + '"></div></td>';
+  if (f.type === "date")
+    return '<td><div class="cell"><input class="cell-i" type="date" ' + a + ' value="' + esc(val == null ? "" : val) + '"></div></td>';
+  // Text and number columns are ordinary spreadsheet cells, same as the built-in tabs: click to select,
+  // double-click or type to edit, copy / paste / drag-fill / Delete / undo (gridCellSet "records").
+  return dcell("records", rec.id, f.id, val == null ? "" : val, f.bold, condFmtColor(f, val));
 }
 /* Database header click sorts (temporary, this browser only, same as the order trackers); right-click
    has "Select column". The Sort button's dialog still has "Save as row order" for everyone. */
@@ -2026,7 +2028,11 @@ function compareGridValues(va, vb) {
 function sortRowsBy(rows, field, dir) {
   return rows.map(function (row, index) { return { row: row, index: index }; })
     .sort(function (a, b) {
-      var cmp = compareGridValues(fieldRawValue(field, a.row), fieldRawValue(field, b.row));
+      var va = fieldRawValue(field, a.row), vb = fieldRawValue(field, b.row);
+      // Blank cells always go to the bottom, in either direction, like a spreadsheet.
+      var ea = va == null || String(va).trim() === "", eb = vb == null || String(vb).trim() === "";
+      if (ea !== eb) return ea ? 1 : -1;
+      var cmp = compareGridValues(va, vb);
       return (dir === "desc" ? -cmp : cmp) || a.index - b.index;
     }).map(function (item) { return item.row; });
 }

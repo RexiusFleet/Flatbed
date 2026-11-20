@@ -4580,9 +4580,11 @@ function jsonCell(f, ctx) {
   }
   if (f.type === "checkbox")
     return '<td><div class="cell"><input type="checkbox" ' + a + (val === "true" ? " checked" : "") + "></div></td>";
-  var ty = f.type === "number" ? "number" : f.type === "date" ? "date" : "text";
-  return '<td><div class="cell"><input class="cell-i" type="' + ty + '" ' + a +
-    ' value="' + esc(val == null ? "" : val) + '"></div></td>';
+  if (f.type === "date")
+    return '<td><div class="cell"><input class="cell-i" type="date" ' + a + ' value="' + esc(val == null ? "" : val) + '"></div></td>';
+  // Text and number columns are ordinary spreadsheet cells, same as the built-in tabs: click to select,
+  // double-click or type to edit, copy / paste / drag-fill / Delete / undo (gridCellSet "records").
+  return dcell("records", rec.id, f.id, val == null ? "" : val, f.bold, condFmtColor(f, val));
 }
 /* Database header click sorts (temporary, this browser only, same as the order trackers); right-click
    has "Select column". The Sort button's dialog still has "Save as row order" for everyone. */
@@ -4880,7 +4882,11 @@ function compareGridValues(va, vb) {
 function sortRowsBy(rows, field, dir) {
   return rows.map(function (row, index) { return { row: row, index: index }; })
     .sort(function (a, b) {
-      var cmp = compareGridValues(fieldRawValue(field, a.row), fieldRawValue(field, b.row));
+      var va = fieldRawValue(field, a.row), vb = fieldRawValue(field, b.row);
+      // Blank cells always go to the bottom, in either direction, like a spreadsheet.
+      var ea = va == null || String(va).trim() === "", eb = vb == null || String(vb).trim() === "";
+      if (ea !== eb) return ea ? 1 : -1;
+      var cmp = compareGridValues(va, vb);
       return (dir === "desc" ? -cmp : cmp) || a.index - b.index;
     }).map(function (item) { return item.row; });
 }
@@ -6319,7 +6325,7 @@ var NAV = [
   { k: "billing", t: "Billing", subs: [{ k: "bill", t: "Invoices & Packages" }, { k: "transfers", t: "Internal Transfers" }] },
   { k: "reports", t: "Reports", subs: [{ k: "rep", t: "Dashboard" }] },
   { k: "database", t: "Database", subs: [{ k: "bagger", t: "Bagger Customers" }, { k: "brokers", t: "External Customers" },
-      { k: "pickdrop", t: "Pick/Drop List" }, { k: "fleet", t: "Fleet" }] },
+      { k: "pickdrop", t: "Pick/Drop List" }, { k: "fleet", t: "Drivers" }] },
   // One entry under Database, drawn the same way (navMenuHtml): Motive's truck-days, miles and hours.
   { k: "motive", t: "ELD", subs: [{ k: "motive", t: "ELD" }] }
 ];
@@ -6796,6 +6802,12 @@ function render() {
      from one draw to the next. */
   var viewKey = SEC + "|" + SUB + "|" + (SUB === "driver" ? DRIVER_VIEW : ""), SCROLL_SEL = ".grid-wrap, .pad, #main > div";
   var keepScroll = viewKey === LAST_VIEW_KEY ? [].map.call(main.querySelectorAll(SCROLL_SEL), function (el) { return [el.scrollTop, el.scrollLeft]; }) : null;
+  // The selected cell is found again after the redraw (a save, a reload, a live update from the other dispatcher),
+  // so it doesn't drop out from under you.
+  var selQ = null, sd = keepScroll && SEL && SEL.dataset;
+  if (sd && sd.table && sd.id && sd.field) selQ = 'td[data-table="' + sd.table + '"][data-id="' + sd.id + '"][data-field="' + CSS.escape(sd.field) + '"]';
+  else if (sd && sd.sheet) selQ = 'td[data-sheet="' + sd.sheet + '"][data-r="' + sd.r + '"][data-c="' + sd.c + '"]';
+  else if (sd && sd.key) selQ = 'td[data-key="' + CSS.escape(sd.key) + '"]';
   var railEl = $("#rail"), railTop = railEl ? railEl.scrollTop : 0;
   var navEl = $("#sidenav-body"), navTop = navEl ? navEl.scrollTop : 0;
   LAST_VIEW_KEY = viewKey;
@@ -6866,6 +6878,12 @@ function render() {
   }
   if (railEl && $("#rail")) $("#rail").scrollTop = railTop;
   if (navEl && $("#sidenav-body")) $("#sidenav-body").scrollTop = navTop;
+  if (selQ && !SEL.isConnected) {
+    var again = main.querySelector(selQ);
+    SEL = again || null;
+    if (again) { again.classList.add("sel"); if (typeof positionFillHandle === "function") positionFillHandle(); }
+    renderFmtBar();
+  }
 }
 var LAST_VIEW_KEY = null, SCHED_KEEP = false, DRIVER_BOOTED = false;
 var AUTOSTAGE_OFF = false;
@@ -7517,7 +7535,7 @@ function addLocationModal(typedText, target) {
     mfield("city", "City", "text", { value: f.city }) + mfield("state", "State", "text", { value: f.state }) +
     mfield("postal_code", "ZIP", "text", { value: f.zip }) +
     mfield("phone", "Phone", "text") +
-    mfield("appointment_note", "Appointment / dock hours", "text") +
+    mfield("appointment_note", fieldLabel("pickdrop", "appointment_note", "Dock hours"), "text") +
     mfield("notes", "Notes", "text") + customFieldsHtml("pickdrop");
   openModal('<div class="modal-hd"><h2>Add pick/drop location</h2></div>' +
     '<div class="modal-body">' + body + "</div>" +
@@ -9718,14 +9736,24 @@ document.addEventListener("click", function (e) {
     var arEnt = entityByKey(t.dataset.addrow);
     var arCall = (arEnt && arEnt.kind === "custom") ? api("record", { entity_id: arEnt.id })
       : api("grid/row", { grid: t.dataset.addrow });
-    arCall.then(reload).catch(function (err) { toast(err.message, true); });
+    // Adding takes a moment (it reloads): the button is off meanwhile so a second click doesn't add a second row,
+    // then the new row is scrolled into view with its first cell selected, ready to type in.
+    t.disabled = true;
+    arCall.then(function (row) {
+      return reload().then(function () {
+        var nid = row && row.id, td = nid && document.querySelector('tr [data-gridrowid="' + nid + '"]');
+        var first = td && td.closest("tr").querySelector("td[data-field]");
+        if (first) { first.scrollIntoView({ block: "nearest" }); selectCell(first); }
+      });
+    }).catch(function (err) { toast(err.message, true); })
+      .then(function () { var b = document.querySelector('[data-addrow="' + t.dataset.addrow + '"]'); if (b) b.disabled = false; });
     return;
   }
   if (t.dataset.delrows) {
     var g = t.dataset.delrows, ids = (ROWSEL[g] || []).slice();
     if (!ids.length) { toast("Select rows first — click the numbers on the left", true); return; }
     /* Confirm before destroying data (Nate's ask, D50). */
-    openModal('<div class="modal-hd"><h2>Delete ' + ids.length + ' row' + (ids.length > 1 ? "s" : "") +
+    openModal('<div class="modal-hd"><h2>Delete ' + ids.length + ' Row' + (ids.length > 1 ? "s" : "") +
       '?</h2></div><div class="modal-body"><p style="font-size:var(--fs-body);color:var(--ink-2)">' +
       "This can&rsquo;t be undone. Rows still referenced elsewhere (e.g. a customer on an order) are kept and reported.</p></div>" +
       '<div class="modal-ft"><button class="btn" id="modal-cancel">Cancel</button>' +
@@ -11081,6 +11109,12 @@ function gridCellSet(table, id, field, value) {
     var rc = field.split("|");
     return api("sheet/cell", { sheet_id: id, r: +rc[0], c: +rc[1], value: value }).then(reload);
   }
+  if (table === "records") {                  // a database tab you made (Equipment): field is the column's id
+    return api("record/update", { id: id, field_id: field, value: value }).then(function () {
+      var rec = (DB.records || []).filter(function (r) { return r.id === id; })[0];
+      if (rec) { rec.data = rec.data || {}; if (value == null || value === "") delete rec.data[field]; else rec.data[field] = String(value); }
+    });
+  }
   var vals = {}; vals[field] = value;
   // Update the local row in place instead of reload() (D84/D87 pattern) — a full
   // bootstrap refetch + whole-grid rebuild on every single cell commit made a
@@ -12243,7 +12277,8 @@ function targetEls() {
   els.forEach(function (td) {
     var t = null;
     if (td.dataset && td.dataset.sheet) t = { kind: "sheet", sid: td.dataset.sheet, r: +td.dataset.r, c: +td.dataset.c };
-    else if (td.dataset && td.dataset.field && td.dataset.table && td.dataset.table !== "sheet" && td.dataset.id)
+    // Cells of a database tab you made ("records") have no saved formatting yet, so the format tools skip them.
+    else if (td.dataset && td.dataset.field && td.dataset.table && td.dataset.table !== "sheet" && td.dataset.table !== "records" && td.dataset.id)
       t = { kind: "grid", table: td.dataset.table, id: td.dataset.id, field: td.dataset.field };
     else if (td.dataset && td.dataset.key && !td.dataset.field && td.dataset.key.split("|").length === 3) t = { kind: "sched", key: td.dataset.key };
     if (t) out.push({ el: td, t: t });

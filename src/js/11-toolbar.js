@@ -71,7 +71,8 @@ function targetEls() {
   els.forEach(function (td) {
     var t = null;
     if (td.dataset && td.dataset.sheet) t = { kind: "sheet", sid: td.dataset.sheet, r: +td.dataset.r, c: +td.dataset.c };
-    else if (td.dataset && td.dataset.field && td.dataset.table && td.dataset.table !== "sheet" && td.dataset.id)
+    // Cells of a database tab you made ("records") have no saved formatting yet, so the format tools skip them.
+    else if (td.dataset && td.dataset.field && td.dataset.table && td.dataset.table !== "sheet" && td.dataset.table !== "records" && td.dataset.id)
       t = { kind: "grid", table: td.dataset.table, id: td.dataset.id, field: td.dataset.field };
     else if (td.dataset && td.dataset.key && !td.dataset.field && td.dataset.key.split("|").length === 3) t = { kind: "sched", key: td.dataset.key };
     if (t) out.push({ el: td, t: t });
